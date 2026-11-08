@@ -58,14 +58,36 @@ oficial, então a instalação é por **sideload** (instalar um APK avulso). Doi
 - **Direto na TV, sem computador**: instale um app tipo "Send Files to TV" ou "Downloader"
   (disponíveis na própria loja de apps da TV), baixe o `.apk` por ele e instale.
 
-### Samsung (Tizen), Roku, Apple TV, ou qualquer TV sem Android
-Essas TVs **não rodam Android** — o `.apk` não instala direto nelas, não existe esse caminho.
-O jeito de usar o JOTV numa tela assim é plugar um aparelho Android TV na entrada HDMI (um
-Chromecast com Google TV, um TV Box Android qualquer, um Fire TV Stick) e instalar o app nele,
-do jeito acima — a TV vira só o monitor, quem roda o app é o aparelho plugado.
+### Samsung Smart TV (Tizen)
+Samsung não roda Android, então o `.apk` não serve aqui. Existe uma versão nativa própria do
+JOTV pra Tizen, empacotada como `.wgt`, pegue o arquivo `JOTV-Tizen-*.wgt` da mesma
+[Release](../../releases).
 
-Se a TV for **LG com webOS**, existe uma versão nativa própria (sem precisar de aparelho externo)
-no repositório webOS do JOTV.
+1. Na TV, ligue o modo desenvolvedor (Smart Hub > Apps, selecione qualquer app instalado e
+   digite **1 2 3 4 5** em sequência no controle). Anote o IP que aparece na tela.
+2. No computador, instale o [Tizen Studio](https://samsungtizenos.com/tools-download/)
+   (a opção "CLI installer" já basta, não precisa da IDE gráfica completa). Isso traz o `sdb`,
+   usado pra instalar o pacote na TV.
+3. Conecte e instale.
+   ```sh
+   sdb connect <ip-da-tv>:26101
+   sdb install JOTV-Tizen-v1.3.3.wgt
+   ```
+
+O `.wgt` já sai assinado com um certificado de desenvolvedor, suficiente pra instalar em modo
+desenvolvedor numa TV própria. Não serve pra publicar na Samsung Apps TV Store, só pra uso
+pessoal via sideload.
+
+### LG Smart TV (webOS)
+Mesma ideia, versão nativa própria em `.ipk`. Pegue `JOTV-webOS-*.ipk` da mesma
+[Release](../../releases) e siga o passo a passo de instalação pela própria TV (LG Content
+Store > Developer Mode).
+
+### Roku, Apple TV, ou qualquer outra TV sem Android, webOS ou Tizen
+Essas não têm versão nativa do JOTV. O jeito de usar o app numa tela assim é plugar um aparelho
+Android TV na entrada HDMI (um Chromecast com Google TV, um TV Box Android qualquer, um Fire TV
+Stick) e instalar o app nele, do jeito da seção acima (a TV vira só o monitor, quem roda o app
+é o aparelho plugado).
 
 ## Funcionalidades
 
