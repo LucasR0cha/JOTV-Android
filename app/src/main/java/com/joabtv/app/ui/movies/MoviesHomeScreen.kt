@@ -1,0 +1,891 @@
+package com.joabtv.app.ui.movies
+
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MovieFilter
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.joabtv.app.domain.model.MediaType
+import com.joabtv.app.domain.model.MovieItem
+import com.joabtv.app.ui.common.Badge
+import com.joabtv.app.ui.common.FilterChipPill
+import com.joabtv.app.ui.common.JoabEmptyState
+import com.joabtv.app.ui.common.MediaPosterCard
+import com.joabtv.app.ui.common.ScreenTopHeader
+import kotlinx.coroutines.launch
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.runtime.rememberCoroutineScope
+import com.joabtv.app.ui.theme.*
+
+@Composable
+fun MoviesHomeScreen(
+    onItemClick: (MovieItem) -> Unit,
+    onSearchClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    onLibraryClick: () -> Unit = {},
+    viewModel: MoviesHomeViewModel = hiltViewModel(),
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // "Ver Tudo" → grid daquela query; null = home (hero + fileiras).
+    // Fonte da verdade é o ViewModel (sobrevive ao ir pro detalhe e voltar). Antes isso era um
+    // remember local, que morria na navegação e jogava o usuário de volta pra home inicial.
+    val gridMode = state.gridQuery
+    val scope = rememberCoroutineScope()
+    // Trailer aberto pela fileira "Últimos Trailers". Guarda TAMBÉM o card que está tocando,
+    // pra saber qual é o próximo da fileira e qual título abrir no "Ver título".
+    var trailerExo by remember { mutableStateOf<com.joabtv.app.data.remote.YoutubeTrailer.TrailerStream?>(null) }
+    var trailerCard by remember { mutableStateOf<MoviesHomeViewModel.TrailerCard?>(null) }
+    var trailerLoading by remember { mutableStateOf(false) }
+
+    // Abre um card da fileira no player de trailer.
+    fun playTrailer(card: MoviesHomeViewModel.TrailerCard) {
+        trailerCard = card
+        trailerLoading = true
+        scope.launch {
+            trailerExo = viewModel.trailerStream(card.videoKey)
+            trailerLoading = false
+            // Sem stream (extração falhou) → não deixa o card preso "tocando".
+            if (trailerExo == null) trailerCard = null
+        }
+    }
+
+    // SEM bottom bar aqui — a barra é a única do MoviesNavigation (Início, Descobrir, Minha Lista, Downloads, Busca e Config).
+    Box(Modifier.fillMaxSize().background(Background)) {
+        when {
+            // Esqueleto no formato da Início (destaque + fileiras) no lugar do spinner.
+            state.isLoading -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                com.joabtv.app.ui.common.SkeletonBox(Modifier.fillMaxWidth().height(if (com.joabtv.app.ui.common.isWideLayout()) 360.dp else 520.dp), radius = 0.dp)
+                repeat(3) { com.joabtv.app.ui.common.SkeletonRail() }
+            }
+            gridMode != null -> {
+                // BACK do sistema fecha o grid em vez de sair da home.
+                androidx.activity.compose.BackHandler { viewModel.closeCatalog() }
+                CatalogGridView(state, viewModel, gridMode.title, onItemClick, onBack = { viewModel.closeCatalog() })
+            }
+            else -> HomeSectionsTab(
+                state = state, viewModel = viewModel, onItemClick = onItemClick,
+                onSearchClick = onSearchClick, onSettingsClick = onSettingsClick,
+                onSeeMore = { query -> viewModel.openCatalog(query) },
+                onPlayTrailer = { card -> playTrailer(card) },
+            )
+        }
+        // Overlay do trailer (ExoPlayer) por cima de tudo, num Dialog em tela cheia.
+        trailerExo?.let { st ->
+            val card = trailerCard
+            val fila = state.latestTrailers
+            val idx = fila.indexOfFirst { it.tmdbId == card?.tmdbId && it.videoKey == card.videoKey }
+            val proximo = if (idx >= 0 && idx < fila.lastIndex) fila[idx + 1] else null
+            com.joabtv.app.ui.common.TrailerExoOverlay(
+                videoUrl = st.videoUrl,
+                audioUrl = st.audioUrl,
+                onClose = { trailerExo = null; trailerCard = null },
+                title = card?.title.orEmpty(),
+                onOpenDetail = card?.let { c ->
+                    {
+                        trailerExo = null; trailerCard = null
+                        onItemClick(
+                            MovieItem(
+                                tmdbId = c.tmdbId, embedId = c.tmdbId.toString(), title = c.title,
+                                overview = "", posterUrl = c.posterUrl, backdropUrl = c.backdropUrl,
+                                year = "", rating = 0.0, type = c.type,
+                            )
+                        )
+                    }
+                },
+                onNext = proximo?.let { n -> { trailerExo = null; playTrailer(n) } },
+            )
+        }
+        if (trailerLoading) {
+            Box(
+                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)),
+                contentAlignment = Alignment.Center,
+            ) { CircularProgressIndicator(color = Accent, strokeWidth = 3.dp) }
+        }
+    }
+}
+
+// ── Segmented tab (pill com feedback de press) ──────────────────────────────
+@Composable
+private fun SegmentTab(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.97f else 1f,
+        animationSpec = tween(150, easing = FastOutSlowInEasing),
+        label = "segScale",
+    )
+    Box(
+        modifier
+            .scale(scale)
+            .height(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                if (selected)
+                    Brush.linearGradient(listOf(Accent, AccentDark))
+                else
+                    Brush.linearGradient(listOf(Color.Transparent, Color.Transparent)),
+            )
+            .clickable(interactionSource = src, indication = androidx.compose.foundation.LocalIndication.current, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontFamily = SoraFontFamily,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 13.sp,
+            letterSpacing = (-0.2).sp,
+            color = if (selected) Color.White else TextSecondary,
+        )
+    }
+}
+
+// ── Catálogo completo (Filmes/Séries + categorias + sort + scroll infinito) ──
+@Composable
+private fun CatalogTab(
+    state: MoviesHomeViewModel.UiState,
+    viewModel: MoviesHomeViewModel,
+    onItemClick: (MovieItem) -> Unit,
+) {
+    val isMovie = state.catalogType == MoviesHomeViewModel.CatalogType.MOVIE
+    val genres = if (isMovie) state.movieGenres else state.tvGenres
+
+    val gridState = rememberLazyGridState()
+
+    // Scroll infinito: dispara loadMore quando o último item visível chega perto do fim
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val layoutInfo = gridState.layoutInfo
+            val total = layoutInfo.totalItemsCount
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            total > 0 && lastVisible >= total - 6
+        }
+    }
+    LaunchedEffect(shouldLoadMore) {
+        if (shouldLoadMore) viewModel.loadMoreCatalog()
+    }
+
+    // Opções de ordenação dependentes do tipo (Lançamentos varia entre movie/tv)
+    val sortOptions = remember(isMovie) {
+        listOf(
+            "Populares" to MoviesHomeViewModel.SORT_POPULAR,
+            "Melhor nota" to MoviesHomeViewModel.SORT_TOP_RATED,
+            "Lançamentos" to if (isMovie)
+                MoviesHomeViewModel.SORT_RELEASE_MOVIE
+            else
+                MoviesHomeViewModel.SORT_RELEASE_TV,
+        )
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        // TMDB key hint
+        if (!state.hasTmdbKey) {
+            Box(
+                Modifier
+                    .padding(horizontal = 16.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(AccentSoft)
+                    .border(1.dp, Accent.copy(alpha = .35f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                Text(
+                    "Configure sua chave TMDB em Configurações para explorar o catálogo.",
+                    fontSize = 12.sp,
+                    fontFamily = ManropeFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextSecondary,
+                    lineHeight = 17.sp,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+
+        // Toggle Filmes / Séries (segmented control reaproveitado)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 12.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(BackgroundCard)
+                .border(1.dp, Border, RoundedCornerShape(14.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            SegmentTab(
+                label = "Filmes",
+                selected = isMovie,
+                modifier = Modifier.weight(1f),
+                onClick = { viewModel.setCatalogType(MoviesHomeViewModel.CatalogType.MOVIE) },
+            )
+            SegmentTab(
+                label = "Séries",
+                selected = !isMovie,
+                modifier = Modifier.weight(1f),
+                onClick = { viewModel.setCatalogType(MoviesHomeViewModel.CatalogType.SERIES) },
+            )
+        }
+
+        // Chips de ordenação
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            sortOptions.forEach { (label, value) ->
+                FilterChipPill(
+                    label = label,
+                    selected = state.sortBy == value,
+                    onClick = { viewModel.setSort(value) },
+                )
+            }
+        }
+
+        // Chips de categoria: "Todos" + gêneros
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 2.dp)
+                .padding(bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChipPill(
+                label = "Todos",
+                selected = state.selectedGenreId == null,
+                onClick = { viewModel.selectGenre(null) },
+            )
+            genres.forEach { genre ->
+                FilterChipPill(
+                    label = genre.name,
+                    selected = state.selectedGenreId == genre.id,
+                    onClick = { viewModel.selectGenre(genre.id) },
+                )
+            }
+        }
+
+        // Estado: loading inicial
+        if (state.isLoadingCatalog && state.catalogItems.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Accent, strokeWidth = 2.dp)
+            }
+            return@Column
+        }
+
+        // Estado: vazio
+        if (state.catalogItems.isEmpty()) {
+            JoabEmptyState(
+                icon = Icons.Default.MovieFilter,
+                title = "Nada por aqui ainda",
+                message = if (!state.hasTmdbKey)
+                    "Configure sua chave TMDB e volte para explorar o catálogo."
+                else
+                    "Tente outra categoria ou ordenação.",
+            )
+            return@Column
+        }
+
+        // Grid com scroll infinito
+        LazyVerticalGrid(
+            state = gridState,
+            columns = GridCells.Adaptive(112.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            items(state.catalogItems, key = { it.tmdbId }) { item ->
+                MediaCard(item = item, onClick = { onItemClick(item) })
+            }
+            // Rodapé com indicador de carregamento da próxima página
+            if (state.isLoadingMore) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 18.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(color = Accent, strokeWidth = 2.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Media card (poster) ────────────────────────────────────────────────────
+@Composable
+fun MediaCard(item: MovieItem, onClick: () -> Unit) {
+    MediaPosterCard(
+        title = item.title,
+        imageUrl = item.posterUrl.ifBlank { null },
+        onClick = onClick,
+        subtitle = item.year.ifBlank { null },
+        aspectRatio = 2f / 3f,
+        badge = if (item.rating > 0) {
+            { Badge(label = "★ %.1f".format(item.rating), color = Gold) }
+        } else null,
+    )
+}
+
+// ── Aba "Início": catálogo estilo Netflix (fileiras por gênero, cresce ao rolar) ──
+@Composable
+private fun HomeSectionsTab(
+    state: MoviesHomeViewModel.UiState,
+    viewModel: MoviesHomeViewModel,
+    onItemClick: (MovieItem) -> Unit,
+    onSearchClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    onSeeMore: (MoviesHomeViewModel.CatalogQuery) -> Unit,
+    onPlayTrailer: (MoviesHomeViewModel.TrailerCard) -> Unit,
+) {
+    val listState = rememberLazyListState()
+    val loadMore by remember {
+        derivedStateOf {
+            val li = listState.layoutInfo
+            val total = li.totalItemsCount
+            val last = li.visibleItemsInfo.lastOrNull()?.index ?: 0
+            total > 0 && last >= total - 2
+        }
+    }
+    LaunchedEffect(loadMore) { if (loadMore) viewModel.loadMoreSections() }
+
+    // Carrossel do hero: top filmes + séries com backdrop (swipe + dots)
+    val heroItems = remember(state.trendingMovies, state.trendingTv) {
+        (state.trendingMovies + state.trendingTv).filter { it.backdropUrl.isNotBlank() }.take(8)
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(22.dp),
+    ) {
+        if (heroItems.isNotEmpty()) {
+            item {
+                // Trailer só com a Início no topo. Rolou, parou o trailer.
+                val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 300 } }
+                HeroCarousel(
+                    heroItems, state.heroLogos, onItemClick,
+                    trailerOn = state.heroTrailer && atTop,
+                    trailerFor = viewModel::heroTrailerStream,
+                )
+            }
+        }
+        if (state.continueWatching.isNotEmpty()) {
+            item { SectionRow("Continuar assistindo", state.continueWatching, onItemClick, progressMap = state.continueProgress, remainingMap = state.continueRemaining) }
+        }
+        if (state.newEpisodes.isNotEmpty()) {
+            item {
+                SectionRow(
+                    "Novos episódios", state.newEpisodes.map { it.item }, onItemClick,
+                    eyebrow = "Das suas séries",
+                    badges = state.newEpisodes.associate { it.item.tmdbId to it.badge },
+                    subs = state.newEpisodes.associate { it.item.tmdbId to it.sub },
+                )
+            }
+        }
+        // Catálogos de addon marcados em Addons > Na Início, na ordem em que foram marcados.
+        items(state.addonRows.filter { it.loading || it.items.isNotEmpty() }, key = { "addon:" + it.ref.key }) { row ->
+            if (row.items.isEmpty()) {
+                com.joabtv.app.ui.common.SkeletonRail()
+            } else {
+                SectionRow(
+                    row.ref.name, row.items, onItemClick,
+                    eyebrow = row.ref.addon,
+                    onNearEnd = if (row.more) ({ viewModel.loadAddonRow(row.ref.key) }) else null,
+                )
+            }
+        }
+        // Recomendação vem logo depois do "Continuar assistindo": é sobre o que ele acabou de ver.
+        if (state.recommended.isNotEmpty()) {
+            item {
+                SectionRow(
+                    "Porque você assistiu ${state.recommendedBecause}",
+                    state.recommended,
+                    onItemClick,
+                )
+            }
+        }
+        if (state.trailersLoading || state.latestTrailers.isNotEmpty()) {
+            item { LatestTrailersRow(state, viewModel, onPlay = onPlayTrailer) }
+        }
+        if (state.trendingMovies.isNotEmpty()) {
+            item { SectionRow("Tops do Momento Filmes", state.trendingMovies, onItemClick) { onSeeMore(MoviesHomeViewModel.CatalogQuery("Tops do Momento Filmes", MoviesHomeViewModel.CatalogType.MOVIE, MoviesHomeViewModel.CatalogEndpoint.TRENDING)) } }
+        }
+        if (state.trendingTv.isNotEmpty()) {
+            item { SectionRow("Tops do Momento Séries de TV", state.trendingTv, onItemClick) { onSeeMore(MoviesHomeViewModel.CatalogQuery("Tops do Momento Séries de TV", MoviesHomeViewModel.CatalogType.SERIES, MoviesHomeViewModel.CatalogEndpoint.TRENDING)) } }
+        }
+        if (state.nowPlaying.isNotEmpty()) {
+            item { SectionRow("Filmes nos cinemas", state.nowPlaying, onItemClick) { onSeeMore(MoviesHomeViewModel.CatalogQuery("Filmes nos cinemas", MoviesHomeViewModel.CatalogType.MOVIE, MoviesHomeViewModel.CatalogEndpoint.NOW_PLAYING)) } }
+        }
+        if (state.releases2026.isNotEmpty()) {
+            item { SectionRow("Lançamentos 2026", state.releases2026, onItemClick) { onSeeMore(MoviesHomeViewModel.CatalogQuery("Lançamentos 2026", MoviesHomeViewModel.CatalogType.MOVIE, genreId = null, sort = MoviesHomeViewModel.SORT_RELEASE_MOVIE, year = 2026)) } }
+        }
+        items(state.homeSections, key = { it.id }) { sec ->
+            SectionRow(sec.title, sec.items, onItemClick) { onSeeMore(sec.query) }
+        }
+        if (state.isLoadingSections) {
+            items(2) { com.joabtv.app.ui.common.SkeletonRail() }
+        }
+    }
+}
+
+@Composable
+private fun HeroTitle(title: String) {
+    Text(
+        title, color = TextPrimary, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold,
+        fontFamily = SoraFontFamily, maxLines = 2, lineHeight = 37.sp, letterSpacing = (-0.7).sp,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/**
+ * Destaque da Início no padrão do webOS. Em pé a arte ocupa a largura toda e o texto fica
+ * embaixo à esquerda. Deitado a arte fica nos 80% da direita com degradê vindo da esquerda.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun HeroCarousel(
+    items: List<MovieItem>,
+    logos: Map<Int, String>,
+    onItemClick: (MovieItem) -> Unit,
+    trailerOn: Boolean = false,
+    trailerFor: suspend (MovieItem) -> com.joabtv.app.data.remote.YoutubeTrailer.TrailerStream? = { null },
+) {
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { items.size })
+    // Trailer mudo depois de 5 s parado no mesmo destaque. Trocar de página, rolar a Início ou
+    // sair dela (o composable some) para o trailer.
+    var trailer by remember { mutableStateOf<Pair<Int, com.joabtv.app.data.remote.YoutubeTrailer.TrailerStream>?>(null) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val resumed by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
+    val active = trailerOn && resumed.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    val scope = rememberCoroutineScope()
+    fun advance(from: Int) {
+        if (items.size > 1) scope.launch { runCatching { pagerState.animateScrollToPage((from + 1) % items.size) } }
+    }
+    // Um efeito só cuida do avanço e do trailer, assim um não corta o outro. Com trailer ligado,
+    // espera 5 s, toca e só avança quando o trailer acaba. Sem trailer, avança a cada 6 s.
+    LaunchedEffect(pagerState.settledPage, active, items.size) {
+        trailer = null
+        if (items.isEmpty()) return@LaunchedEffect
+        val page = pagerState.settledPage
+        if (active) {
+            kotlinx.coroutines.delay(5000)
+            trailerFor(items[page])?.let { trailer = page to it; return@LaunchedEffect }
+        } else {
+            kotlinx.coroutines.delay(6000)
+        }
+        advance(page)
+    }
+    val wide = com.joabtv.app.ui.common.isWideLayout()
+    val pad = com.joabtv.app.ui.common.pagePadding()
+    Box(Modifier.fillMaxWidth().height(if (wide) 380.dp else 560.dp)) {
+        androidx.compose.foundation.pager.HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+            val item = items[page]
+            Box(Modifier.fillMaxSize()) {
+                // Arte. Box com o tamanho exato da área, a imagem e o trailer recortam no centro.
+                Box(
+                    if (wide) Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth(0.8f)
+                    else Modifier.fillMaxSize()
+                ) {
+                    coil.compose.AsyncImage(
+                        model = item.backdropUrl.ifBlank { item.posterUrl },
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        alignment = androidx.compose.ui.BiasAlignment(0f, -0.6f),
+                    )
+                    trailer?.takeIf { it.first == page }?.let { (_, st) ->
+                        com.joabtv.app.ui.common.MutedTrailer(
+                            st.videoUrl, st.audioUrl, onEnd = { trailer = null; advance(page) },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+                // Degradês do webOS. Lateral só deitado (.scrim-x), de baixo sempre (.scrim-y).
+                if (wide) Box(Modifier.fillMaxSize().background(
+                    Brush.horizontalGradient(
+                        // A arte começa em 20% da largura. Até 22% o fundo é sólido e esconde a borda dela.
+                        0f to Background, 0.22f to Background,
+                        0.5f to Background.copy(alpha = 0.6f), 0.86f to Color.Transparent,
+                    )
+                ))
+                Box(Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        0f to Background.copy(alpha = 0.45f),
+                        0.22f to Color.Transparent,
+                        if (wide) 0.38f to Color.Transparent else 0.45f to Color.Transparent,
+                        if (wide) 0.75f to Background.copy(alpha = 0.6f) else 0.72f to Background.copy(alpha = 0.78f),
+                        1f to Background,
+                    )
+                ))
+                Column(
+                    Modifier.align(Alignment.BottomStart)
+                        .then(if (wide) Modifier.fillMaxWidth(0.5f) else Modifier.fillMaxWidth())
+                        .padding(start = pad, end = pad, bottom = 22.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    com.joabtv.app.ui.common.Eyebrow(if (item.type == MediaType.SERIES) "Série em alta" else "Filme em alta")
+                    // Logo do título. Texto entra quando não há logo.
+                    val logo = logos[item.tmdbId].orEmpty()
+                    if (logo.isNotBlank()) {
+                        coil.compose.SubcomposeAsyncImage(
+                            model = logo,
+                            contentDescription = item.title,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                            alignment = Alignment.BottomStart,
+                            modifier = Modifier.fillMaxWidth(if (wide) 0.8f else 0.72f).heightIn(max = if (wide) 84.dp else 100.dp),
+                            error = { HeroTitle(item.title) },
+                            loading = { HeroTitle(item.title) },
+                        )
+                    } else {
+                        HeroTitle(item.title)
+                    }
+                    // Metadados (.meta-row). Nota em dourado.
+                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (item.rating > 0) Text(
+                            "★ ${"%.1f".format(item.rating)}", color = Gold, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold,
+                        )
+                        if (item.year.isNotBlank()) Text(item.year, color = TextSecondary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (item.type == MediaType.SERIES) "Série" else "Filme", color = TextSecondary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    if (item.overview.isNotBlank()) Text(
+                        item.overview, color = TextSecondary, fontSize = 14.sp, lineHeight = 21.sp,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    )
+                    Row(
+                        Modifier.padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        com.joabtv.app.ui.common.JoabPrimaryButton(text = "Assistir", onClick = { onItemClick(item) })
+                        // Indicador da página atual.
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            repeat(items.size) { i ->
+                                val on = i == pagerState.currentPage
+                                Box(
+                                    Modifier.height(5.dp).width(if (on) 18.dp else 5.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(if (on) Accent else TextTertiary.copy(alpha = 0.6f)),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionRow(
+    title: String,
+    items: List<MovieItem>,
+    onItemClick: (MovieItem) -> Unit,
+    progressMap: Map<Int, Float>? = null,   // Continuar assistindo: fração assistida por tmdbId
+    remainingMap: Map<Int, Int>? = null,    // Continuar assistindo: minutos restantes por tmdbId
+    eyebrow: String? = null,                // nome do addon acima do título da fileira
+    onNearEnd: (() -> Unit)? = null,        // paginação da fileira (catálogo de addon)
+    badges: Map<Int, String>? = null,       // selo no canto do pôster (Novos episódios)
+    subs: Map<Int, String>? = null,         // linha embaixo do pôster
+    // Último de propósito. A lambda final das chamadas ("Ver Tudo") cai aqui. Antes caía no
+    // onNearEnd e a grade abria sozinha quando a fileira era curta.
+    onSeeMore: (() -> Unit)? = null,
+) {
+    val rowState = androidx.compose.foundation.lazy.rememberLazyListState()
+    if (onNearEnd != null) {
+        val nearEnd by remember {
+            derivedStateOf {
+                val li = rowState.layoutInfo
+                li.totalItemsCount > 0 && (li.visibleItemsInfo.lastOrNull()?.index ?: 0) >= li.totalItemsCount - 4
+            }
+        }
+        LaunchedEffect(nearEnd, items.size) { if (nearEnd) onNearEnd() }
+    }
+    val pad = com.joabtv.app.ui.common.pagePadding()
+    Column {
+        com.joabtv.app.ui.common.SectionHeader(
+            title = title,
+            eyebrow = eyebrow,
+            action = onSeeMore?.let { f -> { com.joabtv.app.ui.common.SeeAllLink("Ver tudo", f) } },
+        )
+        LazyRow(
+            state = rowState,
+            contentPadding = PaddingValues(horizontal = pad),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            items(items, key = { it.tmdbId }) { item ->
+                val prog = progressMap?.get(item.tmdbId)
+                val remain = remainingMap?.get(item.tmdbId)
+                Column(Modifier.width(128.dp)) {
+                    MediaPosterCard(
+                        title = item.title,
+                        imageUrl = item.posterUrl,
+                        onClick = { onItemClick(item) },
+                        modifier = Modifier.fillMaxWidth(),
+                        cleanPoster = true,
+                        progress = prog,
+                        badge = badges?.get(item.tmdbId)?.let { b -> { com.joabtv.app.ui.common.Badge(label = b) } },
+                    )
+                    com.joabtv.app.ui.common.PosterCaption(
+                        if (remain != null) "$remain min restantes" else item.title,
+                        subs?.get(item.tmdbId),
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Grid de "Ver Tudo" (scroll infinito) com header de voltar ──
+@Composable
+private fun CatalogGridView(
+    state: MoviesHomeViewModel.UiState,
+    viewModel: MoviesHomeViewModel,
+    title: String,
+    onItemClick: (MovieItem) -> Unit,
+    onBack: () -> Unit,
+) {
+    val gridState = rememberLazyGridState()
+    val loadMore by remember {
+        derivedStateOf {
+            val li = gridState.layoutInfo
+            val total = li.totalItemsCount
+            val last = li.visibleItemsInfo.lastOrNull()?.index ?: 0
+            total > 0 && last >= total - 6
+        }
+    }
+    LaunchedEffect(loadMore) { if (loadMore) viewModel.loadMoreGrid() }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            com.joabtv.app.ui.common.GlassCircleButton(Icons.AutoMirrored.Filled.ArrowBack, onBack, contentDescription = "Voltar")
+            Text(
+                title, color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, fontFamily = SoraFontFamily,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = (-0.4).sp,
+            )
+        }
+        when {
+            state.gridLoading && state.gridItems.isEmpty() ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Accent, strokeWidth = 2.dp)
+                }
+            state.gridItems.isEmpty() ->
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    JoabEmptyState(Icons.Default.MovieFilter, "Nada encontrado", "Essa lista está vazia agora.")
+                }
+            else -> LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Adaptive(112.dp),
+                contentPadding = PaddingValues(horizontal = com.joabtv.app.ui.common.pagePadding(), vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                items(state.gridItems, key = { it.tmdbId }) { item -> MediaCard(item = item, onClick = { onItemClick(item) }) }
+                if (state.gridLoadingMore) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 18.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = Accent, strokeWidth = 2.dp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── ÚLTIMOS TRAILERS ──────────────────────────────────────────────────────────
+
+/**
+ * Fileira "Últimos Trailers" no padrão do site do TMDB. Abas (Popular, Streaming, Na TV,
+ * Para Alugar, Nos Cinemas) e cards 16:9 com play no meio, título e nome do vídeo embaixo.
+ * Tocar abre o trailer no nosso ExoPlayer via [onPlay].
+ */
+@Composable
+private fun LatestTrailersRow(
+    state: MoviesHomeViewModel.UiState,
+    viewModel: MoviesHomeViewModel,
+    onPlay: (MoviesHomeViewModel.TrailerCard) -> Unit,
+) {
+    val pad = com.joabtv.app.ui.common.pagePadding()
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        com.joabtv.app.ui.common.SectionHeader("Últimos trailers", eyebrow = "Trailers")
+        // Abas roláveis (cabem 5 sem espremer em tela pequena).
+        androidx.compose.foundation.lazy.LazyRow(
+            contentPadding = PaddingValues(horizontal = pad),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(MoviesHomeViewModel.TrailerTab.entries.toList(), key = { it.name }) { tab ->
+                com.joabtv.app.ui.common.FilterChipPill(
+                    label = tab.label,
+                    selected = state.trailerTab == tab,
+                    onClick = { viewModel.selectTrailerTab(tab) },
+                )
+            }
+        }
+        when {
+            // Espaço reservado do mesmo tamanho do card: a fileira não "pula" quando carrega.
+            state.trailersLoading -> {
+                val brush = com.joabtv.app.ui.common.skeletonBrush()
+                androidx.compose.foundation.lazy.LazyRow(
+                    contentPadding = PaddingValues(horizontal = pad),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    userScrollEnabled = false,
+                ) {
+                    items(3) {
+                        Column(Modifier.width(264.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                            com.joabtv.app.ui.common.SkeletonBox(Modifier.fillMaxWidth().aspectRatio(16f / 9f), 14.dp, brush)
+                            com.joabtv.app.ui.common.SkeletonBox(Modifier.fillMaxWidth(0.7f).height(13.dp), 4.dp, brush)
+                        }
+                    }
+                }
+            }
+
+            state.latestTrailers.isEmpty() -> Text(
+                "Nenhum trailer nessa aba agora.",
+                color = TextTertiary, fontSize = 14.sp,
+                modifier = Modifier.padding(horizontal = pad),
+            )
+
+            else -> androidx.compose.foundation.lazy.LazyRow(
+                contentPadding = PaddingValues(horizontal = pad),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                items(state.latestTrailers, key = { "${it.tmdbId}:${it.videoKey}" }) { card ->
+                    TrailerCardView(card, onClick = { onPlay(card) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrailerCardView(card: MoviesHomeViewModel.TrailerCard, onClick: () -> Unit) {
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (focused) 1.05f else if (pressed) 0.97f else 1f,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "trailerScale",
+    )
+    Column(
+        Modifier
+            .width(264.dp)
+            .scale(scale)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(interactionSource = src, indication = null, onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(BackgroundCard2)
+                .then(if (focused) Modifier.border(3.dp, Color.White, RoundedCornerShape(14.dp)) else Modifier),
+        ) {
+            coil.compose.AsyncImage(
+                model = card.backdropUrl,
+                contentDescription = card.title,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.15f),
+                        1f to Color.Black.copy(alpha = 0.55f),
+                    )
+                )
+            )
+            // Botão de play central (48dp, acima do mínimo de toque).
+            Box(
+                Modifier
+                    .align(Alignment.Center)
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.55f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = "Assistir trailer de ${card.title}",
+                    tint = Color.White,
+                    modifier = Modifier.size(26.dp),
+                )
+            }
+        }
+        Text(
+            card.title,
+            color = TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            fontFamily = SoraFontFamily, maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+        if (card.videoName.isNotBlank()) {
+            Text(
+                card.videoName,
+                color = TextTertiary, fontSize = 12.sp, lineHeight = 15.sp,
+                fontFamily = ManropeFontFamily, maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
