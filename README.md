@@ -9,12 +9,12 @@
 [![Android](https://img.shields.io/badge/minSdk-23-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
 [![Hilt](https://img.shields.io/badge/DI-Hilt-00C2A8)](https://dagger.dev/hilt/)
 [![Media3](https://img.shields.io/badge/Player-Media3%20ExoPlayer-FF6D00)](https://developer.android.com/media/media3)
-[![License](https://img.shields.io/badge/license-a%20definir-lightgrey)](#licença)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 Um único app Kotlin/Compose para **celular, tablet e Android TV**, com busca de metadados no TMDB
 e fontes de vídeo vindas de addons no padrão [Stremio](https://stremio.github.io/stremio-addon-guide/).
 
-[Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura) · [Como rodar](#como-rodar) · [Configuração](#configuração) · [Estrutura](#estrutura-do-projeto)
+[Instalação](#instalação) · [Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura) · [Como compilar](#como-compilar) · [Configuração](#configuração) · [Estrutura](#estrutura-do-projeto)
 
 </div>
 
@@ -29,6 +29,43 @@ tela de toque **e** pra controle remoto na TV, no mesmo código-fonte.
 Ele não hospeda nem distribui conteúdo nenhum: busca metadados (sinopse, elenco, pôster) no
 **TMDB** e resolve links de vídeo através de addons Stremio que o próprio usuário instala. O app
 é só o player e a interface.
+
+## Instalação
+
+Pegue o `.apk` pronto em **[Releases](../../releases)** — não precisa compilar nada. Se preferir
+compilar você mesmo, veja [Como compilar](#como-compilar).
+
+### Celular ou tablet Android
+1. Baixe o `.apk` da Release direto no aparelho.
+2. Abra o arquivo baixado. Na primeira vez o Android avisa que precisa liberar "instalar app de
+   fonte desconhecida" para o app que você usou pra baixar (navegador, Arquivos...) — libere e
+   confirme a instalação.
+
+### Android TV / Google TV — qualquer marca
+Vale pra **Sony, TCL, Philips, Hisense, Xiaomi, NVIDIA Shield, Chromecast com Google TV, Fire TV**
+e qualquer outro aparelho que rode Android TV ou Google TV. Essas TVs não têm o JOTV na loja
+oficial, então a instalação é por **sideload** (instalar um APK avulso). Dois jeitos:
+
+- **Pelo computador, com ADB** (mais confiável): na TV, ative a depuração (em geral
+  **Configurações → Aparelho → Sobre**, toque várias vezes na versão do sistema até liberar as
+  "Opções do desenvolvedor", depois ligue "Depuração USB" ou "Depuração de rede"). No PC, com o
+  [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools)
+  instalado:
+  ```sh
+  adb connect <ip-da-tv>:5555
+  adb install app-release.apk
+  ```
+- **Direto na TV, sem computador**: instale um app tipo "Send Files to TV" ou "Downloader"
+  (disponíveis na própria loja de apps da TV), baixe o `.apk` por ele e instale.
+
+### Samsung (Tizen), Roku, Apple TV, ou qualquer TV sem Android
+Essas TVs **não rodam Android** — o `.apk` não instala direto nelas, não existe esse caminho.
+O jeito de usar o JOTV numa tela assim é plugar um aparelho Android TV na entrada HDMI (um
+Chromecast com Google TV, um TV Box Android qualquer, um Fire TV Stick) e instalar o app nele,
+do jeito acima — a TV vira só o monitor, quem roda o app é o aparelho plugado.
+
+Se a TV for **LG com webOS**, existe uma versão nativa própria (sem precisar de aparelho externo)
+no repositório webOS do JOTV.
 
 ## Funcionalidades
 
@@ -88,7 +125,9 @@ UI (Jetpack Compose)  →  ViewModel (Hilt)  →  Repository  →  Room (local) 
 - **Player**: Media3 (ExoPlayer) com `MediaSession`, suporte a Cast e extração de trailers do
   YouTube com embed bloqueado via NewPipeExtractor.
 
-## Como rodar
+## Como compilar
+
+Isso aqui é pra quem quer mexer no código. Pra só instalar e usar, veja [Instalação](#instalação).
 
 ### Pré-requisitos
 - [Android Studio](https://developer.android.com/studio) (Ladybug ou mais recente) ou só o JDK 17 + Gradle, se preferir linha de comando
@@ -182,5 +221,4 @@ Este produto usa a API do TMDB, mas não é endossado nem certificado pelo TMDB.
 
 ## Licença
 
-Ainda não definida. Até lá, todos os direitos reservados — entre em contato antes de reutilizar
-o código.
+[Apache License 2.0](LICENSE).
