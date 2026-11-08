@@ -1,6 +1,7 @@
 package com.joabtv.app.ui.settings
 
 import androidx.compose.foundation.background
+import com.joabtv.app.ui.common.topInsetsPadding
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -70,7 +71,7 @@ fun AddonStoreScreen(onBack: () -> Unit, vm: AddonStoreViewModel = hiltViewModel
     )
 
     Box(Modifier.fillMaxSize().background(Background)) {
-        BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding()) {
+        BoxWithConstraints(Modifier.fillMaxSize().topInsetsPadding()) {
             val wide = maxWidth >= 700.dp
             Row(Modifier.fillMaxSize()) {
                 Column(Modifier.weight(1f).fillMaxHeight()) {

@@ -2,6 +2,7 @@ package com.joabtv.app.ui.settings
 
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.background
+import com.joabtv.app.ui.common.topInsetsPadding
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -67,7 +68,7 @@ fun SettingsScreen(
     LaunchedEffect(Unit) { if (sourceStatus.isEmpty()) viewModel.checkSourcesHealth() }
     val pad = com.joabtv.app.ui.common.pagePadding()
 
-    Column(Modifier.fillMaxSize().background(Background).statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().background(Background).topInsetsPadding()) {
         Row(
             Modifier.fillMaxWidth().padding(start = 8.dp, end = pad, top = 10.dp),
             verticalAlignment = Alignment.CenterVertically,

@@ -62,6 +62,7 @@ import com.joabtv.app.domain.model.MovieItem
 import com.joabtv.app.ui.common.GlassCircleButton
 import com.joabtv.app.ui.common.JoabPrimaryButton
 import com.joabtv.app.ui.common.pressScale
+import com.joabtv.app.ui.common.topInsetsPadding
 import com.joabtv.app.ui.theme.*
 
 /** Data ISO (yyyy-MM-dd) → dd/MM/yyyy (minimalista). "" se vazio/invalido. */
@@ -257,7 +258,7 @@ fun MovieDetailScreen(
                         Modifier
                             .then(if (tvMode) Modifier.focusProperties { canFocus = false } else Modifier)
                             .fillMaxWidth()
-                            .statusBarsPadding()
+                            .topInsetsPadding()
                             .padding(horizontal = pad, vertical = 14.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,

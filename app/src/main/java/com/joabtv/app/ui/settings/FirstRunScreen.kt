@@ -31,6 +31,7 @@ import com.joabtv.app.ui.common.SettingsRow
 import com.joabtv.app.ui.common.SettingsSection
 import com.joabtv.app.ui.common.currentDeviceLayout
 import com.joabtv.app.ui.common.pagePadding
+import com.joabtv.app.ui.common.topInsetsPadding
 import com.joabtv.app.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -74,7 +75,7 @@ fun FirstRunScreen(onDone: () -> Unit, vm: FirstRunViewModel = hiltViewModel()) 
         return
     }
 
-    Column(Modifier.fillMaxSize().background(Background).statusBarsPadding().verticalScroll(rememberScrollState())) {
+    Column(Modifier.fillMaxSize().background(Background).topInsetsPadding().verticalScroll(rememberScrollState())) {
         PageHeader("Bem-vindo ao JOTV", Modifier.padding(horizontal = pad, vertical = 10.dp), sub = "Só dessa vez: seu nome e o aparelho")
         Column(
             Modifier.fillMaxSize().padding(horizontal = pad).padding(bottom = 28.dp),

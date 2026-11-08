@@ -42,7 +42,10 @@ class SourceHealthChecker @Inject constructor(
     /** Testa o TMDB e os addons do usuário em paralelo. */
     suspend fun checkAll(): List<SourceStatus> = withContext(Dispatchers.IO) {
         val targets = buildList {
-            add("TMDB (catálogo)" to "https://api.themoviedb.org/3/")
+            // /3/ sozinho (sem api_key) sempre dá 401 — o TMDB exige chave em toda rota real.
+            // Isso fazia o teste mostrar "fora do ar" mesmo com o TMDB funcionando normalmente
+            // no resto do app. /configuration é a rota padrão pra testar chave + API de uma vez.
+            add("TMDB (catálogo)" to "https://api.themoviedb.org/3/configuration?api_key=${prefs.tmdbApiKey}")
             prefs.stremioAddonList().forEach { url ->
                 val host = runCatching { java.net.URI(url).host }.getOrNull() ?: "addon"
                 add("Addon Stremio — $host" to url)

@@ -1,6 +1,7 @@
 package com.joabtv.app.ui.settings
 
 import androidx.compose.material.icons.filled.TouchApp
+import com.joabtv.app.ui.common.topInsetsPadding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.focusGroup
@@ -307,7 +308,7 @@ fun AddonSiteConfig(
         return
     }
 
-    Column(Modifier.fillMaxSize().background(Background).statusBarsPadding().navigationBarsPadding()) {
+    Column(Modifier.fillMaxSize().background(Background).topInsetsPadding().navigationBarsPadding()) {
         header()
         page(Modifier.fillMaxWidth().weight(1f))
         Column(

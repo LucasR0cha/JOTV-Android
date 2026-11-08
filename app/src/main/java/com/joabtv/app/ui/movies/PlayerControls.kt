@@ -160,13 +160,15 @@ private fun PlayerSeekRow(position: Long, duration: Long, onSeekTo: (Long) -> Un
     var preview by remember { mutableStateOf<Bitmap?>(null) }
 
     // Prévia do frame ao arrastar, tipo YouTube. Só busca quando a posição muda de janela de
-    // 1.5s (não a cada pixel), e some se a fonte não devolver nada (ScrubThumbnailer explica).
+    // 1.5s (não a cada pixel). Mantém o último frame bom na tela em vez de apagar — tanto
+    // enquanto o próximo carrega (sem isso piscava preto a cada novo arraste, mesmo já tendo
+    // mostrado imagem antes) quanto se essa janela especificamente falhar (ScrubThumbnailer
+    // explica por quê). Só um resultado de verdade substitui o que já estava lá.
     LaunchedEffect(scrubbing, scrubMs / 1500, videoUrl) {
         if (!scrubbing || total <= 0 || videoUrl.isBlank()) return@LaunchedEffect
         delay(120)
-        preview = ScrubThumbnailer.frameAt(videoUrl, scrubMs)
+        ScrubThumbnailer.frameAt(videoUrl, scrubMs)?.let { preview = it }
     }
-    LaunchedEffect(scrubbing) { if (!scrubbing) preview = null }
 
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         TimePill(formatTime(position))
@@ -218,7 +220,7 @@ private fun ScrubPreview(bitmap: Bitmap?, timeMs: Long, xPx: Float, barWidthPx: 
     val centerX = xPx.coerceIn(minX, maxX)
     Column(
         modifier
-            .offset { IntOffset((centerX - widthPx / 2).toInt(), with(density) { (-92).dp.roundToPx() }) }
+            .offset { IntOffset((centerX - widthPx / 2).toInt(), with(density) { (-68).dp.roundToPx() }) }
             .width(widthDp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

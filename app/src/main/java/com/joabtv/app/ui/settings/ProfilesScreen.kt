@@ -1,6 +1,7 @@
 package com.joabtv.app.ui.settings
 
 import androidx.compose.foundation.background
+import com.joabtv.app.ui.common.topInsetsPadding
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -115,8 +116,9 @@ fun ProfilesScreen(
         Modifier.fillMaxSize()
             .background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(Color(0xFF17212E), Background), radius = 1400f))
             .verticalScroll(rememberScrollState())
-            .statusBarsPadding().padding(horizontal = 16.dp, vertical = 48.dp),
+            .topInsetsPadding().padding(horizontal = 16.dp, vertical = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
         Text(
             if (editing) "Editar perfis" else "Quem está assistindo?",

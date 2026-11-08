@@ -1,8 +1,11 @@
 package com.joabtv.app.ui.common
 
 import android.app.Activity
+import androidx.compose.foundation.layout.displayCutoutPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -48,6 +51,16 @@ fun KeepScreenOn() {
         onDispose { view.keepScreenOn = false }
     }
 }
+
+/**
+ * Topo livre da área da câmera/notch do celular, mesmo com a barra de status escondida.
+ * [MainActivity] roda o app em imersivo o tempo todo (esconde as barras do sistema sempre que a
+ * janela ganha foco, e nada no app chama [ShowSystemBars] de volta), então `statusBarsPadding()`
+ * sozinho vira 0dp — o recorte físico da câmera continua lá mesmo sem a barra desenhada.
+ */
+fun Modifier.topInsetsPadding(): Modifier = this
+    .statusBarsPadding()
+    .displayCutoutPadding()
 
 /** Garante barras visíveis (telas normais de navegação). */
 @Composable

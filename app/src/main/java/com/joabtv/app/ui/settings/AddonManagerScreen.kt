@@ -51,6 +51,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.joabtv.app.data.local.AddonEntry
 import com.joabtv.app.data.remote.AddonManifest
+import com.joabtv.app.ui.common.topInsetsPadding
 import com.joabtv.app.ui.theme.*
 
 /**
@@ -67,6 +68,8 @@ fun AddonManagerScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var input by remember { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
+    // Addon aberto pra reconfigurar no site (token vencido, opção nova etc). null = fechado.
+    var siteFor by remember { mutableStateOf<AddonEntry?>(null) }
     val ativos = state.addons.count { it.enabled }
 
     // Só limpa o campo quando a instalação termina com SUCESSO. Em erro o texto digitado fica
@@ -79,7 +82,7 @@ fun AddonManagerScreen(
         Modifier
             .fillMaxSize()
             .background(Background)
-            .statusBarsPadding(),
+            .topInsetsPadding(),
     ) {
         // ── Topo ──
         val refreshing = state.loading.isNotEmpty()
@@ -169,6 +172,7 @@ fun AddonManagerScreen(
                     onDown = { viewModel.moveDown(index) },
                     onRemove = { viewModel.remove(addon.url) },
                     onEdit = { novo -> viewModel.editUrl(addon.url, novo) },
+                    onConfigureSite = { siteFor = addon },
                     homeKeys = state.homeCatalogKeys,
                     onToggleCatalog = { c ->
                         viewModel.toggleHomeCatalog(addon.url, state.manifests[addon.url]?.name.orEmpty(), c)
@@ -181,6 +185,20 @@ fun AddonManagerScreen(
             }
         }
         }
+    }
+
+    siteFor?.let { a ->
+        // Fecha a página assim que a reconfiguração (editUrl) terminar.
+        var started by remember(a.url) { mutableStateOf(false) }
+        LaunchedEffect(state.installing) { if (started && !state.installing) siteFor = null }
+        AddonSiteConfig(
+            name = state.manifests[a.url]?.name?.takeIf { it.isNotBlank() } ?: a.url,
+            configureUrl = com.joabtv.app.data.remote.AddonLinks.baseOf(a.url) + "/configure",
+            plainUrl = null,
+            busy = state.installing,
+            onInstall = { url -> started = true; viewModel.editUrl(a.url, url) },
+            onClose = { siteFor = null },
+        )
     }
 }
 
@@ -294,6 +312,7 @@ private fun AddonCard(
     onDown: () -> Unit,
     onRemove: () -> Unit,
     onEdit: (String) -> Unit,
+    onConfigureSite: () -> Unit,
     homeKeys: Set<String>,
     onToggleCatalog: (com.joabtv.app.data.remote.AddonCatalog) -> Unit,
 ) {
@@ -433,7 +452,10 @@ private fun AddonCard(
 
         HorizontalDivider(color = BorderSubtle)
 
-        // Ações: prioridade + remover
+        // Ações: prioridade numa linha, o resto (que cresceu com "Configurar no site") noutra
+        // que quebra sozinha em linhas extras se não couber — numa linha só lado a lado
+        // estourava a largura do celular.
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onUp, enabled = !isFirst, modifier = Modifier.size(48.dp)) {
                 Icon(
@@ -461,7 +483,8 @@ private fun AddonCard(
                         .padding(horizontal = 10.dp, vertical = 13.dp),
                 )
             }
-            Spacer(Modifier.weight(1f))
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (confirmRemove) {
                 Text(
                     "Cancelar",
@@ -495,7 +518,18 @@ private fun AddonCard(
                     Text("Remover", color = LiveRed, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = ManropeFontFamily)
                 }
             }
-            Spacer(Modifier.width(4.dp))
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { onConfigureSite() }
+                    .padding(horizontal = 12.dp, vertical = 13.dp),
+            ) {
+                Text(
+                    "Configurar no site",
+                    color = TextSecondary, fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold, fontFamily = ManropeFontFamily,
+                )
+            }
             Box(
                 Modifier
                     .clip(RoundedCornerShape(10.dp))
@@ -508,6 +542,7 @@ private fun AddonCard(
                     fontWeight = FontWeight.Bold, fontFamily = ManropeFontFamily,
                 )
             }
+        }
         }
 
         // Campo de edição do endereço. Serve pra quando o addon muda de host ou de token,

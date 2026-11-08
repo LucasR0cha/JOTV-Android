@@ -48,6 +48,7 @@ import com.joabtv.app.ui.common.GlassCircleButton
 import com.joabtv.app.ui.common.JoabEmptyState
 import com.joabtv.app.ui.common.MediaPosterCard
 import com.joabtv.app.ui.common.pressScale
+import com.joabtv.app.ui.common.topInsetsPadding
 import com.joabtv.app.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -155,7 +156,7 @@ fun MediaSearchScreen(
         Modifier
             .fillMaxSize()
             .background(Background)
-            .statusBarsPadding(),
+            .topInsetsPadding(),
     ) {
         // ── Cabeçalho: voltar + pill de busca premium ─────────────────────────
         Row(

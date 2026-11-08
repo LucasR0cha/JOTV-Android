@@ -15,8 +15,8 @@ android {
         applicationId  = "com.joabtv.app"
         minSdk         = 23
         targetSdk      = 35
-        versionCode    = 2
-        versionName    = "1.0.1"
+        versionCode    = 3
+        versionName    = "1.0.2"
         // Chave TMDB lida de gradle property (local.properties / ~/.gradle/gradle.properties),
         // fora do VCS. Sem ela, fica vazia e o usuário informa a própria chave em Configurações.
         val tmdbKey = (project.findProperty("TMDB_API_KEY") as String?) ?: ""

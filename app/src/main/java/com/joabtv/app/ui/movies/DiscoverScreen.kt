@@ -38,6 +38,7 @@ import com.joabtv.app.ui.common.FilterChipPill
 import com.joabtv.app.ui.common.GlassCircleButton
 import com.joabtv.app.ui.common.JoabEmptyState
 import com.joabtv.app.ui.common.MediaPosterCard
+import com.joabtv.app.ui.common.topInsetsPadding
 import com.joabtv.app.ui.theme.*
 
 /**
@@ -183,7 +184,7 @@ private fun DiscoverTopBar(
     Row(
         Modifier
             .fillMaxWidth()
-            .statusBarsPadding()
+            .topInsetsPadding()
             .padding(horizontal = 16.dp)
             .padding(top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
