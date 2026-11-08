@@ -71,7 +71,7 @@ JOTV pra Tizen, empacotada como `.wgt`, pegue o arquivo `JOTV-Tizen-*.wgt` da me
 3. Conecte e instale.
    ```sh
    sdb connect <ip-da-tv>:26101
-   sdb install JOTV-Tizen-v1.3.3.wgt
+   sdb install JOTV-Tizen-v1.3.4.wgt
    ```
 
 O `.wgt` já sai assinado com um certificado de desenvolvedor, suficiente pra instalar em modo
