@@ -45,10 +45,19 @@ data class HomeRowPref(
 /** O que o app guarda do manifest de um addon para montar a Início sem ir na rede. [id] é o id do manifest. */
 data class CachedAddon(val name: String, val catalogs: List<AddonCatalog>, val id: String = "")
 
+/** Addon com fileiras demais ligadas no perfil. [n] é quantas aparecem agora. */
+data class BigAddon(val base: String, val name: String, val n: Int)
+
 object HomeLayout {
 
     /** Chave das fileiras de coleção ("col:<id da coleção>"). */
     const val COL_PREFIX = "col:"
+
+    /** Teto de fileiras que um addon liga sozinho. Do 11º catálogo em diante ele chega escondido. */
+    const val AUTO_ROWS = 10
+
+    /** Acima disso o perfil recebe a pergunta "Deixar só as 10 primeiras?". */
+    const val BIG_ADDON = 40
 
     /** Layout de quem nunca personalizou. [legacy] são as fileiras de addon marcadas no formato antigo. */
     fun default(legacy: List<HomeCatalogRef>): List<HomeRowPref> =
@@ -60,8 +69,10 @@ object HomeLayout {
      * Junta o que o perfil salvou com o que existe agora.
      * Fileira de addon removido sai. Fileira de addon desligado fica guardada (só não aparece).
      * Catálogo que o perfil ainda não viu entra no fim, ligado só quando o addon foi instalado
-     * depois da Início personalizável ([autoOnBases]). Assim quem já usava o app não ganha uma
-     * enxurrada de fileiras, e addon novo aparece sozinho como no Stremio.
+     * depois da Início personalizável ([autoOnBases]) e só até o teto [AUTO_ROWS] por addon. Assim
+     * quem já usava o app não ganha uma enxurrada de fileiras, e addon novo aparece sozinho como
+     * no Stremio sem inundar a Início. Com [keepOrphans] a fileira de addon removido fica na lista
+     * (a tela Minha Início mostra "foi removido" e deixa a pessoa tirar).
      */
     fun normalize(
         saved: List<HomeRowPref>,
@@ -69,6 +80,7 @@ object HomeLayout {
         available: List<HomeCatalogRef>,
         autoOnBases: Set<String>,
         collections: List<com.joabtv.app.data.collections.MediaCollection> = emptyList(),
+        keepOrphans: Boolean = false,
     ): List<HomeRowPref> {
         val avail = available.associateBy { it.key }
         val cols = collections.associateBy { COL_PREFIX + it.id }
@@ -80,13 +92,22 @@ object HomeLayout {
             // Coleção apagada sai. O título acompanha a coleção, o nome dado pela pessoa fica.
             if (r.collectionId != null) { cols[r.key]?.let { out += r.copy(collection = it.title); seen += r.key }; continue }
             val ref = r.ref ?: continue
-            if (ref.base !in installedBases) continue
+            if (ref.base !in installedBases) {
+                if (keepOrphans) { out += r; seen += r.key }
+                continue
+            }
             // Nome do catálogo e do addon acompanham o manifest. O nome dado pela pessoa fica.
             out += avail[r.key]?.let { r.copy(ref = it) } ?: r
             seen += r.key
         }
         SystemRow.entries.filter { it.key !in seen }.forEach { out += HomeRowPref(it.key); seen += it.key }
-        available.filter { seen.add(it.key) }.forEach { out += HomeRowPref(it.key, it.base in autoOnBases, "", it) }
+        val perBase = HashMap<String, Int>()
+        out.forEach { r -> r.ref?.let { perBase.merge(it.base, 1, Int::plus) } }
+        available.filter { seen.add(it.key) }.forEach {
+            val have = perBase[it.base] ?: 0
+            perBase[it.base] = have + 1
+            out += HomeRowPref(it.key, it.base in autoOnBases && have < AUTO_ROWS, "", it)
+        }
         // Coleção nova entra ligada, no fim (a fixada sobe logo abaixo).
         collections.filter { seen.add(COL_PREFIX + it.id) }.forEach { out += HomeRowPref(COL_PREFIX + it.id, true, "", null, it.title) }
         val pinned = collections.filter { it.pinToTop }.mapTo(HashSet()) { COL_PREFIX + it.id }
@@ -119,6 +140,62 @@ object HomeLayout {
     /** Pode subir ou descer na lista que a tela mostra. */
     fun canMove(list: List<HomeRowPref>, key: String, delta: Int, visible: (HomeRowPref) -> Boolean = { true }): Boolean =
         move(list, key, delta, visible) !== list
+
+    /**
+     * Leva a fileira [key] para a posição [to], contada na lista sem ela. Fica abaixo das coleções
+     * fixadas ([pinned]) e acima de Gêneros. Devolve a mesma lista quando a fileira não se move.
+     */
+    fun moveTo(list: List<HomeRowPref>, key: String, to: Int, pinned: Set<String> = emptySet()): List<HomeRowPref> {
+        val from = list.indexOfFirst { it.key == key }
+        if (from < 0 || key == SystemRow.GENRES.key || key in pinned) return list
+        val rest = list.toMutableList().also { it.removeAt(from) }
+        // Coleção fixada vem no topo e Gêneros no fim, então o miolo é o que sobra entre os dois.
+        val lo = rest.count { it.key in pinned }
+        val hi = rest.size - if (rest.any { it.key == SystemRow.GENRES.key }) 1 else 0
+        val at = to.coerceIn(lo, maxOf(lo, hi))
+        if (at == from) return list
+        rest.add(at, list[from])
+        return rest
+    }
+
+    /** Tira da lista as fileiras de um addon (a remoção do addon limpa o que era dele). */
+    fun dropBase(list: List<HomeRowPref>, base: String): List<HomeRowPref> = list.filter { it.ref?.base != base }
+
+    /** Deixa ligadas só as [keep] primeiras fileiras do addon [base] e esconde o resto, na ordem da lista. */
+    fun keepFirst(list: List<HomeRowPref>, base: String, keep: Int = AUTO_ROWS): List<HomeRowPref> {
+        var n = 0
+        return list.map { r ->
+            if (r.enabled && r.ref?.base == base && ++n > keep) r.copy(enabled = false) else r
+        }
+    }
+
+    /**
+     * Primeiro addon instalado com mais de [BIG_ADDON] fileiras aparecendo que ainda não ouviu a
+     * pergunta (o perfil guarda em [keep] os que responderam "Manter todas").
+     */
+    fun bigAddon(list: List<HomeRowPref>, installedBases: Set<String>, keep: Set<String>): BigAddon? {
+        val count = LinkedHashMap<String, BigAddon>()
+        for (r in list) {
+            val ref = r.ref ?: continue
+            if (!r.enabled || ref.base !in installedBases) continue
+            val cur = count[ref.base] ?: BigAddon(ref.base, ref.addon.ifBlank { "Um addon" }, 0)
+            count[ref.base] = cur.copy(n = cur.n + 1)
+        }
+        return count.values.firstOrNull { it.n > BIG_ADDON && it.base !in keep }
+    }
+
+    /** "10 fileiras novas na Início." ou "10 de 40 fileiras na Início. Escolha outras em Fileiras." */
+    fun rowsText(on: Int, all: Int): String =
+        if (on >= all) (if (all == 1) "1 fileira nova" else "$all fileiras novas") + " na Início."
+        else "$on de $all fileiras na Início. Escolha outras em Fileiras."
+
+    /** Mensagem de addon instalado, a mesma na loja, no link e na importação. */
+    fun installText(name: String, on: Int, all: Int): String =
+        "$name instalado." + if (all > 0) " " + rowsText(on, all) else ""
+
+    /** Fileiras que entraram desde a última visita à Minha Início. Sem registro ainda, nada é novo. */
+    fun fresh(seen: Set<String>?, keys: List<String>): Set<String> =
+        if (seen == null) emptySet() else keys.filterTo(LinkedHashSet()) { it !in seen }
 
     /**
      * Volta à ordem padrão. Fileiras fixas ligadas, nomes originais. As de addon mantêm o

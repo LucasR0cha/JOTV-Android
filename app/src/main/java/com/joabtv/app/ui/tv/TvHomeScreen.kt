@@ -2,6 +2,7 @@ package com.joabtv.app.ui.tv
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -24,10 +25,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -51,6 +59,8 @@ import com.joabtv.app.ui.movies.MoviesHomeViewModel.CatalogQuery
 import com.joabtv.app.ui.movies.MoviesHomeViewModel.CatalogType
 import com.joabtv.app.ui.common.rememberReducedMotion
 import com.joabtv.app.ui.navigation.TvMenuClosed
+import com.joabtv.app.ui.navigation.TvMenuTop
+import com.joabtv.app.data.local.MenuStyle
 import com.joabtv.app.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -59,15 +69,25 @@ import kotlinx.coroutines.launch
  * Arte em tela cheia com informações sobre o degradê e fileiras na parte inferior.
  * O destaque acompanha o pôster focado e pausa quando o menu cobre a tela.
  */
+/** Catálogo pronto para a Início. Só a revisão de debug fornece, o app usa o ViewModel normal. */
+val LocalTvHomeViewModel = staticCompositionLocalOf<MoviesHomeViewModel?> { null }
+
 @Composable
 fun TvHomeScreen(
     onItemClick: (MovieItem) -> Unit,
-    viewModel: MoviesHomeViewModel = hiltViewModel(),
+    viewModel: MoviesHomeViewModel = LocalTvHomeViewModel.current ?: hiltViewModel(),
     navigationOpen: Boolean = false,
     onFolderClick: (String, String) -> Unit = { _, _ -> },
+    onCustomizeHome: () -> Unit = {},
+    onExploreAddons: () -> Unit = {},
 ) {
-    TvText { TvHomeScreenBody(onItemClick, viewModel, navigationOpen, onFolderClick) }
+    TvText { TvHomeScreenBody(onItemClick, viewModel, navigationOpen, onFolderClick, onCustomizeHome, onExploreAddons) }
 }
+
+/** Dá à Início vazia o jeito de religar as sugestões do JOTV sem passar pelo ViewModel da Início. */
+@dagger.hilt.EntryPoint
+@dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
+internal interface TvHomePrefsEntry { fun prefs(): com.joabtv.app.data.local.PlatformPrefs }
 
 @Composable
 private fun TvHomeScreenBody(
@@ -75,27 +95,31 @@ private fun TvHomeScreenBody(
     viewModel: MoviesHomeViewModel = hiltViewModel(),
     navigationOpen: Boolean = false,
     onFolderClick: (String, String) -> Unit,
+    onCustomizeHome: () -> Unit = {},
+    onExploreAddons: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val collections by viewModel.collectionsFlow.collectAsStateWithLifecycle()
     val grid = state.gridQuery
     if (grid != null) {
         androidx.activity.compose.BackHandler { viewModel.closeCatalog() }
-        Box(Modifier.fillMaxSize().padding(start = TvMenuClosed)) {
+        Box(Modifier.fillMaxSize().padding(start = TvMenuClosed, top = TvMenuTop)) {
             TvCatalogGrid(state, viewModel, grid.title, onItemClick)
         }
         return
     }
 
     val scope = rememberCoroutineScope()
-    val candidates = heroCandidates(state)
+    val candidates = remember(state) { heroCandidates(state) }
     LaunchedEffect(candidates.map { posterKey(it) }) {
         candidates.take(8).forEach { if (it.backdropUrl.isBlank()) viewModel.ensureHeroBackdrop(it.tmdbId, it.type == MediaType.SERIES) }
     }
-    val heroItems = candidates.mapNotNull { item ->
-        val backdrop = item.backdropUrl.ifBlank { state.heroBackdrops[item.tmdbId].orEmpty() }
-        if (backdrop.isBlank()) null else item.copy(backdropUrl = backdrop)
-    }.take(8)
+    val heroItems = remember(candidates, state.heroBackdrops) {
+        candidates.mapNotNull { item ->
+            val backdrop = item.backdropUrl.ifBlank { state.heroBackdrops[item.tmdbId].orEmpty() }
+            if (backdrop.isBlank()) null else item.copy(backdropUrl = backdrop)
+        }.take(8)
+    }
     var page by remember { mutableIntStateOf(0) }
     // O título selecionado continua no destaque ao voltar para os botões.
     var focusedItem by remember { mutableStateOf<MovieItem?>(null) }
@@ -159,15 +183,59 @@ private fun TvHomeScreenBody(
             state.addonRows.isEmpty() && state.recommended.isEmpty() && state.nowPlaying.isEmpty() &&
             state.releases2026.isEmpty() && state.homeSections.isEmpty() && collections.none { c -> c.folders.isNotEmpty() && state.layout.any { it.collectionId == c.id } }
         if (nothingToShow) {
-            TvHomeFeedEmpty(hasTmdbKey = state.hasTmdbKey, onRetry = viewModel::load)
+            // Início vazia diz por que e oferece o próximo passo em botão, nunca em caminho de menu.
+            val why = when {
+                !state.catalogOn && state.layout.none { it.ref != null || it.collectionId != null } -> HomeEmpty.SUGGESTIONS_OFF
+                state.layout.isEmpty() -> HomeEmpty.ALL_HIDDEN
+                else -> HomeEmpty.FEED
+            }
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            TvHomeFeedEmpty(
+                why = why, hasTmdbKey = state.hasTmdbKey, onRetry = viewModel::load,
+                onSuggestions = {
+                    dagger.hilt.android.EntryPointAccessors.fromApplication(ctx.applicationContext, TvHomePrefsEntry::class.java).prefs().catalogOn = true
+                },
+                onExplore = onExploreAddons, onOrganize = onCustomizeHome,
+            )
             return@Box
         }
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val heroH = maxHeight * 0.62f
+            val pageTop = 32.r.coerceAtMost(maxHeight * .5f)
+            val pageHeight = maxHeight - pageTop
+            // A área das fileiras começa acima dos botões do destaque (cada fileira é uma página
+            // que vai até o alto). A busca de foco do Compose não liga dois grupos que se
+            // sobrepõem, então o caminho entre os botões e a primeira fileira é feito aqui.
+            val focusManager = LocalFocusManager.current
+            val railsEntry = remember { FocusRequester() }
+            val heroEntry = remember { FocusRequester() }
+            var railContentHeight by remember { mutableStateOf<Dp?>(null) }
+            val reduced = rememberReducedMotion()
+            // Menu Superior. A fileira focada fica inteira e a seguinte espia embaixo. As fileiras
+            // têm altura natural e a área delas começa no topo da fileira focada.
+            val peekLayout = LocalMenuStyle.current == MenuStyle.TOP
+            val peek = 6.r
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            val firstBlock by remember {
+                derivedStateOf { rails.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }?.size ?: 0 }
+            }
+            val block = railContentHeight ?: with(density) { firstBlock.toDp() }.takeIf { it > 0.r } ?: 27.r
+            val railsTopTarget = if (peekLayout) (maxHeight - peek - block).coerceAtLeast(maxHeight * .3f) else pageTop
+            val railsTop by animateDpAsState(
+                targetValue = railsTopTarget,
+                animationSpec = tween(if (reduced) 0 else 220), label = "railsTop",
+            )
+            val heroBottom by animateDpAsState(
+                targetValue = if (peekLayout) maxHeight - railsTopTarget + 1.2.r
+                    else railContentHeight?.plus(4.5.r) ?: 30.6.r,
+                animationSpec = tween(if (reduced) 0 else 220), label = "heroPosition",
+            )
             TvHeroBanner(
                 item = hero,
                 state = state,
                 height = maxHeight,
+                contentBottom = heroBottom,
+                heroEntry = heroEntry,
+                onDown = { focusManager.moveFocus(FocusDirection.Down) || runCatching { railsEntry.requestFocus(); true }.getOrDefault(false) },
                 pageCount = if (focusedItem == null) heroItems.size else 0,
                 page = page,
                 trailerOn = homeActive && state.heroTrailer && trailer == null,
@@ -186,16 +254,30 @@ private fun TvHomeScreenBody(
                     }
                 },
                 modifier = Modifier
-                    .tvScrollTop { rails.animateScrollToItem(0) },
+                    .then(if (peekLayout) Modifier.onFocusChanged { if (it.hasFocus) railContentHeight = null } else Modifier)
+                    .tvScrollTop { if (reduced) rails.scrollToItem(0) else rails.animateScrollToItem(0) },
             )
-            TvScrollArea(inset = 1.25.r) {
+            val railsArea: @Composable (@Composable () -> Unit) -> Unit = { content ->
+                if (peekLayout) TvPeekScrollArea(peek, content) else TvScrollArea(inset = 0.r, content)
+            }
+            railsArea {
                 LazyColumn(
-                    Modifier.fillMaxSize().padding(start = TvMenuClosed, top = heroH),
+                    Modifier.fillMaxSize().padding(start = TvMenuClosed, top = if (peekLayout) railsTop else pageTop)
+                        .focusRequester(railsEntry).focusGroup()
+                        .onKeyEvent { ev ->
+                            // Cima na primeira fileira sobe para o destaque. Entre fileiras segue o foco normal.
+                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
+                                focusManager.moveFocus(FocusDirection.Up) || runCatching { heroEntry.requestFocus(); true }.getOrDefault(false)
+                            } else false
+                        },
                     state = rails,
-                    contentPadding = PaddingValues(bottom = 4.r),
+                    // Superior. Sobra embaixo o tamanho da espiada, assim a última fileira também sobe
+                    // até o alto da área e a faixa de baixo fica vazia (nada para espiar).
+                    contentPadding = PaddingValues(bottom = if (peekLayout) peek else 0.r),
                 ) {
                     homeRails(state, viewModel, onItemClick, onFocus = { focusedItem = it }, onTrailer = ::playCard,
-                        collections = collections, onFolderClick = onFolderClick)
+                        collections = collections, onFolderClick = onFolderClick,
+                        pageHeight = if (peekLayout) Dp.Unspecified else pageHeight, onPageContentHeight = { railContentHeight = it })
                 }
             }
         }
@@ -226,25 +308,55 @@ private fun TvHomeScreenBody(
     }
 }
 
-/** Sem rede ou sem chave TMDB: aviso focável com botão de tentar de novo (em vez de tela preta). */
+/** Por que a Início não tem nada para mostrar. */
+private enum class HomeEmpty { FEED, SUGGESTIONS_OFF, ALL_HIDDEN }
+
+/**
+ * Início sem nada na tela. Sem rede ou sem chave TMDB oferece Tentar de novo. Com as sugestões do JOTV
+ * desligadas e sem addon, ou com tudo escondido, oferece o botão que resolve. O foco nasce no primeiro.
+ */
 @Composable
-private fun TvHomeFeedEmpty(hasTmdbKey: Boolean, onRetry: () -> Unit) {
-    val retryFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { retryFocus.requestFocus() } }
+private fun TvHomeFeedEmpty(
+    why: HomeEmpty,
+    hasTmdbKey: Boolean,
+    onRetry: () -> Unit,
+    onSuggestions: () -> Unit,
+    onExplore: () -> Unit,
+    onOrganize: () -> Unit,
+) {
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(why) { runCatching { firstFocus.requestFocus() } }
     Column(
         Modifier.fillMaxSize().padding(start = TvMenuClosed).padding(horizontal = tvPad),
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            if (hasTmdbKey) "Não deu para carregar agora" else "Configure sua chave TMDB",
+            when (why) {
+                HomeEmpty.FEED -> if (hasTmdbKey) "Não deu para carregar agora" else "Configure sua chave TMDB"
+                else -> "Sua Início está vazia"
+            },
             color = TextPrimary, fontSize = 1.8.rs, fontWeight = FontWeight.Bold, fontFamily = DisplayFont,
         )
         Text(
-            if (hasTmdbKey) "Confira sua conexão e tente de novo." else "Vá em Configurações e cole sua chave TMDB para ver o catálogo.",
+            when (why) {
+                HomeEmpty.FEED -> if (hasTmdbKey) "Confira sua conexão e tente de novo." else "Vá em Configurações e cole sua chave TMDB para ver o catálogo."
+                HomeEmpty.SUGGESTIONS_OFF -> "As sugestões do JOTV estão desligadas e não há addon."
+                HomeEmpty.ALL_HIDDEN -> "Todas as fileiras estão escondidas."
+            },
             color = TextTertiary, fontSize = 1.1.rs, modifier = Modifier.padding(top = 0.6.r).widthIn(max = 44.r),
         )
         Spacer(Modifier.height(1.4.r))
-        TvButton("Tentar de novo", onRetry, Modifier.focusRequester(retryFocus))
+        Row(horizontalArrangement = Arrangement.spacedBy(0.8.r)) {
+            when (why) {
+                HomeEmpty.FEED -> TvButton("Tentar de novo", onRetry, Modifier.focusRequester(firstFocus))
+                HomeEmpty.SUGGESTIONS_OFF -> {
+                    TvButton("Ligar sugestões", onSuggestions, Modifier.focusRequester(firstFocus), primary = true)
+                    TvButton("Explorar addons", onExplore)
+                    TvButton("Organizar a Início", onOrganize)
+                }
+                HomeEmpty.ALL_HIDDEN -> TvButton("Organizar a Início", onOrganize, Modifier.focusRequester(firstFocus), primary = true)
+            }
+        }
     }
 }
 
@@ -254,6 +366,9 @@ private fun TvHeroBanner(
     item: MovieItem?,
     state: MoviesHomeViewModel.UiState,
     height: Dp,
+    contentBottom: Dp,
+    heroEntry: FocusRequester,
+    onDown: () -> Boolean,
     pageCount: Int,
     page: Int,
     trailerOn: Boolean,
@@ -304,7 +419,8 @@ private fun TvHeroBanner(
         ))
         if (item == null) return@Box
         Column(
-            Modifier.align(Alignment.BottomStart).padding(start = TvMenuClosed + tvPad, bottom = height * 0.42f).fillMaxWidth(0.53f),
+            Modifier.align(Alignment.BottomStart).padding(start = TvMenuClosed + tvPad, bottom = contentBottom)
+                .width(45.r),
         ) {
             TvTitleArtwork(item.title, state.heroLogos[item.tmdbId].orEmpty(),
                 Modifier.padding(bottom = 1.1.r), hero = true)
@@ -316,8 +432,12 @@ private fun TvHeroBanner(
                 item.overview, color = TextSecondary, fontSize = 1.15.rs, lineHeight = 1.84.rs, maxLines = 2,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 1.r).widthIn(max = 40.r),
             )
-            Row(Modifier.padding(top = 1.4.r).offset(x = (-0.2).r), verticalAlignment = Alignment.CenterVertically) {
-                HeroAction("Assistir", onWatch, primary = true)
+            Row(
+                Modifier.padding(top = 1.4.r).offset(x = (-0.2).r)
+                    .onKeyEvent { ev -> ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown && onDown() },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                HeroAction("Assistir", onWatch, primary = true, modifier = Modifier.focusRequester(heroEntry))
                 Spacer(Modifier.width(0.8.r))
                 HeroAction(if (trailerBusy) "Carregando…" else "Trailer", onTrailer, busy = trailerBusy)
                 if (pageCount > 1) {
@@ -344,16 +464,17 @@ private fun HeroAction(
     onClick: () -> Unit,
     primary: Boolean = false,
     busy: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale = tvFocusScale(focused, 1.025f)
+    val scale = tvFocusScaleState(focused, 1.025f)
     val shape = RoundedCornerShape(50)
-    val foreground = if (primary) TextOnLight else Color.White
+    val foreground = if (primary) PrimaryActionText else Color.White
     Row(
-        Modifier.padding(0.2.r).graphicsLayer { scaleX = scale; scaleY = scale }
+        modifier.padding(0.2.r).tvFocusLayer(scale)
             .height(3.5.r)
             .then(if (focused) Modifier.border(0.18.r, Color.White, shape) else Modifier)
-            .clip(shape).background(if (primary) Color(0xFFF5F5F5) else Color.White.copy(alpha = .14f))
+            .clip(shape).then(if (primary) Modifier.background(PrimaryActionBrush) else Modifier.background(Color.White.copy(alpha = .14f)))
             .onFocusChanged { focused = it.isFocused }
             .tvClick({ if (!busy) onClick() })
             .padding(horizontal = 1.7.r),
@@ -378,11 +499,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.homeRails(
     onTrailer: (MoviesHomeViewModel.TrailerCard) -> Unit,
     collections: List<MediaCollection>,
     onFolderClick: (String, String) -> Unit,
+    pageHeight: Dp,
+    onPageContentHeight: (Dp) -> Unit,
 ) {
     state.layout.forEach { row ->
         when (row.system) {
             SystemRow.CONTINUE -> if (state.continueWatching.isNotEmpty()) item(key = row.key) {
-                TvRail(row.displayTitle, preserveColumnOnVertical = true) {
+                TvRail(row.displayTitle, preserveColumnOnVertical = true, pageHeight = pageHeight, onPageContentHeight = onPageContentHeight) {
                     items(state.continueWatching, key = { posterKey(it) }) { item ->
                         TvContinueCard(
                             item, { onItemClick(item) }, artwork = state.continueArtwork[posterKey(item)],
@@ -397,34 +520,41 @@ private fun androidx.compose.foundation.lazy.LazyListScope.homeRails(
                     row.displayTitle, state.newEpisodes.map { it.item }, onItemClick, onFocus,
                     badges = state.newEpisodes.associate { it.item.tmdbId to it.badge },
                     subs = state.newEpisodes.associate { it.item.tmdbId to it.sub },
+                    pageHeight = pageHeight, onPageContentHeight = onPageContentHeight,
                 )
             }
             SystemRow.RECOMMENDED -> if (state.recommended.isNotEmpty()) item(key = row.key) {
-                PosterRail(row.title.ifBlank { "Porque você assistiu ${state.recommendedBecause}" }, state.recommended, onItemClick, onFocus)
+                PosterRail(row.title.ifBlank { "Porque você assistiu ${state.recommendedBecause}" }, state.recommended, onItemClick, onFocus,
+                    pageHeight = pageHeight, onPageContentHeight = onPageContentHeight)
             }
             SystemRow.TRENDING_MOVIES -> if (state.trendingMovies.isNotEmpty()) item(key = row.key) {
                 PosterRail(row.displayTitle, state.trendingMovies, onItemClick, onFocus,
+                    pageHeight = pageHeight, onPageContentHeight = onPageContentHeight,
                     seeAll = { viewModel.openCatalog(CatalogQuery(row.displayTitle, CatalogType.MOVIE, CatalogEndpoint.TRENDING)) })
             }
             SystemRow.TRENDING_TV -> if (state.trendingTv.isNotEmpty()) item(key = row.key) {
                 PosterRail(row.displayTitle, state.trendingTv, onItemClick, onFocus,
+                    pageHeight = pageHeight, onPageContentHeight = onPageContentHeight,
                     seeAll = { viewModel.openCatalog(CatalogQuery(row.displayTitle, CatalogType.SERIES, CatalogEndpoint.TRENDING)) })
             }
             SystemRow.NOW_PLAYING -> if (state.nowPlaying.isNotEmpty()) item(key = row.key) {
                 PosterRail(row.displayTitle, state.nowPlaying, onItemClick, onFocus,
+                    pageHeight = pageHeight, onPageContentHeight = onPageContentHeight,
                     seeAll = { viewModel.openCatalog(CatalogQuery(row.displayTitle, CatalogType.MOVIE, CatalogEndpoint.NOW_PLAYING)) })
             }
             SystemRow.RELEASES -> if (state.releases2026.isNotEmpty()) item(key = row.key) {
                 val title = row.title.ifBlank { "Lançamentos ${state.releasesYear}" }
                 PosterRail(title, state.releases2026, onItemClick, onFocus,
+                    pageHeight = pageHeight, onPageContentHeight = onPageContentHeight,
                     seeAll = { viewModel.openCatalog(CatalogQuery(title, CatalogType.MOVIE, genreId = null, sort = MoviesHomeViewModel.SORT_RELEASE_MOVIE, year = state.releasesYear)) })
             }
             SystemRow.TRAILERS -> if (state.trailersLoading || state.latestTrailers.isNotEmpty()) item(key = row.key) {
-                TrailersRail(state, viewModel, onFocus, onTrailer, row.displayTitle)
+                TrailersRail(state, viewModel, onFocus, onTrailer, row.displayTitle, pageHeight, onPageContentHeight)
             }
             SystemRow.GENRES -> {
                 items(state.homeSections, key = { it.id }) { sec ->
                     PosterRail(sec.title, sec.items, onItemClick, onFocus,
+                        pageHeight = pageHeight, onPageContentHeight = onPageContentHeight,
                         onNearEnd = { viewModel.loadMoreSectionItems(sec.id) }, seeAll = { viewModel.openCatalog(sec.query) })
                 }
                 if (state.isLoadingSections) item(key = "more") { TvSpinner() }
@@ -432,8 +562,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.homeRails(
             null -> if (row.collectionId != null) {
                 collections.firstOrNull { it.id == row.collectionId }?.takeIf { it.folders.isNotEmpty() }?.let { col ->
                     item(key = row.key) {
-                        TvScaled {
-                            com.joabtv.app.ui.collections.CollectionFolderRow(col, row.displayTitle, eyebrow = null) { f -> onFolderClick(col.id, f.id) }
+                        TvRailPage(pageHeight, onContentHeight = onPageContentHeight) {
+                            TvScaled {
+                                com.joabtv.app.ui.collections.CollectionFolderRow(col, row.displayTitle, eyebrow = null) { f -> onFolderClick(col.id, f.id) }
+                            }
                         }
                     }
                 }
@@ -441,6 +573,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.homeRails(
                 item(key = row.key) {
                     if (ar.items.isEmpty()) TvSkeletonRail()
                     else PosterRail(ar.title, ar.items, onItemClick, onFocus,
+                        pageHeight = pageHeight, onPageContentHeight = onPageContentHeight,
                         onNearEnd = if (ar.more) ({ viewModel.loadAddonRow(ar.ref.key) }) else null)
                 }
             }
@@ -459,6 +592,8 @@ private fun PosterRail(
     badges: Map<Int, String>? = null,
     onNearEnd: (() -> Unit)? = null,
     seeAll: (() -> Unit)? = null,
+    pageHeight: Dp = Dp.Unspecified,
+    onPageContentHeight: (Dp) -> Unit = {},
 ) {
     val row = rememberLazyListState()
     if (onNearEnd != null) {
@@ -470,7 +605,7 @@ private fun PosterRail(
         }
         LaunchedEffect(near, items.size) { if (near) onNearEnd() }
     }
-    TvRail(title, state = row, preserveColumnOnVertical = true) {
+    TvRail(title, state = row, preserveColumnOnVertical = true, pageHeight = pageHeight, onPageContentHeight = onPageContentHeight) {
         items(items.size, key = { "${items[it].type}:${items[it].tmdbId}" }) { index ->
             val item = items[index]
             TvPoster(
@@ -487,10 +622,10 @@ private fun PosterRail(
 @Composable
 private fun SeeAllCard(onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val s = tvFocusScale(focused, 1.06f)
+    val s = tvFocusScaleState(focused, 1.06f)
     val shape = RoundedCornerShape(0.9.r)
     Column(
-        Modifier.width(12.5.r).aspectRatio(2f / 3f).scale(s).clip(shape).background(BackgroundCard)
+        Modifier.width(12.5.r).aspectRatio(2f / 3f).tvFocusLayer(s).clip(shape).background(BackgroundCard)
             .border(if (focused) 0.22.r else 0.1.r, if (focused) Color.White else Border, shape)
             .onFocusChanged { focused = it.isFocused }.tvClick(onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -509,8 +644,10 @@ private fun TrailersRail(
     onFocus: (MovieItem) -> Unit,
     onTrailer: (MoviesHomeViewModel.TrailerCard) -> Unit,
     title: String = "Últimos trailers",
+    pageHeight: Dp = Dp.Unspecified,
+    onPageContentHeight: (Dp) -> Unit = {},
 ) {
-    Column(Modifier.fillMaxWidth().tvRow().padding(top = 1.3.r)) {
+    TvRailPage(pageHeight, onContentHeight = onPageContentHeight) {
         TvRailHead(title)
         TvRow(gap = 0.75.r, vertical = 0.6.r) {
             items(MoviesHomeViewModel.TrailerTab.entries.toList(), key = { it.name }) { tab ->

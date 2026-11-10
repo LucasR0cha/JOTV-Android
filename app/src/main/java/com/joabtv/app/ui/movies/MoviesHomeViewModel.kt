@@ -485,7 +485,8 @@ class MoviesHomeViewModel @Inject constructor(
             ) { layout, catalogOn, addons, hero -> HomeInputs(layout, catalogOn, addons, hero) }
                 .collect { applyLayout(it) }
         }
-        _uiState.update { it.copy(heroTrailer = prefs.heroTrailer) }
+        // Ligar ou desligar o trailer em Configurações ou em Personalizar Início vale na hora.
+        viewModelScope.launch { prefs.heroTrailerFlow.collect { on -> _uiState.update { it.copy(heroTrailer = on) } } }
         load()
         if (prefs.catalogOn) selectTrailerTab(TrailerTab.POPULAR)
         viewModelScope.launch {

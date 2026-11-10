@@ -15,8 +15,8 @@ android {
         applicationId  = "com.joabtv.app"
         minSdk         = 23
         targetSdk      = 35
-        versionCode    = 8
-        versionName    = "1.0.7"
+        versionCode    = 10
+        versionName    = "1.0.9"
         // Chave TMDB lida de gradle property (local.properties / ~/.gradle/gradle.properties),
         // fora do VCS. Sem ela, fica vazia e o usuário informa a própria chave em Configurações.
         val tmdbKey = (project.findProperty("TMDB_API_KEY") as String?) ?: ""
@@ -38,6 +38,11 @@ android {
             // (R8 + minify + debuggable=false = MUITO mais rápido que o build debug).
             // Para publicar de verdade, troque por um keystore próprio.
             signingConfig = signingConfigs.getByName("debug")
+        }
+        create("tvTest") {
+            initWith(getByName("release"))
+            matchingFallbacks += "release"
+            ndk { abiFilters += "x86" }
         }
     }
     lint {
@@ -135,6 +140,8 @@ dependencies {
     implementation("org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-39")
     implementation("org.libtorrent4j:libtorrent4j-android-arm:2.1.0-39")
     debugImplementation("org.libtorrent4j:libtorrent4j-android-x86_64:2.1.0-39")
+    debugImplementation("org.libtorrent4j:libtorrent4j-android-x86:2.1.0-39")
+    add("tvTestImplementation", "org.libtorrent4j:libtorrent4j-android-x86:2.1.0-39")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
 
     testImplementation("junit:junit:4.13.2")

@@ -90,6 +90,8 @@ internal fun CastingOverlay(title: String) {
 internal fun SkipIntroButton(raised: Boolean, onClick: () -> Unit) {
     Row(
         Modifier
+            // O vídeo ocupa a tela toda, inclusive o recorte da câmera. O botão fica fora dele.
+            .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
             .padding(end = 20.dp, bottom = if (raised) 150.dp else 34.dp)
             .heightIn(min = 48.dp)
             .shadow(10.dp, RoundedCornerShape(14.dp))
@@ -248,7 +250,7 @@ internal fun NextEpisodeCard(isSeason: Boolean, line: String, countdown: Int, on
     // vídeo em vez de confirmar (mesmo padrão do TvExitDialog).
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
-    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.BottomEnd) {
+    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)).padding(24.dp), contentAlignment = Alignment.BottomEnd) {
         Column(
             Modifier.widthIn(max = 340.dp).shadow(20.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp))
                 .background(Color(0xF5141414)).border(1.dp, Border, RoundedCornerShape(18.dp))

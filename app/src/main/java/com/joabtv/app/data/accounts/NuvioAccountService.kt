@@ -47,6 +47,13 @@ class NuvioAccountService @Inject constructor(
     private val _session = MutableStateFlow(readSession())
     val session: StateFlow<NuvioSession?> = _session.asStateFlow()
 
+    // Hora da entrada feita depois do registro de importação (0 nas contas que já vinham de antes, que o
+    // cartão não trata como pendência) e se o serviço derrubou a sessão (o cartão pede para entrar de novo).
+    private val _since = MutableStateFlow(prefs.getLong("nuvio_since", 0L))
+    val since: StateFlow<Long> = _since.asStateFlow()
+    private val _lost = MutableStateFlow(prefs.getBoolean("nuvio_lost", false))
+    val lost: StateFlow<Boolean> = _lost.asStateFlow()
+
     /** Endereço e chave pública do servidor. Aceita "api.nuvio.tv" ou a URL de um servidor próprio. */
     suspend fun discover(input: String = OFFICIAL): Result<Pair<String, String>> = withContext(Dispatchers.IO) {
         val raw = input.trim().ifBlank { OFFICIAL }
@@ -73,7 +80,7 @@ class NuvioAccountService @Inject constructor(
             return@withContext Result.failure(IllegalStateException(if (msg.contains("invalid", true)) "E-mail ou senha não conferem" else msg.ifBlank { "O Nuvio recusou o login" }))
         }
         val s = sessionOf(backend, key, o, email.trim())
-        save(s)
+        save(s, entered = true)
         Result.success(s)
     }
 
@@ -109,12 +116,21 @@ class NuvioAccountService @Inject constructor(
         val email = o.optJSONObject("user")?.optString("email")
             ?: getJson("${d.server}/auth/v1/user", d.key, o.optString("access_token"))?.optString("email").orEmpty()
         val s = sessionOf(d.server, d.key, o, email)
-        save(s)
+        save(s, entered = true)
         Result.success(s)
     }
 
     fun logout() {
-        prefs.edit().remove("nuvio_session").apply()
+        prefs.edit().remove("nuvio_session").remove("nuvio_since").remove("nuvio_lost").apply()
+        _since.value = 0L
+        _lost.value = false
+        _session.value = null
+    }
+
+    /** O Nuvio recusou a renovação. Sai daqui, mas guarda que foi o serviço, para pedir login de novo. */
+    private fun expire() {
+        prefs.edit().remove("nuvio_session").putBoolean("nuvio_lost", true).apply()
+        _lost.value = true
         _session.value = null
     }
 
@@ -201,7 +217,7 @@ class NuvioAccountService @Inject constructor(
         val r = post("${s.server}/auth/v1/token?grant_type=refresh_token", JSONObject().put("refresh_token", s.refresh), s.key, null)
         val o = r.second
         if (r.first !in 200..299 || o == null || o.optString("access_token").isBlank()) {
-            if (r.first in 400..499) logout()
+            if (r.first in 400..499) expire()
             return null
         }
         return sessionOf(s.server, s.key, o, s.email).also { save(it) }
@@ -263,11 +279,19 @@ class NuvioAccountService @Inject constructor(
         o.optJSONObject("user")?.optString("email")?.ifBlank { null } ?: email,
     )
 
-    private fun save(s: NuvioSession) {
-        prefs.edit().putString(
+    /** [entered] é a entrada de verdade (e-mail ou código). A renovação do token não mexe em since nem em lost. */
+    private fun save(s: NuvioSession, entered: Boolean = false) {
+        val ed = prefs.edit().putString(
             "nuvio_session",
             JSONObject().put("s", s.server).put("k", s.key).put("a", s.access).put("r", s.refresh).put("x", s.expiresAt).put("e", s.email).toString(),
-        ).apply()
+        )
+        if (entered) {
+            val now = System.currentTimeMillis()
+            ed.putLong("nuvio_since", now).putBoolean("nuvio_lost", false)
+            _since.value = now
+            _lost.value = false
+        }
+        ed.apply()
         _session.value = s
     }
 

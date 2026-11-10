@@ -1,6 +1,8 @@
 package com.joabtv.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 
 // Paleta do webOS (webos/src/css/app.css), a mesma que o usuário aprovou na TV.
 // Camadas de fundo
@@ -10,11 +12,11 @@ val BackgroundCard     = Color(0xFF222222)
 val BackgroundCard2    = Color(0xFF1A1A1A)
 val Surface2           = Color(0xFF2B2B2B)
 
-// Destaque azul
-val Accent       = Color(0xFFA7CAFF)
-val AccentFill   = Color(0xFF377BCE)
-val AccentDark   = Color(0xFF1565C0)
-val AccentSoft   = Color(0xFF202C3C)
+// Destaques do tema escolhido no perfil.
+val Accent: Color @Composable @ReadOnlyComposable get() = LocalAppPalette.current.accent
+val AccentFill: Color @Composable @ReadOnlyComposable get() = LocalAppPalette.current.fill
+val AccentDark: Color @Composable @ReadOnlyComposable get() = LocalAppPalette.current.dark
+val AccentSoft: Color @Composable @ReadOnlyComposable get() = LocalAppPalette.current.soft
 
 // Estado
 val LiveRed    = Color(0xFFE5484D) // --danger
@@ -46,10 +48,10 @@ val BackgroundDark     = Background
 val SurfaceDark        = BackgroundCard
 val SurfaceVariantDark = BackgroundCard2
 val CardDark           = BackgroundCard
-val Primary            = Accent
-val PrimaryVariant     = AccentDark
-val PrimaryContainer   = AccentSoft
-val BorderAccent       = Color(0x592E8BFF)
+val Primary: Color @Composable @ReadOnlyComposable get() = Accent
+val PrimaryVariant: Color @Composable @ReadOnlyComposable get() = AccentDark
+val PrimaryContainer: Color @Composable @ReadOnlyComposable get() = AccentSoft
+val BorderAccent: Color @Composable @ReadOnlyComposable get() = Accent.copy(alpha = .35f)
 val Surface            = BackgroundCard
 val SurfaceVariant     = BackgroundCard2
 val ErrorCol           = Danger
@@ -57,4 +59,4 @@ val Success            = Ok
 val TextMuted          = TextTertiary
 val FocusRing          = TextPrimary
 val FocusBackground    = Color(0xFF303030)
-val AccentFocus        = Accent
+val AccentFocus: Color @Composable @ReadOnlyComposable get() = Accent

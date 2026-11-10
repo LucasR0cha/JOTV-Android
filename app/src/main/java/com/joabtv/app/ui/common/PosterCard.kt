@@ -25,7 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +49,7 @@ import com.joabtv.app.data.local.SourceQuality
 import com.joabtv.app.data.local.dayString
 import com.joabtv.app.data.local.fresh
 import com.joabtv.app.data.local.posterKey
+import com.joabtv.app.data.local.qualityFor
 import com.joabtv.app.domain.model.MediaType
 import com.joabtv.app.domain.model.MovieItem
 import com.joabtv.app.ui.theme.Accent
@@ -238,8 +239,9 @@ internal fun rememberPosterVisual(
 ): PosterVisual {
     val info = LocalPosterInfo.current
     val key = posterKey(item)
-    val ranks = info?.ranks?.collectAsState()?.value
-    val quality = info?.quality?.collectAsState()?.value?.get(key)
+    val ranks = info?.ranks?.collectAsStateWithLifecycle()?.value
+    val qualityFlow = remember(info, key) { info?.quality?.qualityFor(key) }
+    val quality = qualityFlow?.collectAsStateWithLifecycle(initialValue = info?.quality?.value?.get(key))?.value
         ?.takeIf { badge == null && it.fresh(System.currentTimeMillis()) }
 
     var hue by remember(key) { mutableStateOf(if (key.isEmpty()) null else info?.tint(key)) }

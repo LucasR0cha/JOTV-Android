@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.drop
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -37,7 +38,8 @@ class MainActivity : ComponentActivity() {
         hideSystemBars()
 
         setContent {
-            JoabTvTheme {
+            val appearance by platformPrefs.appearanceFlow.collectAsStateWithLifecycle()
+            JoabTvTheme(appearance = appearance) {
                 val deviceLayout = currentDeviceLayout(platformPrefs.platformMode)
                 // 1ª abertura: nome do perfil + confirmar a plataforma detectada. Só uma vez.
                 var onboarding by rememberSaveable { mutableStateOf(!platformPrefs.onboarded) }

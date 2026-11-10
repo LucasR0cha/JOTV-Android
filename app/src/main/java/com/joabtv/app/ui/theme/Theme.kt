@@ -6,6 +6,10 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import com.joabtv.app.data.local.AppearancePreferences
+import com.joabtv.app.data.local.InterfaceMotion
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -35,12 +39,14 @@ val SoraFontFamily    = Inter
 val ManropeFontFamily = Inter
 val InterFontFamily   = Inter
 
-private val JoabColorScheme = darkColorScheme(
-    primary            = Accent,
+private fun joabColorScheme(palette: AppPalette) = darkColorScheme(
+    // Os componentes do Material herdam primary como cor de texto e de Switch ligado, então ele
+    // fica no tom claro (legível sobre o fundo escuro). A cor cheia do tema vai por PrimaryActionBrush.
+    primary            = palette.accent,
     onPrimary          = Color.White,
-    primaryContainer   = PrimaryContainer,
+    primaryContainer   = palette.soft,
     onPrimaryContainer = TextPrimary,
-    secondary          = AccentDark,
+    secondary          = palette.dark,
     onSecondary        = Color.White,
     background         = Background,
     onBackground       = TextPrimary,
@@ -85,12 +91,15 @@ private val JoabShapes = Shapes(
     extraLarge = RoundedCornerShape(28.dp),
 )
 
+/** Estilo do menu da TV escolhido no perfil. O celular no toque ignora. */
+val LocalMenuStyle = androidx.compose.runtime.staticCompositionLocalOf { com.joabtv.app.data.local.MenuStyle.SIDE }
+
 @Composable
-fun JoabTvTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = JoabColorScheme,
-        typography  = JoabTypography,
-        shapes      = JoabShapes,
-        content     = content,
-    )
+fun JoabTvTheme(appearance: AppearancePreferences = AppearancePreferences(), content: @Composable () -> Unit) {
+    val palette = remember(appearance.theme) { paletteFor(appearance.theme) }
+    val colors = remember(palette) { joabColorScheme(palette) }
+    val reduced = systemReducedMotion() || appearance.motion == InterfaceMotion.REDUCED
+    CompositionLocalProvider(LocalAppPalette provides palette, LocalReducedMotion provides reduced, LocalMenuStyle provides appearance.menu) {
+        MaterialTheme(colorScheme = colors, typography = JoabTypography, shapes = JoabShapes, content = content)
+    }
 }

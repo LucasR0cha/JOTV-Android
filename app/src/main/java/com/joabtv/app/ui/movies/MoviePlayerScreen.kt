@@ -1021,6 +1021,7 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                 AnimatedVisibility(controlsVisible && !inPip, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopStart)) {
                     Row(
                         Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.78f), Color.Transparent)))
+                            .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
                             .padding(horizontal = 14.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1258,6 +1259,7 @@ internal class PlayerSession(
             .build()
         try {
             ExoPlayer.Builder(context)
+                .setLoadControl(com.joabtv.app.ui.common.playbackLoadControl(context))
                 .setMediaSourceFactory(mediaSourceFactory(context))
                 .setAudioAttributes(audioAttrs, true)
                 .setHandleAudioBecomingNoisy(true)
@@ -1272,7 +1274,8 @@ internal class PlayerSession(
                         .build()
                 }
         } catch (_: Exception) {
-            ExoPlayer.Builder(context).setAudioAttributes(audioAttrs, true).setHandleAudioBecomingNoisy(true)
+            ExoPlayer.Builder(context).setLoadControl(com.joabtv.app.ui.common.playbackLoadControl(context))
+                .setAudioAttributes(audioAttrs, true).setHandleAudioBecomingNoisy(true)
                 .build().apply { playWhenReady = true }
         }
     }

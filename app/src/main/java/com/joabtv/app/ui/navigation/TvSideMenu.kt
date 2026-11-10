@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.joabtv.app.R
+import com.joabtv.app.data.local.MenuStyle
 import com.joabtv.app.data.local.Profile
 import com.joabtv.app.ui.common.ButtonTone
 import com.joabtv.app.ui.common.JoabButton
@@ -57,7 +58,15 @@ class TvMenuItem(
     val avatar: Profile? = null,
 )
 
+/** Faixa que as telas reservam para o menu lateral fechado. Superior e Oculto não reservam nada. */
 val TvMenuClosed: androidx.compose.ui.unit.Dp
+    @Composable @ReadOnlyComposable get() = if (LocalMenuStyle.current == MenuStyle.SIDE) TvSideDock else 0.dp
+
+/** Espaço do topo reservado para a barra do menu Superior. */
+val TvMenuTop: androidx.compose.ui.unit.Dp
+    @Composable @ReadOnlyComposable get() = if (LocalMenuStyle.current == MenuStyle.TOP) 7.5.r else 0.dp
+
+private val TvSideDock: androidx.compose.ui.unit.Dp
     @Composable @ReadOnlyComposable get() = 6.5.r
 
 /** Cápsula flutuante do webOS, com seleção que acompanha o foco do controle remoto. */
@@ -70,6 +79,7 @@ fun TvSideMenu(
     requesters: Map<String, FocusRequester>,
     open: Boolean,
     onOpenChange: (Boolean) -> Unit,
+    hidden: Boolean = false,
 ) {
     val reduced = rememberReducedMotion()
     val progress = animateFloatAsState(if (open) 1f else 0f, tween(if (reduced) 0 else 220), label = "menuReveal")
@@ -84,7 +94,10 @@ fun TvSideMenu(
     val pillY by animateDpAsState((.95f + index * 4.4f + if (index >= main.size) sectionGap else 0f).r,
         tween(if (reduced) 0 else 250), label = "menuSelection")
     val labelSlide = .6.r
-    Box(Modifier.fillMaxHeight().width(if (open) 21.25.r else TvMenuClosed)) {
+    // Oculto. Fechado, o mesmo menu fica fora da tela e continua focável para a seta para a esquerda.
+    val hiddenShift by animateDpAsState(if (hidden && !open) -(TvSideDock + 1.r) else 0.dp,
+        tween(if (reduced) 0 else 220), label = "menuHidden")
+    Box(Modifier.offset(x = hiddenShift).fillMaxHeight().width(if (open) 21.25.r else TvSideDock)) {
         Row(Modifier.align(Alignment.TopStart).padding(top = 2.4.r, start = 1.6.r)
             .wrapContentWidth(Alignment.Start, unbounded = true).width(20.r).height(3.6.r), verticalAlignment = Alignment.CenterVertically) {
             Image(painterResource(R.drawable.jotv_nav_logo), "JOTV", Modifier.size(3.25.r))

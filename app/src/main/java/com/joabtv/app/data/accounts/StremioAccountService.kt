@@ -39,13 +39,19 @@ class StremioAccountService @Inject constructor(
     )
     val session: StateFlow<StremioSession?> = _session.asStateFlow()
 
+    // Igual ao Nuvio. since marca a entrada feita depois do registro de importação, lost a sessão derrubada pelo serviço.
+    private val _since = MutableStateFlow(prefs.getLong("stremio_since", 0L))
+    val since: StateFlow<Long> = _since.asStateFlow()
+    private val _lost = MutableStateFlow(prefs.getBoolean("stremio_lost", false))
+    val lost: StateFlow<Boolean> = _lost.asStateFlow()
+
     suspend fun login(email: String, password: String): Result<StremioSession> = withContext(Dispatchers.IO) {
         val body = JSONObject().put("type", "Login").put("email", email.trim()).put("password", password).put("facebook", false)
         val r = api("login", body).getOrElse { return@withContext Result.failure(it) }
         val key = (r as? JSONObject)?.optString("authKey").orEmpty()
         if (key.isBlank()) return@withContext Result.failure(IllegalStateException("O Stremio não devolveu a sessão"))
         val s = StremioSession(key, (r as JSONObject).optJSONObject("user")?.optString("email")?.ifBlank { null } ?: email.trim())
-        save(s)
+        save(s, entered = true)
         Result.success(s)
     }
 
@@ -63,7 +69,7 @@ class StremioAccountService @Inject constructor(
         // O e-mail vem da própria API com a sessão nova.
         val email = api("getUser", JSONObject().put("type", "GetUser").put("authKey", key)).getOrNull()
             ?.let { (it as? JSONObject)?.optString("email") }.orEmpty()
-        StremioSession(key, email).also { save(it) }
+        StremioSession(key, email).also { save(it, entered = true) }
     }
 
     /** Addons da conta, na ordem do Stremio. */
@@ -110,7 +116,9 @@ class StremioAccountService @Inject constructor(
 
     fun logout() {
         val key = _session.value?.authKey
-        prefs.edit().remove("stremio_auth").remove("stremio_email").apply()
+        prefs.edit().remove("stremio_auth").remove("stremio_email").remove("stremio_since").remove("stremio_lost").apply()
+        _since.value = 0L
+        _lost.value = false
         _session.value = null
         // Avisa o Stremio para fechar a sessão. Falha de rede aqui não importa.
         if (key != null) Thread {
@@ -118,8 +126,16 @@ class StremioAccountService @Inject constructor(
         }.start()
     }
 
-    private fun save(s: StremioSession) {
-        prefs.edit().putString("stremio_auth", s.authKey).putString("stremio_email", s.email).apply()
+    /** [entered] é a entrada de verdade (e-mail ou código). */
+    private fun save(s: StremioSession, entered: Boolean = false) {
+        val ed = prefs.edit().putString("stremio_auth", s.authKey).putString("stremio_email", s.email)
+        if (entered) {
+            val now = System.currentTimeMillis()
+            ed.putLong("stremio_since", now).putBoolean("stremio_lost", false)
+            _since.value = now
+            _lost.value = false
+        }
+        ed.apply()
         _session.value = s
     }
 
@@ -129,7 +145,11 @@ class StremioAccountService @Inject constructor(
         o.optJSONObject("error")?.let { e ->
             val msg = e.optString("message")
             // Sessão vencida ou encerrada no site. Sai daqui também para pedir login de novo.
-            if (e.optInt("code") == 1 && method != "login") { prefs.edit().remove("stremio_auth").apply(); _session.value = null }
+            if (e.optInt("code") == 1 && method != "login") {
+                prefs.edit().remove("stremio_auth").putBoolean("stremio_lost", true).apply()
+                _lost.value = true
+                _session.value = null
+            }
             return Result.failure(IllegalStateException(stremioMessage(msg)))
         }
         return o.opt("result")?.let { Result.success(it) } ?: Result.failure(IllegalStateException("Resposta vazia do Stremio"))

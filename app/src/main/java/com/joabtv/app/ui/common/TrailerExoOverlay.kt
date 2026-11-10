@@ -190,22 +190,25 @@ private fun android.content.Context.findActivity(): android.app.Activity? {
 /** ExoPlayer do trailer (stream do YouTube), solto ao sair da tela. Usado pelo overlay e pelo destaque. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-fun rememberTrailerExo(videoUrl: String, audioUrl: String?): ExoPlayer {
+fun rememberTrailerExo(videoUrl: String, audioUrl: String?, muted: Boolean = false): ExoPlayer {
     val context = LocalContext.current
-    val exo = remember(videoUrl, audioUrl) {
+    val exo = remember(videoUrl, audioUrl, muted) {
         val f = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36")
         // Start rápido: o padrão do ExoPlayer segura 2,5s de buffer antes do primeiro frame.
         // Baixando pra 0,5s o trailer começa quase na hora e segue enchendo o buffer depois.
-        val load = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-            .setBufferDurationsMs(15_000, 50_000, 500, 2_000)
-            .build()
+        val load = playbackLoadControl(context, preview = true)
         // DefaultMediaSourceFactory detecta HLS (.m3u8, ex: Piped) e mp4 automaticamente.
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(f))
             .setLoadControl(load)
             .build().apply {
-                if (audioUrl.isNullOrBlank()) {
+                if (muted) {
+                    volume = 0f
+                    trackSelectionParameters = trackSelectionParameters.buildUpon()
+                        .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, true).build()
+                }
+                if (audioUrl.isNullOrBlank() || muted) {
                     val item = MediaItem.Builder().setUri(videoUrl)
                     if (videoUrl.substringBefore('?').endsWith(".m3u8", true) || videoUrl.contains(".m3u8")) {
                         item.setMimeType(MimeTypes.APPLICATION_M3U8)
@@ -237,7 +240,7 @@ fun rememberTrailerExo(videoUrl: String, audioUrl: String?): ExoPlayer {
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun MutedTrailer(videoUrl: String, audioUrl: String?, onEnd: () -> Unit, modifier: Modifier = Modifier) {
-    val exo = rememberTrailerExo(videoUrl, audioUrl)
+    val exo = rememberTrailerExo(videoUrl, audioUrl, muted = true)
     var started by remember(exo) { mutableStateOf(false) }
     val view = remember(exo) { arrayOfNulls<android.view.TextureView>(1) }
     // Recorte central feito na matriz da TextureView. A view tem o tamanho exato da área e o

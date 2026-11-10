@@ -2,22 +2,26 @@ package com.joabtv.app.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.joabtv.app.data.accounts.AccountImporter
-import com.joabtv.app.data.accounts.ImportReport
+import com.joabtv.app.data.accounts.Account
+import com.joabtv.app.data.accounts.AccountSnap
+import com.joabtv.app.data.accounts.AccountsHub
+import com.joabtv.app.data.accounts.ImportLog
+import com.joabtv.app.data.accounts.ImportPart
+import com.joabtv.app.data.accounts.ImportRun
+import com.joabtv.app.data.accounts.NUVIO_MAIN
 import com.joabtv.app.data.accounts.NuvioAccountService
-import com.joabtv.app.data.accounts.NuvioDeviceCode
 import com.joabtv.app.data.accounts.NuvioProfile
-import com.joabtv.app.data.accounts.NuvioSession
+import com.joabtv.app.data.accounts.NuvioProfiles
+import com.joabtv.app.data.accounts.PartRecord
 import com.joabtv.app.data.accounts.StremioAccountService
-import com.joabtv.app.data.accounts.StremioLink
-import com.joabtv.app.data.accounts.StremioSession
-import com.joabtv.app.data.debrid.DebridProvider
-import com.joabtv.app.data.debrid.DebridService
 import com.joabtv.app.data.local.PlatformPrefs
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -26,196 +30,187 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * Contas Stremio e Nuvio nas Configurações e na tela Contas. Cuida de entrar (código no celular ou e-mail e
+ * senha), que termina no passo Trazer tudo sem fechar o diálogo. Quem traz as partes é o [AccountsHub],
+ * que segue trabalhando mesmo se a pessoa sair da tela.
+ */
 @HiltViewModel
 class AccountsViewModel @Inject constructor(
     private val stremio: StremioAccountService,
     private val nuvio: NuvioAccountService,
-    private val importer: AccountImporter,
-    private val debrid: DebridService,
+    private val hub: AccountsHub,
     private val prefs: PlatformPrefs,
-    private val collections: com.joabtv.app.data.collections.CollectionsRepository,
 ) : ViewModel() {
 
+    /**
+     * O diálogo de entrada. Passo 1 é o código para confirmar no celular, depois vem o passo 2 (Trazer tudo)
+     * no mesmo diálogo. [intent] é a parte que a pessoa veio buscar (Coleções, vindo do cartão de coleções).
+     */
+    sealed interface LoginFlow {
+        val account: Account
+        val intent: ImportPart?
+
+        data class Code(
+            override val account: Account, val code: String, val url: String, override val intent: ImportPart?, val expired: Boolean = false,
+        ) : LoginFlow
+
+        data class Email(override val account: Account, override val intent: ImportPart?, val error: String? = null) : LoginFlow
+
+        data class Step(override val account: Account, override val intent: ImportPart?) : LoginFlow
+    }
+
     data class Ui(
-        val stremio: StremioSession? = null,
-        val nuvio: NuvioSession? = null,
-        /** Ação em andamento ("stremio_login", "nuvio_addons"...). Trava os outros botões. */
-        val busy: String? = null,
-        val progress: String? = null,
-        val message: String? = null,
-        val error: String? = null,
-        val stremioLink: StremioLink? = null,
-        val nuvioCode: NuvioDeviceCode? = null,
-        val nuvioProfiles: List<NuvioProfile> = emptyList(),
-        val nuvioProfile: Int = 1,
-        /** Perfil do JOTV que recebe a importação. */
+        val nuvio: AccountSnap = AccountSnap(),
+        val stremio: AccountSnap = AccountSnap(),
+        val log: ImportLog = ImportLog(),
+        val running: Map<String, ImportRun> = emptyMap(),
+        val profiles: NuvioProfiles = NuvioProfiles(),
+        val pick: NuvioProfile = NUVIO_MAIN,
+        /** Perfil do JOTV que recebe o que vem das contas. */
         val profileName: String = "",
+        val login: LoginFlow? = null,
+        /** Entrada em andamento ("nuvio_code", "stremio_login"...). Trava o segundo toque. */
+        val busy: String? = null,
+    ) {
+        fun snap(a: Account) = if (a == Account.NUVIO) nuvio else stremio
+    }
+
+    private data class Local(val login: LoginFlow? = null, val busy: String? = null)
+
+    private val local = MutableStateFlow(Local())
+
+    private fun build(l: Local) = Ui(
+        hub.nuvioState.value, hub.stremioState.value, prefs.importLog, hub.running.value, hub.nuvioProfiles.value,
+        hub.nuvioPick(), prefs.profile.name, l.login, l.busy,
     )
 
-    private val local = MutableStateFlow(Ui(profileName = prefs.profile.name))
-    val ui: StateFlow<Ui> = combine(local, stremio.session, nuvio.session) { l, s, n -> l.copy(stremio = s, nuvio = n) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, local.value)
+    val ui: StateFlow<Ui> = combine(
+        combine(hub.nuvioState, hub.stremioState, prefs.importLogFlow, hub.running, hub.nuvioProfiles) { n, s, log, run, pr ->
+            Ui(n, s, log, run, pr, hub.nuvioPick(), prefs.profile.name)
+        },
+        local, prefs.profileId,
+    ) { base, l, _ -> base.copy(profileName = prefs.profile.name, login = l.login, busy = l.busy) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, build(Local()))
+
+    private val _toasts = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    /** Avisos curtos para quem está olhando outra coisa. O resultado de verdade fica em O que veio. */
+    val toasts: SharedFlow<String> = _toasts
 
     private var codeJob: Job? = null
 
-    init { if (nuvio.session.value != null) loadNuvioProfiles() }
+    init { hub.loadNuvioProfiles() }
 
-    /** Roda uma ação de rede com o botão marcado e travado até a resposta. */
-    private fun act(tag: String, block: suspend () -> String?) {
+    // ── Entrar ──────────────────────────────────────────────────────────────────
+
+    /** Passo 1. Pede o código e espera a pessoa confirmar no celular. */
+    fun startCode(a: Account, intent: ImportPart? = null) {
         if (local.value.busy != null) return
-        local.update { it.copy(busy = tag, error = null, message = null, progress = null) }
+        local.update { it.copy(busy = "${a.key}_code") }
+        codeJob?.cancel()
+        codeJob = viewModelScope.launch {
+            if (a == Account.NUVIO) nuvioCodeLoop(intent) else stremioCodeLoop(intent)
+        }
+    }
+
+    private suspend fun nuvioCodeLoop(intent: ImportPart?) {
+        val code = nuvio.deviceStart(NuvioAccountService.OFFICIAL).getOrElse { e -> failed(e.message); return }
+        local.update { it.copy(login = LoginFlow.Code(Account.NUVIO, code.userCode, code.url, intent)) }
+        repeat(120) {
+            delay(code.intervalSec * 1000L)
+            val r = nuvio.devicePoll(code)
+            if (r.isFailure) { expired(); return }
+            if (r.getOrNull() != null) { signedIn(Account.NUVIO, intent); return }
+        }
+        expired()
+    }
+
+    private suspend fun stremioCodeLoop(intent: ImportPart?) {
+        val link = stremio.linkStart().getOrElse { e -> failed(e.message); return }
+        local.update { it.copy(login = LoginFlow.Code(Account.STREMIO, link.code, link.url, intent)) }
+        val until = System.currentTimeMillis() + 5 * 60_000
+        while (System.currentTimeMillis() < until) {
+            delay(3_000)
+            if (stremio.linkPoll(link) != null) { signedIn(Account.STREMIO, intent); return }
+        }
+        expired()
+    }
+
+    private fun failed(message: String?) {
+        local.update { it.copy(busy = null, login = null) }
+        _toasts.tryEmit(message ?: "Não deu para gerar o código agora")
+    }
+
+    /** Código vencido. O diálogo fica aberto com "Gerar outro". */
+    private fun expired() {
+        local.update { l -> l.copy(busy = null, login = (l.login as? LoginFlow.Code)?.copy(expired = true) ?: l.login) }
+    }
+
+    private fun signedIn(a: Account, intent: ImportPart?) {
+        hub.accountChanged(a)
+        local.update { it.copy(busy = null, login = LoginFlow.Step(a, intent)) }
+    }
+
+    /** "Usar e-mail e senha". Fecha o código e abre os campos. */
+    fun startEmail(a: Account, intent: ImportPart? = null) {
+        codeJob?.cancel()
+        local.update { it.copy(busy = null, login = LoginFlow.Email(a, intent)) }
+    }
+
+    fun emailLogin(a: Account, email: String, password: String, server: String) {
+        val cur = local.value.login as? LoginFlow.Email ?: return
+        if (local.value.busy != null) return
+        local.update { it.copy(busy = "${a.key}_login", login = cur.copy(error = null)) }
         viewModelScope.launch {
-            val msg = runCatching { block() }
-            local.update {
-                it.copy(
-                    busy = null, progress = null,
-                    message = msg.getOrNull(), error = msg.exceptionOrNull()?.message,
-                )
-            }
+            val r = if (a == Account.NUVIO) nuvio.login(email, password, server.ifBlank { NuvioAccountService.OFFICIAL }).map { }
+            else stremio.login(email, password).map { }
+            r.fold(
+                onSuccess = { signedIn(a, cur.intent) },
+                onFailure = { e -> local.update { it.copy(busy = null, login = cur.copy(error = e.message ?: "Não deu para entrar")) } },
+            )
         }
     }
 
-    private fun step(done: Int, total: Int) = local.update { it.copy(progress = "Importando $done de $total") }
-
-    // ── Stremio ─────────────────────────────────────────────────────────────────
-
-    fun stremioLogin(email: String, password: String) = act("stremio_login") {
-        val s = stremio.login(email, password).getOrThrow()
-        "Conectado como ${s.email}"
-    }
-
-    fun stremioCode() {
-        if (local.value.busy != null) return
-        local.update { it.copy(busy = "stremio_code", error = null, message = null) }
+    /** Fecha o diálogo de entrada, em qualquer passo. */
+    fun closeLogin() {
         codeJob?.cancel()
-        codeJob = viewModelScope.launch {
-            val link = stremio.linkStart().getOrElse { e -> local.update { it.copy(busy = null, error = e.message) }; return@launch }
-            local.update { it.copy(stremioLink = link) }
-            val until = System.currentTimeMillis() + 5 * 60_000
-            while (System.currentTimeMillis() < until) {
-                delay(3_000)
-                val s = stremio.linkPoll(link)
-                if (s != null) {
-                    local.update { it.copy(busy = null, stremioLink = null, message = "Conectado" + if (s.email.isNotBlank()) " como ${s.email}" else "") }
-                    return@launch
-                }
-            }
-            local.update { it.copy(busy = null, stremioLink = null, error = "O código venceu. Peça outro.") }
-        }
+        local.update { it.copy(busy = null, login = null) }
     }
 
-    fun stremioImportAddons() = act("stremio_addons") {
-        val list = stremio.addons().getOrThrow()
-        addonsMessage(importer.importAddons(list, ::step), list.count { !it.canUse })
+    fun logout(a: Account) {
+        if (a == Account.NUVIO) nuvio.logout() else stremio.logout()
+        hub.accountChanged(a)
     }
 
-    fun stremioImportLibrary() = act("stremio_library") {
-        val (lib, prog) = stremio.library().getOrThrow()
-        val l = importer.importLibrary(lib, ::step)
-        val p = importer.importProgress(prog, ::step)
-        libraryMessage(l, p)
+    // ── Trazer ──────────────────────────────────────────────────────────────────
+
+    /** Quem pede acompanha pelo resultado. Segunda chamada com a conta já trazendo devolve a mesma importação. */
+    fun runImport(a: Account, parts: List<ImportPart> = a.parts): Deferred<Map<ImportPart, PartRecord>> = hub.runImport(a, parts)
+
+    /** Traz e avisa no fim com um toast curto. É o jeito dos botões do cartão e do painel Mais. */
+    fun runAndTell(a: Account, parts: List<ImportPart> = a.parts) {
+        viewModelScope.launch { _toasts.tryEmit(toastOf(hub.runImport(a, parts).await())) }
     }
 
-    fun stremioPushAddons() = act("stremio_push") {
+    /** "Ver minha Início". A Minha Início abre na primeira fileira nova, que acabou de chegar. */
+    fun openHomeOnNew() { prefs.homeFocusNew = true }
+
+    fun pickNuvioProfile(p: NuvioProfile) = hub.setNuvioPick(p)
+
+    fun retryProfiles() = hub.loadNuvioProfiles()
+
+    /** Manda os addons do JOTV para a conta Stremio. Devolve o texto do resultado. */
+    suspend fun pushStremioAddons(): String {
         val n = stremio.pushAddons(prefs.addonEntries.filter { it.enabled }.map { it.url }).getOrThrow()
-        if (n == 0) "A conta Stremio já tinha todos os seus addons" else "$n addons enviados para a conta Stremio"
+        return if (n == 0) "A conta Stremio já tinha todos os seus addons" else "$n addons enviados para a conta Stremio"
     }
 
-    fun stremioLogout() { stremio.logout(); local.update { it.copy(message = "Saiu da conta Stremio") } }
-
-    // ── Nuvio ───────────────────────────────────────────────────────────────────
-
-    fun nuvioLogin(email: String, password: String, server: String) = act("nuvio_login") {
-        val s = nuvio.login(email, password, server.ifBlank { NuvioAccountService.OFFICIAL }).getOrThrow()
-        fetchProfiles()
-        "Conectado como ${s.email}"
-    }
-
-    fun nuvioCode(server: String) {
-        if (local.value.busy != null) return
-        local.update { it.copy(busy = "nuvio_code", error = null, message = null) }
-        codeJob?.cancel()
-        codeJob = viewModelScope.launch {
-            val code = nuvio.deviceStart(server.ifBlank { NuvioAccountService.OFFICIAL }).getOrElse { e ->
-                local.update { it.copy(busy = null, error = e.message) }; return@launch
-            }
-            local.update { it.copy(nuvioCode = code) }
-            repeat(120) {
-                delay(code.intervalSec * 1000L)
-                val r = nuvio.devicePoll(code)
-                r.exceptionOrNull()?.let { e -> local.update { it.copy(busy = null, nuvioCode = null, error = e.message) }; return@launch }
-                val s = r.getOrNull()
-                if (s != null) {
-                    runCatching { fetchProfiles() }
-                    local.update { it.copy(busy = null, nuvioCode = null, message = "Conectado" + if (s.email.isNotBlank()) " como ${s.email}" else "") }
-                    return@launch
-                }
-            }
-            local.update { it.copy(busy = null, nuvioCode = null, error = "O código venceu. Peça outro.") }
+    private fun toastOf(res: Map<ImportPart, PartRecord>): String {
+        val bad = res.values.count { !it.ok }
+        return when {
+            bad == 0 -> "Pronto. Veja em O que veio"
+            bad < res.size -> "Veio quase tudo. Veja em O que veio"
+            else -> "Não veio nada. Veja em O que veio"
         }
     }
-
-    fun cancelCode() {
-        codeJob?.cancel()
-        local.update { it.copy(busy = null, stremioLink = null, nuvioCode = null) }
-    }
-
-    private fun loadNuvioProfiles() = viewModelScope.launch { runCatching { fetchProfiles() } }
-
-    private suspend fun fetchProfiles() {
-        val list = nuvio.profiles().getOrThrow()
-        local.update { it.copy(nuvioProfiles = list, nuvioProfile = list.firstOrNull()?.index ?: 1) }
-    }
-
-    fun pickNuvioProfile(index: Int) = local.update { it.copy(nuvioProfile = index) }
-
-    private fun nuvioProfile(): NuvioProfile =
-        local.value.nuvioProfiles.firstOrNull { it.index == local.value.nuvioProfile } ?: NuvioProfile(local.value.nuvioProfile, "Perfil", false)
-
-    fun nuvioImportAddons() = act("nuvio_addons") {
-        val list = nuvio.addons(nuvioProfile()).getOrThrow()
-        addonsMessage(importer.importAddons(list, ::step), list.count { !it.canUse })
-    }
-
-    fun nuvioImportLibrary() = act("nuvio_library") {
-        val p = nuvioProfile()
-        val l = importer.importLibrary(nuvio.library(p).getOrThrow(), ::step)
-        val w = importer.importProgress(nuvio.progress(p).getOrThrow(), ::step)
-        libraryMessage(l, w)
-    }
-
-    /** Chaves de debrid salvas na conta Nuvio. Cada uma é conferida no serviço antes de entrar. */
-    fun nuvioImportDebrid() = act("nuvio_debrid") {
-        val keys = nuvio.debridKeys(nuvioProfile()).getOrThrow()
-        if (keys.isEmpty()) return@act "A conta Nuvio não tem chave de debrid salva"
-        val ok = keys.mapNotNull { (id, key) -> DebridProvider.of(id)?.let { p -> if (debrid.connectKey(p, key).isSuccess) p.label else null } }
-        if (ok.isEmpty()) error("As chaves da conta Nuvio não foram aceitas pelos serviços")
-        "Debrid conectado (${ok.joinToString(", ")})"
-    }
-
-    /** Coleções do perfil escolhido no Nuvio. Mesmo id substitui a coleção que já estava aqui. */
-    fun nuvioImportCollections() = act("nuvio_collections") {
-        val json = nuvio.collectionsJson(nuvioProfile()).getOrThrow()
-            ?: return@act "Esse perfil do Nuvio não tem coleções"
-        val n = collections.importJson(json).getOrThrow()
-        (if (n == 1) "1 coleção importada" else "$n coleções importadas") + " para a Início do perfil ${local.value.profileName}"
-    }
-
-    fun nuvioLogout() { nuvio.logout(); local.update { it.copy(nuvioProfiles = emptyList(), message = "Saiu da conta Nuvio") } }
-
-    fun clearMessage() = local.update { it.copy(message = null, error = null) }
-
-    private fun addonsMessage(r: ImportReport, unusable: Int): String = buildString {
-        append(if (r.added == 0) "Nenhum addon novo" else "${r.added} addons importados")
-        val extra = listOfNotNull(
-            (r.skipped - unusable).takeIf { it > 0 }?.let { "$it já estavam" },
-            unusable.takeIf { it > 0 }?.let { "$it só rodam no outro app" },
-            r.failed.takeIf { it > 0 }?.let { "$it não responderam" },
-        )
-        if (extra.isNotEmpty()) append(" (").append(extra.joinToString(", ")).append(")")
-    }
-
-    private fun libraryMessage(list: ImportReport, progress: ImportReport): String =
-        "${list.added} títulos na Minha Lista e ${progress.added} no Continuar assistindo do perfil ${local.value.profileName}" +
-            (list.failed + progress.failed).takeIf { it > 0 }?.let { " ($it sem correspondência no TMDB)" }.orEmpty()
 }

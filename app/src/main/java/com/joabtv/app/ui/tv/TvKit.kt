@@ -2,6 +2,8 @@ package com.joabtv.app.ui.tv
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,7 +31,6 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.FocusDirection
@@ -38,8 +39,10 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -94,7 +97,9 @@ val tvPad: Dp @Composable @ReadOnlyComposable get() = 3.4.r
  * está dentro, não rola. Se é maior que a área, o topo fica visível (o rótulo da fileira).
  */
 @OptIn(ExperimentalFoundationApi::class)
-private class ColumnSpec(private val inset: Float) : BringIntoViewSpec {
+private class ColumnSpec(private val inset: Float, private val reduced: Boolean) : BringIntoViewSpec {
+    override val scrollAnimationSpec: AnimationSpec<Float>
+        get() = if (reduced) snap() else tween(220)
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
         val top = offset - inset
         return when {
@@ -110,7 +115,9 @@ private class ColumnSpec(private val inset: Float) : BringIntoViewSpec {
  * deixa aparecer 60% do próximo cartão.
  */
 @OptIn(ExperimentalFoundationApi::class)
-private class RowSpec(private val pad: Float) : BringIntoViewSpec {
+private class RowSpec(private val pad: Float, private val reduced: Boolean) : BringIntoViewSpec {
+    override val scrollAnimationSpec: AnimationSpec<Float>
+        get() = if (reduced) snap() else tween(160)
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
         val peek = size * 0.6f
         return when {
@@ -126,7 +133,28 @@ private class RowSpec(private val pad: Float) : BringIntoViewSpec {
 @Composable
 fun TvScrollArea(inset: Dp, content: @Composable () -> Unit) {
     val px = with(LocalDensity.current) { inset.toPx() }
-    CompositionLocalProvider(LocalBringIntoViewSpec provides remember(px) { ColumnSpec(px) }, content = content)
+    val reduced = rememberReducedMotion()
+    CompositionLocalProvider(LocalBringIntoViewSpec provides remember(px, reduced) { ColumnSpec(px, reduced) }, content = content)
+}
+
+/**
+ * Rolagem da Início do menu Superior. A fileira focada sobe para o topo da área e os últimos
+ * [peek] ficam para a próxima fileira espiar. O que já está inteiro acima da espiada não rola.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private class PeekSpec(private val peek: Float, private val reduced: Boolean) : BringIntoViewSpec {
+    override val scrollAnimationSpec: AnimationSpec<Float>
+        get() = if (reduced) snap() else tween(220)
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+        if (offset < 0 || offset + size > containerSize - peek + 1f) offset else 0f
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun TvPeekScrollArea(peek: Dp, content: @Composable () -> Unit) {
+    val px = with(LocalDensity.current) { peek.toPx() }
+    val reduced = rememberReducedMotion()
+    CompositionLocalProvider(LocalBringIntoViewSpec provides remember(px, reduced) { PeekSpec(px, reduced) }, content = content)
 }
 
 /**
@@ -162,6 +190,7 @@ fun TvRow(
 ) {
     val pad = tvPad
     val px = with(LocalDensity.current) { pad.toPx() }
+    val reduced = rememberReducedMotion()
     val rowFocus = if (preserveColumnOnVertical) {
         val requester = remember { FocusRequester() }
         Modifier.focusRequester(requester).focusProperties {
@@ -174,7 +203,7 @@ fun TvRow(
             }
         }
     } else Modifier.focusRestorer()
-    CompositionLocalProvider(LocalBringIntoViewSpec provides remember(px) { RowSpec(px) }) {
+    CompositionLocalProvider(LocalBringIntoViewSpec provides remember(px, reduced) { RowSpec(px, reduced) }) {
         LazyRow(
             modifier.fillMaxWidth().then(rowFocus),
             state = state,
@@ -222,11 +251,42 @@ fun TvRail(
     trailing: (@Composable () -> Unit)? = null,
     state: LazyListState = rememberLazyListState(),
     preserveColumnOnVertical: Boolean = false,
+    pageHeight: Dp = Dp.Unspecified,
+    onPageContentHeight: (Dp) -> Unit = {},
     content: LazyListScope.() -> Unit,
 ) {
-    Column(modifier.fillMaxWidth().tvRow().padding(top = 1.3.r, bottom = 0.2.r)) {
+    TvRailPage(pageHeight, modifier, onPageContentHeight) {
         TvRailHead(title, eyebrow, trailing)
         TvRow(state = state, preserveColumnOnVertical = preserveColumnOnVertical, content = content)
+    }
+}
+
+/** Na Início, cada fileira ocupa uma página e mantém o texto junto dos cartões. */
+@Composable
+internal fun TvRailPage(
+    height: Dp,
+    modifier: Modifier = Modifier,
+    onContentHeight: (Dp) -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val density = LocalDensity.current
+    var focused by remember { mutableStateOf(false) }
+    var contentHeight by remember { mutableStateOf(0.dp) }
+    val report by rememberUpdatedState(onContentHeight)
+    LaunchedEffect(focused, contentHeight) { if (focused && contentHeight > 0.dp) report(contentHeight) }
+    if (height == Dp.Unspecified) {
+        // Altura natural (Início do menu Superior e demais telas). Informa a altura inteira da fileira.
+        Column(modifier.fillMaxWidth().onFocusChanged { focused = it.hasFocus }
+            .onSizeChanged { contentHeight = with(density) { it.height.toDp() } }
+            .tvRow().padding(top = 1.3.r, bottom = .2.r), content = content)
+        return
+    }
+    Column(
+        modifier.fillMaxWidth().height(height).onFocusChanged { focused = it.hasFocus }.tvRow()
+            .padding(top = .75.r, bottom = 1.5.r),
+        verticalArrangement = Arrangement.Bottom,
+    ) {
+        Column(Modifier.fillMaxWidth().onSizeChanged { contentHeight = with(density) { it.height.toDp() } }, content = content)
     }
 }
 
@@ -243,8 +303,19 @@ fun TvCountPill(text: String) {
 /** Escala animada do foco, 160 ms como no webOS. Parada com "remover animações". */
 @Composable
 fun tvFocusScale(focused: Boolean, to: Float): Float {
+    return tvFocusScaleState(focused, to).value
+}
+
+@Composable
+internal fun tvFocusScaleState(focused: Boolean, to: Float): State<Float> {
     val reduced = rememberReducedMotion()
-    return animateFloatAsState(if (focused && !reduced) to else 1f, tween(if (reduced) 0 else 160), label = "tvf").value
+    return animateFloatAsState(if (focused && !reduced) to else 1f, tween(if (reduced) 0 else 160), label = "tvf")
+}
+
+internal fun Modifier.tvFocusLayer(scale: State<Float>): Modifier = graphicsLayer {
+    val value = scale.value
+    scaleX = value
+    scaleY = value
 }
 
 /** Clique de TV sem o anel genérico (cada cartão desenha o próprio foco). Segurar OK = [onLongClick]. */
@@ -290,14 +361,14 @@ fun TvPoster(
         ImageRequest.Builder(context).data(item.posterUrl.ifBlank { item.backdropUrl })
             .apply { if (readColor) allowHardware(false) }.build()
     }
-    val s = tvFocusScale(focused, 1.06f)
+    val s = tvFocusScaleState(focused, 1.06f)
     val shape = RoundedCornerShape(0.9.r)
     Column(modifier.then(if (width == Dp.Unspecified) Modifier.fillMaxWidth() else Modifier.width(width))) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
-                .scale(s)
+                .tvFocusLayer(s)
                 .shadow(if (focused) 1.2.r else 0.dp, shape)
                 .clip(shape)
                 .background(BackgroundCard2)
@@ -373,11 +444,11 @@ fun TvWideCard(
     onLongClick: (() -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val s = tvFocusScale(focused, 1.05f)
+    val s = tvFocusScaleState(focused, 1.05f)
     val shape = RoundedCornerShape(0.9.r)
     Column(modifier.width(width)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(16f / 9f).scale(s)
+            Modifier.fillMaxWidth().aspectRatio(16f / 9f).tvFocusLayer(s)
                 .shadow(if (focused) 1.2.r else 0.dp, shape).clip(shape).background(BackgroundCard2)
                 .then(if (focused) Modifier.border(0.22.r, Color.White, shape) else Modifier)
                 .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
@@ -415,13 +486,13 @@ fun TvWideCard(
 @Composable
 fun TvCastCard(name: String, role: String, photo: String, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val s = tvFocusScale(focused, 1.07f)
+    val s = tvFocusScaleState(focused, 1.07f)
     Column(
         Modifier.width(9.6.r).onFocusChanged { focused = it.hasFocus }.tvClick(onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            Modifier.size(8.6.r).scale(s).clip(CircleShape).background(Surface2)
+            Modifier.size(8.6.r).tvFocusLayer(s).clip(CircleShape).background(Surface2)
                 .then(if (focused) Modifier.border(0.22.r, Color.White, CircleShape) else Modifier),
             contentAlignment = Alignment.Center,
         ) {
@@ -451,7 +522,7 @@ fun TvButton(
     busy: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val s = tvFocusScale(focused, 1.05f)
+    val s = tvFocusScaleState(focused, 1.05f)
     val bg = when {
         !enabled -> Surface2
         primary -> Color.White
@@ -460,17 +531,17 @@ fun TvButton(
     }
     val fg = when {
         !enabled -> TextTertiary
-        primary -> TextOnLight
+        primary -> PrimaryActionText
         else -> Color.White
     }
     val shape = RoundedCornerShape(50)
     Row(
         modifier
-            .scale(s)
+            .tvFocusLayer(s)
             .then(if (focused) Modifier.border(0.22.r, Color.White, shape).padding(0.2.r) else Modifier.padding(0.2.r))
             .height(3.6.r)
             .clip(shape)
-            .background(bg)
+            .then(if (primary && enabled) Modifier.background(PrimaryActionBrush) else Modifier.background(bg))
             .onFocusChanged { focused = it.isFocused }
             .tvClick({ if (enabled && !busy) onClick() })
             .padding(horizontal = 1.7.r),
@@ -490,10 +561,10 @@ fun TvButton(
 @Composable
 fun TvChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null) {
     var focused by remember { mutableStateOf(false) }
-    val s = tvFocusScale(focused, 1.06f)
+    val s = tvFocusScaleState(focused, 1.06f)
     val shape = RoundedCornerShape(50)
     Row(
-        modifier.scale(s).height(2.7.r).clip(shape)
+        modifier.tvFocusLayer(s).height(2.7.r).clip(shape)
             .background(if (selected) Accent else Surface2)
             .then(if (focused) Modifier.border(0.2.r, Color.White, shape) else Modifier)
             .onFocusChanged { focused = it.isFocused }

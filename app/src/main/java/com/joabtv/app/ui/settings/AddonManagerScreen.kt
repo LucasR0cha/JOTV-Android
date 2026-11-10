@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.TravelExplore
@@ -98,7 +99,8 @@ fun AddonManagerScreen(
             }
             com.joabtv.app.ui.common.PageHeader(
                 "Addons", Modifier.weight(1f),
-                sub = if (state.addons.isEmpty()) "Nenhum instalado" else "${state.addons.size} instalados · $ativos ativos",
+                sub = if (state.addons.isEmpty()) "Nenhum addon instalado"
+                else (if (ativos == 1) "1 ativo" else "$ativos ativos") + ". O primeiro da lista é o primeiro a ser buscado quando você dá Assistir.",
             )
             // Atualizar lê os manifests na rede. Gira e trava até terminar.
             com.joabtv.app.ui.common.GlassCircleButton(
@@ -145,12 +147,7 @@ fun AddonManagerScreen(
                 item { install() }
             }
 
-            // ── Catálogo próprio do app, fixo no topo e desligável como um addon ──
-            item {
-                Column(Modifier.padding(top = 8.dp, bottom = 2.dp)) {
-                    com.joabtv.app.ui.common.Eyebrow("Catálogo do app")
-                }
-            }
+            // ── Sugestões do JOTV, fixas no topo e desligáveis como um addon ──
             item {
                 JotvCatalogCard(
                     on = state.catalogOn,
@@ -165,11 +162,6 @@ fun AddonManagerScreen(
                 item {
                     Column(Modifier.padding(top = 8.dp, bottom = 2.dp)) {
                         com.joabtv.app.ui.common.Eyebrow("Instalados")
-                        Text(
-                            "A ordem é a prioridade. O primeiro da lista é tentado primeiro.",
-                            color = TextSecondary, fontSize = 14.sp, lineHeight = 20.sp,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
                     }
                 }
             }
@@ -189,10 +181,7 @@ fun AddonManagerScreen(
                     onRemove = { viewModel.remove(addon.url) },
                     onEdit = { novo -> viewModel.editUrl(addon.url, novo) },
                     onConfigureSite = { siteFor = addon },
-                    homeKeys = state.homeCatalogKeys,
-                    onToggleCatalog = { c ->
-                        viewModel.toggleHomeCatalog(addon.url, state.manifests[addon.url]?.name.orEmpty(), c)
-                    },
+                    rows = state.rowCounts[com.joabtv.app.data.remote.AddonLinks.baseOf(addon.url)],
                 )
             }
 
@@ -299,7 +288,7 @@ private fun InstallCard(
                     null, tint = if (ok) Success else LiveRed, modifier = Modifier.size(18.dp),
                 )
                 Text(
-                    if (ok) "$installed instalado" else (error ?: ""),
+                    if (ok) installed.orEmpty() else (error ?: ""),
                     color = if (ok) Success else LiveRed,
                     fontSize = 14.sp, fontWeight = FontWeight.Bold,
                 )
@@ -329,22 +318,24 @@ private fun AddonCard(
     onRemove: () -> Unit,
     onEdit: (String) -> Unit,
     onConfigureSite: () -> Unit,
-    homeKeys: Set<String>,
-    onToggleCatalog: (com.joabtv.app.data.remote.AddonCatalog) -> Unit,
+    rows: AddonsViewModel.RowCount?,
 ) {
-    var showCatalogs by remember(addon.url) { mutableStateOf(false) }
-    val catalogs = manifest?.catalogs.orEmpty()
-    if (showCatalogs && catalogs.isNotEmpty()) {
-        HomeCatalogsDialog(
-            addonName = manifest?.name.orEmpty(),
-            base = com.joabtv.app.data.remote.AddonLinks.baseOf(addon.url),
-            catalogs = catalogs,
-            homeKeys = homeKeys,
-            onToggle = onToggleCatalog,
-            onDismiss = { showCatalogs = false },
-        )
-    }
+    // Fileiras do addon no mesmo painel das outras portas (Minha Início e a ficha da loja).
+    var showRows by remember(addon.url) { mutableStateOf(false) }
+    val shownName = manifest?.name?.takeIf { it.isNotBlank() } ?: com.joabtv.app.data.remote.AddonLinks.hostOf(addon.url).ifBlank { "Addon" }
+    if (showRows) AddonRowsPanel(url = addon.url, name = shownName, onDismiss = { showRows = false })
     var confirmRemove by remember(addon.url) { mutableStateOf(false) }
+    if (confirmRemove) CatalogConfirm(
+        title = "Remover $shownName?",
+        body = when (val n = rows?.on ?: 0) {
+            0 -> "Dá para instalar de novo depois pelo link."
+            1 -> "A fileira dele sai da Início."
+            else -> "As ${catNum(n)} fileiras dele saem da Início."
+        },
+        confirm = "Remover", danger = true,
+        onConfirm = { confirmRemove = false; onRemove() },
+        onDismiss = { confirmRemove = false },
+    )
     // Edição da URL aberta? Guarda o texto em andamento.
     var editing by remember(addon.url) { mutableStateOf(false) }
     var editText by remember(addon.url) { mutableStateOf(addon.url) }
@@ -466,6 +457,11 @@ private fun AddonCard(
             }
         }
 
+        manifest?.takeIf { it.catalogs.isEmpty() }?.let { m ->
+            val only = if ("stream" in m.resources) "Só fontes de vídeo, sem fileiras" else if ("subtitles" in m.resources) "Só legendas, sem fileiras" else ""
+            if (only.isNotBlank()) Text(only, color = TextTertiary, fontSize = 13.sp, modifier = Modifier.alpha(contentAlpha))
+        }
+
         HorizontalDivider(color = BorderSubtle)
 
         // Ações: prioridade numa linha, o resto (que cresceu com "Configurar no site") noutra
@@ -487,52 +483,27 @@ private fun AddonCard(
                     modifier = Modifier.size(19.dp),
                 )
             }
-            if (catalogs.isNotEmpty()) {
-                val on = catalogs.count { "${com.joabtv.app.data.remote.AddonLinks.baseOf(addon.url)}|${it.type}|${it.id}" in homeKeys }
-                Text(
-                    if (on > 0) "Na Início ($on)" else "Na Início",
-                    color = if (on > 0) Accent else TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                    fontFamily = ManropeFontFamily,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { showCatalogs = true }
-                        .padding(horizontal = 10.dp, vertical = 13.dp),
+            if (rows != null && rows.all > 0) {
+                Spacer(Modifier.width(6.dp))
+                com.joabtv.app.ui.common.JoabButton(
+                    "Fileiras ${catNum(rows.on)} de ${catNum(rows.all)}", { showRows = true },
+                    icon = Icons.Default.GridView,
+                    tone = if (rows.on > 0) com.joabtv.app.ui.common.ButtonTone.ON else com.joabtv.app.ui.common.ButtonTone.SECONDARY,
+                    compact = true,
                 )
             }
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            if (confirmRemove) {
-                Text(
-                    "Cancelar",
-                    color = TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                    fontFamily = ManropeFontFamily,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { confirmRemove = false }
-                        .padding(horizontal = 12.dp, vertical = 13.dp),
-                )
-                Text(
-                    "Remover mesmo",
-                    color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold,
-                    fontFamily = ManropeFontFamily,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(LiveRed)
-                        .clickable { onRemove() }
-                        .padding(horizontal = 14.dp, vertical = 13.dp),
-                )
-            } else {
-                Row(
-                    Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { confirmRemove = true }
-                        .padding(horizontal = 12.dp, vertical = 13.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Icon(Icons.Default.Delete, null, tint = LiveRed, modifier = Modifier.size(16.dp))
-                    Text("Remover", color = LiveRed, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = ManropeFontFamily)
-                }
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { confirmRemove = true }
+                    .padding(horizontal = 12.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(Icons.Default.Delete, null, tint = LiveRed, modifier = Modifier.size(16.dp))
+                Text("Remover", color = LiveRed, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = ManropeFontFamily)
             }
             Box(
                 Modifier
@@ -602,50 +573,9 @@ private fun AddonCard(
     }
 }
 
-/** Escolhe quais catálogos do addon viram fileira na Início. Marca na hora, sem servidor. */
-@Composable
-private fun HomeCatalogsDialog(
-    addonName: String,
-    base: String,
-    catalogs: List<com.joabtv.app.data.remote.AddonCatalog>,
-    homeKeys: Set<String>,
-    onToggle: (com.joabtv.app.data.remote.AddonCatalog) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = BackgroundCard,
-        title = {
-            Column {
-                Text("Catálogos de $addonName", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, fontFamily = SoraFontFamily)
-                Text("Marcados viram fileiras na Início", color = TextTertiary, fontSize = 12.sp, fontFamily = ManropeFontFamily)
-            }
-        },
-        text = {
-            LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                items(catalogs.size) { i ->
-                    val c = catalogs[i]
-                    val checked = "$base|${c.type}|${c.id}" in homeKeys
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { onToggle(c) }.padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Checkbox(checked = checked, onCheckedChange = { onToggle(c) }, colors = CheckboxDefaults.colors(checkedColor = Accent))
-                        Column(Modifier.weight(1f)) {
-                            Text(c.name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = ManropeFontFamily)
-                            Text(if (c.type == "movie") "Filmes" else "Séries", color = TextTertiary, fontSize = 11.sp, fontFamily = ManropeFontFamily)
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Pronto", color = Accent, fontWeight = FontWeight.ExtraBold) } },
-    )
-}
-
 /**
- * Catálogo JOTV. Não sai da lista nem muda de lugar (não tem fonte, então não entra na
- * prioridade). Desligado, a Início fica só com o progresso e os catálogos de addon.
+ * Sugestões do JOTV. Não saem da lista nem mudam de lugar (não têm fonte, então não entram na
+ * prioridade). Desligadas, a Início fica só com o progresso, os addons e as coleções.
  */
 @Composable
 private fun JotvCatalogCard(on: Boolean, rowsOn: Int, onToggle: () -> Unit, onCustomize: () -> Unit) {
@@ -671,7 +601,7 @@ private fun JotvCatalogCard(on: Boolean, rowsOn: Int, onToggle: () -> Unit, onCu
             }
             Column(Modifier.weight(1f).alpha(contentAlpha)) {
                 Text(
-                    "JOTV Catálogo", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
+                    "Sugestões do JOTV", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 // Etiquetas na linha de baixo, assim o nome nunca corta.
@@ -701,7 +631,7 @@ private fun JotvCatalogCard(on: Boolean, rowsOn: Int, onToggle: () -> Unit, onCu
             )
         }
         Text(
-            "Em alta, nos cinemas, lançamentos, trailers e gêneros, direto do TMDB. Desligue para montar a Início só com catálogos de addon.",
+            "Em alta, cinemas, lançamentos, trailers e gêneros. Desligado, a Início fica com seu progresso, addons e coleções.",
             color = TextSecondary, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.alpha(contentAlpha),
         )
         HorizontalDivider(color = BorderSubtle)
@@ -713,7 +643,7 @@ private fun JotvCatalogCard(on: Boolean, rowsOn: Int, onToggle: () -> Unit, onCu
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("Personalizar Início", color = Accent, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = ManropeFontFamily)
+            Text("Abrir Minha Início", color = Accent, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = ManropeFontFamily)
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Accent, modifier = Modifier.size(18.dp))
         }
     }
@@ -761,6 +691,6 @@ private fun TinyPill(text: String, color: Color) {
 @Composable
 private fun EmptyAddons() {
     com.joabtv.app.ui.common.JoabEmptyState(
-        Icons.Default.Extension, "Nenhum addon instalado", "Cole o link de um manifest para instalar ou explore o catálogo da comunidade.",
+        Icons.Default.Extension, "Nenhum addon instalado", "Eles trazem fontes para assistir e fileiras novas. Cole o link de um manifest ou explore o catálogo da comunidade.",
     )
 }

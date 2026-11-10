@@ -14,6 +14,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
@@ -21,6 +23,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -52,12 +56,23 @@ private val TYPE_LABEL = mapOf(
  * a ficha do addon fica fixa à direita. Em tela estreita ela abre logo abaixo do cartão tocado.
  */
 @Composable
-fun AddonStoreScreen(onBack: () -> Unit, vm: AddonStoreViewModel = hiltViewModel()) {
+fun AddonStoreScreen(onBack: () -> Unit, onOpenHome: () -> Unit = {}, vm: AddonStoreViewModel = hiltViewModel()) {
     val st by vm.ui.collectAsStateWithLifecycle()
     val list = remember(st.all, st.query, st.show, st.installed) { st.filtered }
     var formFor by remember { mutableStateOf<CommunityAddon?>(null) }
     var siteFor by remember { mutableStateOf<CommunityAddon?>(null) }
     val snack = remember { SnackbarHostState() }
+    // Fileiras do addon no mesmo painel da tela Addons. Remover pede confirmação com o número de fileiras.
+    var rowsFor by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var removeAsk by remember { mutableStateOf<CommunityAddon?>(null) }
+    val rowsFocus = remember { FocusRequester() }
+    val tv = com.joabtv.app.ui.common.LocalIsTv.current
+    // Recém instalado, o foco da TV vai a Escolher fileiras.
+    LaunchedEffect(st.justInstalled) {
+        if (st.justInstalled == null) return@LaunchedEffect
+        if (tv) rowsFocus.focusWithRetry()
+        vm.clearJustInstalled()
+    }
 
     LaunchedEffect(st.message) {
         st.message?.let { snack.showSnackbar(it); vm.clearMessage() }
@@ -65,9 +80,11 @@ fun AddonStoreScreen(onBack: () -> Unit, vm: AddonStoreViewModel = hiltViewModel
 
     val actions = DetailActions(
         install = { vm.install(it) },
-        remove = { vm.remove(it) },
+        remove = { removeAsk = it },
         form = { formFor = it },
         site = { siteFor = it },
+        rows = { a -> vm.ui.value.entryOf(a)?.let { rowsFor = it.url to a.name } },
+        home = { vm.markHomeNew(); onOpenHome() },
     )
 
     Box(Modifier.fillMaxSize().background(Background)) {
@@ -99,7 +116,7 @@ fun AddonStoreScreen(onBack: () -> Unit, vm: AddonStoreViewModel = hiltViewModel
                                 val selected = st.selectedUrl == a.url
                                 StoreCard(a, st.isInstalled(a), selected) { vm.select(a) }
                                 if (selected && !wide) {
-                                    AddonDetail(a, st.isInstalled(a), st.busy == a.url, st.busy != null, actions,
+                                    AddonDetail(a, st.isInstalled(a), st.busy == a.url, st.busy != null, actions, rowsFocus,
                                         Modifier.padding(top = 2.dp))
                                 }
                             }
@@ -116,7 +133,7 @@ fun AddonStoreScreen(onBack: () -> Unit, vm: AddonStoreViewModel = hiltViewModel
                                 Text("Escolha um addon. A ficha dele aparece aqui.", color = TextTertiary, fontSize = 15.sp)
                             }
                         } else {
-                            AddonDetail(sel, st.isInstalled(sel), st.busy == sel.url, st.busy != null, actions,
+                            AddonDetail(sel, st.isInstalled(sel), st.busy == sel.url, st.busy != null, actions, rowsFocus,
                                 Modifier.verticalScroll(rememberScrollState()))
                         }
                     }
@@ -125,6 +142,21 @@ fun AddonStoreScreen(onBack: () -> Unit, vm: AddonStoreViewModel = hiltViewModel
         }
         SnackbarHost(snack, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
 
+        rowsFor?.let { (url, name) -> AddonRowsPanel(url = url, name = name, onDismiss = { rowsFor = null }) }
+        removeAsk?.let { a ->
+            val n = st.rowsOf(a)?.on ?: 0
+            CatalogConfirm(
+                title = "Remover ${a.name}?",
+                body = when (n) {
+                    0 -> "Dá para instalar de novo depois."
+                    1 -> "A fileira dele sai da Início."
+                    else -> "As ${catNum(n)} fileiras dele saem da Início."
+                },
+                confirm = "Remover", danger = true,
+                onConfirm = { removeAsk = null; vm.remove(a) },
+                onDismiss = { removeAsk = null },
+            )
+        }
         formFor?.let { a ->
             ConfigFormDialog(a, onDismiss = { formFor = null }) { url ->
                 formFor = null
@@ -152,6 +184,8 @@ private class DetailActions(
     val remove: (CommunityAddon) -> Unit,
     val form: (CommunityAddon) -> Unit,
     val site: (CommunityAddon) -> Unit,
+    val rows: (CommunityAddon) -> Unit,
+    val home: () -> Unit,
 )
 
 @Composable
@@ -268,8 +302,10 @@ private fun usageText(a: CommunityAddon): String {
         if ("stream" in a.resources) add("aparece em Fontes no detalhe e no player")
         if ("subtitles" in a.resources) add("aparece em Legendas no player")
     }
-    if (parts.isEmpty()) return "Só traz catálogo ou metadados. O catálogo de filmes e séries pode virar fileira na Início pelo botão Na Início do addon instalado."
-    return "No JOTV " + parts.joinToString(" e ") + "."
+    // O catálogo vira fileira da Início sozinho. A pessoa escolhe quais em Fileiras.
+    val rows = if ("catalog" in a.resources) "As fileiras dele aparecem sozinhas na Início. Escolha quais em Fileiras." else ""
+    if (parts.isEmpty()) return rows.ifEmpty { "Só traz metadados. O JOTV usa o TMDB para isso, então este addon não muda nada aqui." }
+    return "No JOTV " + parts.joinToString(" e ") + "." + if (rows.isNotEmpty()) " $rows" else ""
 }
 
 @Composable
@@ -279,6 +315,7 @@ private fun AddonDetail(
     busy: Boolean,
     anyBusy: Boolean,
     actions: DetailActions,
+    rowsFocus: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     com.joabtv.app.ui.common.SummaryCard(modifier) {
@@ -309,6 +346,14 @@ private fun AddonDetail(
         @OptIn(ExperimentalLayoutApi::class)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (installed) {
+                // Instalado, a ficha leva às fileiras dele e à Minha Início.
+                if ("catalog" in a.resources) {
+                    com.joabtv.app.ui.common.JoabButton(
+                        "Escolher fileiras", { actions.rows(a) }, Modifier.focusRequester(rowsFocus),
+                        icon = Icons.Default.GridView, tone = com.joabtv.app.ui.common.ButtonTone.PRIMARY, compact = true,
+                    )
+                    com.joabtv.app.ui.common.JoabButton("Ver minha Início", { actions.home() }, icon = Icons.Default.Home, compact = true)
+                }
                 com.joabtv.app.ui.common.JoabButton(
                     "Remover", { actions.remove(a) }, tone = com.joabtv.app.ui.common.ButtonTone.DANGER,
                     enabled = !anyBusy, compact = true,

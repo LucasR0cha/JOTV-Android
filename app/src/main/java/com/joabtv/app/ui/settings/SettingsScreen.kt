@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.ViewModule
 import com.joabtv.app.data.local.SubLangs
@@ -59,6 +60,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.joabtv.app.data.accounts.Account
+import com.joabtv.app.data.accounts.ImportPart
+import com.joabtv.app.ui.collections.CollectionsViewModel
+import com.joabtv.app.ui.collections.countOf
 import com.joabtv.app.data.local.PlatformMode
 import com.joabtv.app.ui.theme.*
 
@@ -71,6 +77,7 @@ fun SettingsScreen(
     onOpenAccounts: () -> Unit = {},
     onOpenLive: () -> Unit = {},
     onOpenCollections: () -> Unit = {},
+    onOpenAddonStore: () -> Unit = onOpenAddons,
     onBack: () -> Unit,
     onPlatformChanged: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -80,13 +87,81 @@ fun SettingsScreen(
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val pid by viewModel.profileId.collectAsStateWithLifecycle()
     val me = profiles.firstOrNull { it.id == pid } ?: profiles.first()
-    val addons by viewModel.addons.collectAsStateWithLifecycle()
-    val addonCount = addons.size
     val sourceStatus by viewModel.sourceStatus.collectAsStateWithLifecycle()
     val checkingHealth by viewModel.checkingHealth.collectAsStateWithLifecycle()
     // Verifica automaticamente ao abrir as Configurações (uma vez).
     LaunchedEffect(Unit) { if (sourceStatus.isEmpty()) viewModel.checkSourcesHealth() }
     val pad = com.joabtv.app.ui.common.pagePadding()
+
+    // ── Seu catálogo. Cinco cartões vivos no topo, com o estado e a ação da vez ──
+    val accVm: AccountsViewModel = hiltViewModel()
+    val colVm: CollectionsViewModel = hiltViewModel()
+    val catalog by viewModel.catalog.collectAsStateWithLifecycle()
+    val accSt by accVm.ui.collectAsStateWithLifecycle()
+    val colSt by colVm.ui.collectAsStateWithLifecycle()
+    val isTv = com.joabtv.app.ui.common.LocalIsTv.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var panel by remember { mutableStateOf<AccountPanel?>(null) }
+    var heroOpen by remember { mutableStateOf(false) }
+    var linkOpen by remember { mutableStateOf(false) }
+    // Botão que abriu outra tela ("cartão/botão"). Na volta o foco já nasce nele (regra 1 do foco inicial).
+    var opened by rememberSaveable { mutableStateOf("") }
+    var lastFocus by remember { mutableStateOf("") }
+    val cards = remember(catalog, colSt.busy) { catalogCards(catalog, linkBusy = colSt.busy == "url" || colSt.busy == "paste") }
+    val reqs = remember { HashMap<String, FocusRequester>() }
+    fun req(card: String, act: String) = reqs.getOrPut("$card/$act") { FocusRequester() }
+    /** Foco no botão pedido, ou no primário do mesmo cartão quando o botão sumiu (o estado mudou). */
+    fun refocus(key: String) {
+        val card = key.substringBefore('/')
+        if (runCatching { req(card, key.substringAfter('/')).requestFocus() }.isFailure) runCatching { req(card, "primary").requestFocus() }
+    }
+    val onCardAct: (String, String) -> Unit = { card, act ->
+        lastFocus = "$card/$act"
+        fun open(go: () -> Unit) { opened = lastFocus; go() }
+        when (card) {
+            "home" -> if (act == "hero") heroOpen = true else open(onOpenHomeCustomize)
+            Account.NUVIO.key, Account.STREMIO.key -> accountAct(accVm, Account.of(card)!!, act, { panel = it })
+            "addons" -> if (act == "explore") open(onOpenAddonStore) else open(onOpenAddons)
+            "cols" -> when (act) {
+                "open" -> open(onOpenCollections)
+                "link" -> linkOpen = true
+                "login" -> accountAct(accVm, Account.NUVIO, "login", { panel = it }, ImportPart.COLLECTIONS)
+                "pull" -> accVm.runAndTell(Account.NUVIO, listOf(ImportPart.COLLECTIONS))
+            }
+            "kids" -> open(onOpenProfiles)
+        }
+    }
+    // Foco inicial na TV, na primeira regra que valer (3.1 da especificação). O celular não puxa foco.
+    LaunchedEffect(Unit) {
+        val key = firstFocusKey(cards, opened)
+        android.util.Log.d("JOTVFOCUS", "effect key=$key cards=${cards.map { it.key }} nuvio=${catalog.nuvio.signedIn} t=${System.currentTimeMillis() % 100000}") // DBGTMP
+        opened = ""
+        if (isTv) {
+            lastFocus = key
+            // Os botões ainda estão sendo medidos. Tenta de novo por um instante e cai no primário do cartão se o botão não existir mais.
+            repeat(40) { i ->
+                val act = if (i < 12) key.substringAfter('/') else "primary"
+                if (runCatching { req(key.substringBefore('/'), act).requestFocus() }.isSuccess) return@LaunchedEffect
+                kotlinx.coroutines.delay(50)
+            }
+        }
+    }
+    // Ao voltar de um painel ou diálogo, o foco volta ao botão que abriu. Também puxa de volta quando uma tela
+    // aberta daqui acabou e o catálogo mudou (o que ela trouxe aparece nos cartões).
+    val overlayOpen = panel != null || accSt.login != null || heroOpen || linkOpen
+    var wasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(overlayOpen) {
+        if (wasOpen && !overlayOpen && isTv && lastFocus.isNotEmpty()) {
+            kotlinx.coroutines.delay(120)
+            refocus(lastFocus)
+        }
+        wasOpen = overlayOpen
+    }
+    // O que o perfil viu em Minha Início muda fora dos fluxos. Ao voltar de outra tela os cartões se refazem.
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        viewModel.refreshCatalog()
+        onPauseOrDispose { }
+    }
 
     Column(Modifier.fillMaxSize().background(Background).topInsetsPadding()) {
         Row(
@@ -98,13 +173,14 @@ fun SettingsScreen(
             if (!com.joabtv.app.ui.common.LocalIsTv.current) IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Voltar", tint = TextPrimary)
             }
-            com.joabtv.app.ui.common.PageHeader("Configurações", Modifier.weight(1f), sub = "Perfil, reprodução, addons e aparelho")
+            com.joabtv.app.ui.common.PageHeader("Configurações", Modifier.weight(1f), sub = "Sua Início, contas, reprodução e aparelho")
         }
         // Resumo à direita em tela larga, embaixo do conteúdo em tela estreita (.set-summary).
         val summary: @Composable () -> Unit = {
             SettingsSummary(
                 profile = me.name + if (me.kids) " (infantil)" else "",
-                addonCount = addonCount,
+                catalog = catalog,
+                tmdbOwn = viewModel.customTmdbApiKey.collectAsStateWithLifecycle().value.isNotBlank(),
                 online = sourceStatus.count { it.online },
                 total = sourceStatus.size,
                 checking = checkingHealth,
@@ -123,12 +199,30 @@ fun SettingsScreen(
                     .padding(horizontal = pad).padding(bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                // Seu catálogo. Cinco cartões na ordem fixa (Minha Início, Nuvio, Stremio, Addons, Coleções).
+                SettingsSection("Seu catálogo")
+                if (!me.kids && !catalog.nuvio.signedIn && !catalog.stremio.signedIn && catalog.addons.total == 0) Text(
+                    "Comece trazendo suas coisas de uma conta ou explore addons.",
+                    color = TextSecondary, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.padding(start = 4.dp),
+                )
+                cards.forEachIndexed { i, c ->
+                    LiveCard(
+                        c, requesterOf = { req(c.key, it) }, primaryRequester = req(c.key, "primary"),
+                        onAct = { onCardAct(c.key, it) },
+                        upTo = cards.getOrNull(i - 1)?.let { req(it.key, "primary") },
+                        downTo = cards.getOrNull(i + 1)?.let { req(it.key, "primary") },
+                        onFocused = { android.util.Log.d("JOTVFOCUS", "focus ${c.key}/$it t=${System.currentTimeMillis() % 100000}"); lastFocus = "${c.key}/$it" }, // DBGTMP
+                    )
+                }
+
                 // Perfil ativo. Tocar abre o "Quem está assistindo?" para trocar ou editar.
                 SettingsSection("Perfil")
                 com.joabtv.app.ui.common.SettingsRow(
                     icon = Icons.Default.Person,
                     title = me.name,
                     sub = (if (me.kids) "Infantil" else "Perfil") + " · trocar ou editar perfis",
+                    // Cima volta ao primário do último cartão, como Baixo saiu dele.
+                    modifier = Modifier.focusProperties { up = req(cards.last().key, "primary") },
                     onClick = onOpenProfiles,
                 )
                 // PIN dos pais. Só mexe quem já está fora do infantil (sair do infantil já pede
@@ -147,6 +241,12 @@ fun SettingsScreen(
                         onSet = { pin -> viewModel.setParentalPin(pin); showSetPin = false },
                         onDismiss = { showSetPin = false },
                     )
+                }
+
+                if (viewModel.traktConfigured) SettingsCard {
+                    Text("Trakt", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    TraktSection(viewModel)
                 }
 
                 // Reprodução do perfil ativo. Ordena as fontes e limita a qualidade escolhida no Assistir.
@@ -185,23 +285,25 @@ fun SettingsScreen(
                     onClick = { pickLang = true },
                 )
                 if (pickLang) SubLangDialog(subLang, onPick = { viewModel.setSubLang(it); pickLang = false }, onDismiss = { pickLang = false })
-
-                if (viewModel.traktConfigured) {
-                    SettingsSection("Trakt")
-                    SettingsCard { TraktSection(viewModel) }
+                val subSize by viewModel.subSize.collectAsStateWithLifecycle()
+                val subBg by viewModel.subBg.collectAsStateWithLifecycle()
+                SettingsCard {
+                    PrefRow("Tamanho da legenda", com.joabtv.app.ui.movies.SUB_SIZES, subSize, viewModel::setSubSize)
+                    Spacer(Modifier.height(14.dp))
+                    PrefRow("Fundo da legenda", listOf(true to "Com fundo", false to "Sem fundo"), subBg, viewModel::setSubBg)
+                    Text(
+                        "Também muda dentro do player, em Legendas.",
+                        color = TextTertiary, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp),
+                    )
                 }
+
+                SettingsSection("Aparência")
+                val appearance by viewModel.appearance.collectAsStateWithLifecycle()
+                AppearanceSettings(appearance, viewModel::setTheme, viewModel::setMotion, viewModel::setMenu)
 
                 // Addons, Aparelho e TMDB somem no perfil infantil — só quem já passou pelo PIN
                 // pra sair do infantil mexe nisso (ver ProfilesScreen).
                 if (!me.kids) {
-                SettingsSection("Contas")
-                com.joabtv.app.ui.common.SettingsRow(
-                    icon = Icons.Default.AccountCircle,
-                    iconTint = Accent,
-                    title = "Stremio e Nuvio",
-                    sub = "Entre na sua conta e traga addons, Minha Lista, progresso e debrid.",
-                    onClick = onOpenAccounts,
-                )
                 SettingsSection("TV ao vivo")
                 com.joabtv.app.ui.common.SettingsRow(
                     icon = Icons.Default.LiveTv,
@@ -210,31 +312,7 @@ fun SettingsScreen(
                     sub = "Listas M3U e contas Xtream, com guia de programação.",
                     onClick = onOpenLive,
                 )
-                SettingsSection("Início")
-                com.joabtv.app.ui.common.SettingsRow(
-                    icon = Icons.Default.Dashboard,
-                    iconTint = Accent,
-                    title = "Personalizar Início",
-                    sub = "Liga, desliga, ordena e renomeia as fileiras. Escolhe o destaque e o catálogo JOTV.",
-                    onClick = onOpenHomeCustomize,
-                )
-                // Coleções saem primeiro no celular. A TV ganha a tela dela na etapa seguinte.
-                if (!com.joabtv.app.ui.common.LocalIsTv.current) com.joabtv.app.ui.common.SettingsRow(
-                    icon = Icons.Default.ViewModule,
-                    iconTint = Accent,
-                    title = "Coleções",
-                    sub = "Pastas de estúdios, streamings, franquias e catálogos na Início. Importa e exporta no formato do Nuvio.",
-                    onClick = onOpenCollections,
-                )
-                SettingsSection("Addons")
-                com.joabtv.app.ui.common.SettingsRow(
-                    icon = Icons.Default.Extension,
-                    iconTint = Accent,
-                    title = "Gerenciar addons",
-                    sub = (if (addonCount == 0) "Nenhum instalado" else "$addonCount instalado(s)") +
-                        ". As fontes vêm dos addons. Instale, ordene e ative cada um.",
-                    onClick = onOpenAddons,
-                )
+                SettingsSection("Fontes de vídeo")
                 com.joabtv.app.ui.common.SettingsRow(
                     icon = Icons.Default.Bolt,
                     iconTint = Accent,
@@ -245,7 +323,7 @@ fun SettingsScreen(
                 }
 
                 // Status das fontes. Chama a rede, então gira e trava enquanto verifica.
-                SettingsSection("Status das fontes")
+                SettingsSection("Diagnóstico")
                 com.joabtv.app.ui.common.SettingsRow(
                     icon = Icons.Default.Refresh,
                     title = if (checkingHealth) "Verificando…" else "Verificar fontes agora",
@@ -300,7 +378,7 @@ fun SettingsScreen(
                     onClick = { viewModel.setPlatformMode(PlatformMode.PHONE); onPlatformChanged() },
                 )
 
-                SettingsSection("TMDB")
+                SettingsSection("Dados de filmes")
                 val customTmdbKey by viewModel.customTmdbApiKey.collectAsStateWithLifecycle()
                 var tmdbDraft by remember(customTmdbKey) { mutableStateOf(customTmdbKey) }
                 var tmdbVisible by remember(customTmdbKey) { mutableStateOf(false) }
@@ -360,17 +438,71 @@ fun SettingsScreen(
                     )
                 }
                 } // !me.kids (Aparelho + TMDB)
+
+                SettingsSection("Biblioteca")
+                var confirmClear by remember { mutableStateOf(false) }
+                val context = androidx.compose.ui.platform.LocalContext.current
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.History,
+                    title = "Limpar Continuar assistindo",
+                    sub = "Apaga posições salvas de filmes e séries. Minha Lista continua",
+                    onClick = { confirmClear = true },
+                )
+                if (confirmClear) AlertDialog(
+                    onDismissRequest = { confirmClear = false },
+                    containerColor = BackgroundCard,
+                    title = { Text("Limpar Continuar assistindo?", color = TextPrimary, fontWeight = FontWeight.ExtraBold) },
+                    text = { Text("As posições salvas somem. Minha Lista continua.", color = TextSecondary) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            viewModel.clearContinueWatching()
+                            confirmClear = false
+                            android.widget.Toast.makeText(context, "Histórico limpo", android.widget.Toast.LENGTH_SHORT).show()
+                        }) { Text("Limpar", color = DangerText) }
+                    },
+                    dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancelar", color = TextSecondary) } },
+                )
                 below?.let { Spacer(Modifier.height(18.dp)); it() }
             }
         }
     }
+
+    // Diálogo de entrada, painéis Mais e O que veio, destaque e link das coleções.
+    AccountOverlays(accVm, panel, { panel = it }, onOpenHome = { accVm.openHomeOnNew(); opened = "home/organize"; onOpenHomeCustomize() })
+    if (heroOpen) {
+        val cur by viewModel.heroSource.collectAsStateWithLifecycle()
+        val options = remember { listOf("" to "Automático") + viewModel.heroChoices() }
+        LiveChoice(
+            "Destaque da Início", "O banner grande do topo",
+            options.map { (k, label) -> Triple(label, if (k.isEmpty()) "Em alta das sugestões, ou a primeira fileira sem elas" else null, k == cur) },
+            onPick = { i -> viewModel.setHeroSource(options[i].first); heroOpen = false },
+            onDismiss = { heroOpen = false },
+        )
+    }
+    if (linkOpen) {
+        com.joabtv.app.ui.collections.CollectionImportDialog(
+            st = colSt, initialMode = "url",
+            onPaste = colVm::importText, onUrl = colVm::importUrl,
+            onNuvio = {
+                linkOpen = false
+                if (colSt.nuvioLogged) accVm.runAndTell(Account.NUVIO, listOf(ImportPart.COLLECTIONS))
+                else accountAct(accVm, Account.NUVIO, "login", { panel = it }, ImportPart.COLLECTIONS)
+            },
+            onDismiss = { linkOpen = false },
+        )
+        // Trouxe, fecha o diálogo e avisa. O erro fica no diálogo.
+        LaunchedEffect(colSt.message) {
+            colSt.message?.let { android.widget.Toast.makeText(ctx, it, android.widget.Toast.LENGTH_LONG).show(); colVm.clearMessage(); linkOpen = false }
+        }
+    }
 }
 
-/** Resumo das configurações (.set-summary). Logo, versão e o estado do que importa. */
+/** Resumo das configurações (.set-summary). Logo, versão, o estado do catálogo e do aparelho. */
 @Composable
 private fun SettingsSummary(
     profile: String,
-    addonCount: Int,
+    catalog: CatalogState,
+    tmdbOwn: Boolean,
     online: Int,
     total: Int,
     checking: Boolean,
@@ -378,6 +510,7 @@ private fun SettingsSummary(
     trakt: String?,
     traktConfigured: Boolean,
 ) {
+    fun tone(t: TagTone?) = when (t) { TagTone.ON -> Ok; TagTone.WARN -> Gold; TagTone.BAD -> DangerText; null -> TextPrimary }
     com.joabtv.app.ui.common.SummaryCard {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 16.dp)) {
             androidx.compose.foundation.Image(
@@ -389,13 +522,29 @@ private fun SettingsSummary(
                 Text("Versão ${com.joabtv.app.BuildConfig.VERSION_NAME}", color = TextTertiary, fontSize = 13.sp)
             }
         }
+        if (!catalog.kids) {
+            com.joabtv.app.ui.common.Eyebrow("Seu catálogo", Modifier.padding(bottom = 6.dp))
+            com.joabtv.app.ui.common.SummaryRow("Fileiras na Início", catalog.home.rows.toString())
+            Account.entries.forEach { a ->
+                val (text, t) = accountShort(a, catalog.snap(a), catalog.log[a], catalog.running[a.key])
+                com.joabtv.app.ui.common.SummaryRow(a.label, text, tone(t))
+            }
+            // Vermelho só quando há addon e todos estão parados.
+            val ad = catalog.addons
+            com.joabtv.app.ui.common.SummaryRow(
+                "Addons", if (ad.total == 0) "Nenhum" else countOf(ad.active, "ativo", "ativos"),
+                if (ad.total > 0 && ad.active == 0) DangerText else TextPrimary,
+            )
+            com.joabtv.app.ui.common.SummaryRow("Coleções", if (catalog.cols.count == 0) "Nenhuma" else catalog.cols.count.toString())
+            Spacer(Modifier.height(14.dp))
+        }
         com.joabtv.app.ui.common.SummaryRow("Perfil", profile)
-        com.joabtv.app.ui.common.SummaryRow("Addons", if (addonCount == 0) "Nenhum" else "$addonCount instalados")
         com.joabtv.app.ui.common.SummaryRow(
             "Fontes online",
             if (checking) "Verificando…" else if (total == 0) "Sem teste" else "$online de $total",
             if (checking || total == 0) TextPrimary else if (online == total) Ok else DangerText,
         )
+        if (!catalog.kids) com.joabtv.app.ui.common.SummaryRow("Chave TMDB", if (tmdbOwn) "Própria" else "Padrão")
         com.joabtv.app.ui.common.SummaryRow("Aparelho", platform)
         if (traktConfigured) com.joabtv.app.ui.common.SummaryRow("Trakt", trakt?.ifBlank { "Conectado" } ?: "Desconectado", if (trakt != null) Ok else TextPrimary)
         Text(
@@ -415,6 +564,33 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(BackgroundCard2).padding(16.dp),
         content = content,
     )
+}
+
+@Composable
+internal fun AppearanceSettings(
+    appearance: com.joabtv.app.data.local.AppearancePreferences,
+    onTheme: (com.joabtv.app.data.local.AppTheme) -> Unit,
+    onMotion: (com.joabtv.app.data.local.InterfaceMotion) -> Unit,
+    onMenu: ((com.joabtv.app.data.local.MenuStyle) -> Unit)? = null,
+) {
+    SettingsCard {
+        PrefRow("Tema", com.joabtv.app.data.local.AppTheme.entries.map { it to it.label }, appearance.theme, onTheme, tonal = true)
+        Spacer(Modifier.height(18.dp))
+        PrefRow("Movimento da interface", com.joabtv.app.data.local.InterfaceMotion.entries.map { it to it.label }, appearance.motion, onMotion, tonal = true)
+        Text(
+            "Suave usa transições curtas. Reduzido torna a navegação mais direta. A opção Remover animações do aparelho tem prioridade.",
+            color = TextTertiary, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp),
+        )
+        // Só a TV e o desktop têm menu para escolher. O celular no toque segue com a barra embaixo.
+        if (onMenu != null && com.joabtv.app.ui.common.LocalIsTv.current) {
+            Spacer(Modifier.height(18.dp))
+            PrefRow("Menu", com.joabtv.app.data.local.MenuStyle.entries.map { it to it.label }, appearance.menu, onMenu, tonal = true)
+            Text(
+                "Cápsula na lateral, barra no topo da tela ou lateral escondida.",
+                color = TextTertiary, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+    }
 }
 
 /**
@@ -523,13 +699,13 @@ private fun LangOption(label: String, selected: Boolean, modifier: Modifier, onC
 
 /** Uma preferência de escolha única em pílulas. Salva na hora (é local, sem rede). */
 @Composable
-private fun <T> PrefRow(title: String, options: List<Pair<T, String>>, value: T, onPick: (T) -> Unit) {
+private fun <T> PrefRow(title: String, options: List<Pair<T, String>>, value: T, onPick: (T) -> Unit, tonal: Boolean = false) {
     Text(title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(6.dp))
     @OptIn(ExperimentalLayoutApi::class)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         options.forEach { (v, label) ->
-            com.joabtv.app.ui.common.FilterChipPill(label, v == value, onClick = { onPick(v) })
+            com.joabtv.app.ui.common.FilterChipPill(label, v == value, onClick = { onPick(v) }, tonal = tonal)
         }
     }
 }

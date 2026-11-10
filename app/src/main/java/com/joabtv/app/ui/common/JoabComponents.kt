@@ -40,6 +40,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -56,14 +57,9 @@ import com.joabtv.app.ui.theme.*
 
 // ── MOVIMENTO ───────────────────────────────────────────────────────────────
 
-/** true quando o sistema está com "Remover animações" ligado. */
+/** Respeita a escolha do perfil e a redução de movimento do sistema. */
 @Composable
-fun rememberReducedMotion(): Boolean {
-    val ctx = LocalContext.current
-    return remember {
-        android.provider.Settings.Global.getFloat(ctx.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-    }
-}
+fun rememberReducedMotion(): Boolean = LocalReducedMotion.current
 
 /** Tween curto do app. Com animação reduzida vira instantâneo. */
 fun <T> joabTween(ms: Int, reduced: Boolean): TweenSpec<T> = tween(if (reduced) 0 else ms, easing = FastOutSlowInEasing)
@@ -380,16 +376,18 @@ fun FilterChipPill(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     busy: Boolean = false,
+    tonal: Boolean = false,
 ) {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     var focused by remember { mutableStateOf(false) }
     val s = pressFocusScale(pressed, focused)
-    val bg = if (focused) Color.White else if (selected) AccentFill else Surface2
-    val fg = if (focused) TextOnLight else if (selected) Color.White else TextSecondary
+    val bg = if (focused) Color.White else if (selected && tonal) AccentSoft else if (selected) AccentFill else Surface2
+    val fg = if (focused) TextOnLight else if (selected && tonal) Accent else if (selected) Color.White else TextSecondary
     Box(
         modifier
             .heightIn(min = 48.dp)
+            .semantics { this.selected = selected }
             .onFocusChanged { focused = it.isFocused }
             .clickable(interactionSource = src, indication = null, enabled = !busy, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -574,7 +572,7 @@ fun JoabButton(
     }
     val fg = when {
         !enabled -> TextTertiary
-        tone == ButtonTone.PRIMARY -> TextOnLight
+        tone == ButtonTone.PRIMARY -> PrimaryActionText
         else -> Color.White
     }
     val shape = RoundedCornerShape(999.dp)
@@ -583,7 +581,7 @@ fun JoabButton(
             .scale(s)
             .heightIn(min = if (compact) 48.dp else 52.dp)
             .clip(shape)
-            .background(bg)
+            .then(if (tone == ButtonTone.PRIMARY && enabled) Modifier.background(PrimaryActionBrush) else Modifier.background(bg))
             .then(if (showFocus) Modifier.border(3.dp, if (tone == ButtonTone.PRIMARY && enabled) Accent else Color.White, shape) else Modifier)
             .onFocusChanged { focused = it.isFocused }
             .then(if (tv && !(enabled && !busy)) Modifier.semantics { disabled() } else Modifier)

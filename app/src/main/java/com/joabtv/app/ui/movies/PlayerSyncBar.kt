@@ -39,7 +39,7 @@ internal fun SyncBar(
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(
-        modifier.fillMaxWidth().padding(12.dp)
+        modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)).padding(12.dp)
             .shadow(16.dp, RoundedCornerShape(20.dp))
             .clip(RoundedCornerShape(20.dp))
             .background(Color(0xE60C0C10))

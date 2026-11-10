@@ -2,7 +2,12 @@ package com.joabtv.app.ui.movies
 
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
+import android.os.Build
+import android.os.SystemClock
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -30,28 +35,48 @@ internal object ScrubThumbnailer {
     private val lock = Mutex()
     private var retriever: MediaMetadataRetriever? = null
     private var retrieverUrl: String? = null
-    private val cache = object : LinkedHashMap<Long, Bitmap?>(17, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Bitmap?>) = size > 12
-    }
+    private var frameSize: Pair<Int, Int>? = null
+    private var retryAt = 0L
+    private val cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val cache = PreviewFrameCache<Bitmap>()
 
     /** Frame mais próximo de [posMs] em [url], ou null se a fonte não deixar. */
     suspend fun frameAt(url: String, posMs: Long): Bitmap? = withContext(Dispatchers.IO) {
         // Prévia de torrent pediria pedaços espalhados do arquivo e roubaria banda do vídeo.
         if (com.joabtv.app.data.torrent.TorrentMagnet.isMagnet(url)) return@withContext null
         val bucket = posMs / 2000 // janela de 2s: não precisa do frame exato, e cacheia mais
-        cache[bucket]?.let { return@withContext it }
         lock.withLock {
-            cache[bucket]?.let { return@withLock it }
             if (retrieverUrl != url) {
                 runCatching { retriever?.release() }
+                retriever = null
+                retrieverUrl = url
+                frameSize = null
+                retryAt = 0
+                cache.selectSource(url)
+            }
+            if (bucket in cache) return@withLock cache[bucket]
+            if (retriever == null) {
+                if (SystemClock.elapsedRealtime() < retryAt) return@withLock null
                 val r = MediaMetadataRetriever()
                 val ok = runCatching { r.setDataSource(url, STREAM_HEADERS) }.isSuccess
-                retriever = if (ok) r else null
-                retrieverUrl = if (ok) url else null
+                if (!ok) {
+                    runCatching { r.release() }
+                    retryAt = SystemClock.elapsedRealtime() + 5000
+                    return@withLock null
+                }
+                retriever = r
+                frameSize = previewFrameSize(
+                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0,
+                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0,
+                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0,
+                )
             }
-            val bmp = runCatching { retriever?.getFrameAtTime(posMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST) }
-                .getOrNull()
-                ?.let { full -> downscale(full) }
+            val bmp = runCatching {
+                val size = frameSize
+                if (Build.VERSION.SDK_INT >= 27 && size != null) {
+                    retriever?.getScaledFrameAtTime(posMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST, size.first, size.second)
+                } else retriever?.getFrameAtTime(posMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST)?.let(::downscale)
+            }.getOrNull()
             cache[bucket] = bmp
             bmp
         }
@@ -60,12 +85,22 @@ internal object ScrubThumbnailer {
     private fun downscale(full: Bitmap): Bitmap {
         val w = 160
         val h = (full.height.toLong() * w / full.width.coerceAtLeast(1)).toInt().coerceAtLeast(1)
-        return runCatching { Bitmap.createScaledBitmap(full, w, h, true) }.getOrDefault(full)
+        val scaled = runCatching { Bitmap.createScaledBitmap(full, w, h, true) }.getOrDefault(full)
+        if (scaled !== full) full.recycle()
+        return scaled
     }
 
     /** Libera o retriever nativo e limpa o cache. Chamar ao sair do player. */
     fun release() {
-        runCatching { retriever?.release() }
-        retriever = null; retrieverUrl = null; cache.clear()
+        cleanup.launch {
+            lock.withLock {
+                runCatching { retriever?.release() }
+                retriever = null
+                retrieverUrl = null
+                frameSize = null
+                retryAt = 0
+                cache.clear()
+            }
+        }
     }
 }

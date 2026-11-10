@@ -12,15 +12,6 @@ import dagger.hilt.android.HiltAndroidApp
 @HiltAndroidApp
 class JotvApplication : Application(), ImageLoaderFactory {
 
-    override fun onCreate() {
-        super.onCreate()
-        // Inicializa o Google Cast (lazy). Em aparelho sem Google Play Services (algumas TV
-        // boxes), getSharedInstance lança — engolimos: o app funciona sem Cast.
-        runCatching {
-            com.google.android.gms.cast.framework.CastContext.getSharedInstance(this)
-        }
-    }
-
     // ImageLoader afinado para TV box / aparelhos fracos (Android 9+):
     // - cache de memória limitado (15%) e disco (256MB) evita OOM/jank
     // - RGB_565 corta uso de memória de bitmap pela metade (posters/backdrops)

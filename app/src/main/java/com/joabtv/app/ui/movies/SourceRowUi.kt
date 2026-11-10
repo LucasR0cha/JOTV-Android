@@ -157,6 +157,7 @@ fun parseSourceLabel(
 }
 
 /** Cor da faixa de qualidade. 4K em dourado, o resto no azul do app, baixa resolução apagada. */
+@Composable
 private fun qualityColor(q: String): Color = when {
     q == "4K" || q == "1440p" -> Gold
     q == "1080p" -> Accent

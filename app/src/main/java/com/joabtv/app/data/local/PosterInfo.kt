@@ -17,6 +17,9 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -31,6 +34,9 @@ data class SourceQuality(
     val q: Int, val hdr: Boolean, val dolbyVision: Boolean, val atmos: Boolean, val ptAudio: Boolean,
     val n: Int, val at: Long,
 )
+
+internal fun Flow<Map<String, SourceQuality>>.qualityFor(key: String): Flow<SourceQuality?> =
+    map { it[key] }.distinctUntilChanged()
 
 /** Posição de hoje (1 a 25) por id do TMDB, separada em filmes e séries. */
 data class DayRanks(val day: String, val movie: Map<Int, Int>, val series: Map<Int, Int>)

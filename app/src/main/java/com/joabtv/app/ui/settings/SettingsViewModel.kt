@@ -7,7 +7,10 @@ import com.joabtv.app.data.local.PlatformPrefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -16,7 +19,41 @@ class SettingsViewModel @Inject constructor(
     private val platformPrefs: PlatformPrefs,
     private val healthChecker: com.joabtv.app.data.remote.SourceHealthChecker,
     private val trakt: com.joabtv.app.data.remote.TraktService,
+    private val library: com.joabtv.app.data.repository.LibraryRepository,
+    private val hub: com.joabtv.app.data.accounts.AccountsHub,
 ) : ViewModel() {
+
+    // ── Seu catálogo (os cinco cartões do topo) ──
+    private fun buildCatalog(): CatalogState {
+        val addons = platformPrefs.addons.value
+        val cols = platformPrefs.collectionsFlow.value
+        val h = homeSnap(
+            platformPrefs.homeLayout, platformPrefs.catalogOnFlow.value, platformPrefs.heroSourceFlow.value, addons, cols,
+            platformPrefs.homeSeen, platformPrefs.homeKeep,
+        )
+        return CatalogState(
+            hub.nuvioState.value, hub.stremioState.value, platformPrefs.importLog, hub.running.value, h,
+            AddonsSnap(addons.size, addons.count { it.enabled }, h.addonRows), ColsSnap(cols.size, cols.sumOf { it.folders.size }),
+            platformPrefs.profile.name, platformPrefs.isKids,
+        )
+    }
+
+    /** Quem não é fluxo (o que o perfil já viu em Minha Início) só chega aqui quando a tela volta, por [refreshCatalog]. */
+    private val tick = MutableStateFlow(0)
+    fun refreshCatalog() { tick.value++ }
+
+    /** Estado dos cartões. Refaz quando muda conta, registro de importação, fileiras, addons, coleções ou perfil. */
+    val catalog: StateFlow<CatalogState> = combine(
+        listOf<kotlinx.coroutines.flow.Flow<Any?>>(
+            hub.nuvioState, hub.stremioState, platformPrefs.importLogFlow, hub.running, platformPrefs.homeLayoutFlow,
+            platformPrefs.catalogOnFlow, platformPrefs.heroSourceFlow, platformPrefs.addons, platformPrefs.collectionsFlow, platformPrefs.profileId, tick,
+        ),
+    ) { buildCatalog() }.stateIn(viewModelScope, SharingStarted.Eagerly, buildCatalog())
+
+    /** Destaque da Início em uso (vazio é automático) e as opções para escolher. */
+    val heroSource: StateFlow<String> = platformPrefs.heroSourceFlow
+    fun heroChoices(): List<Pair<String, String>> = heroChoicesOf(platformPrefs.homeLayout)
+    fun setHeroSource(key: String) { platformPrefs.heroSource = key }
 
     // ── Trakt (só aparece com as chaves no local.properties) ──
     val traktConfigured = trakt.configured
@@ -75,6 +112,16 @@ class SettingsViewModel @Inject constructor(
     // ── Perfil e reprodução (valem para o perfil ativo) ──
     val profiles = platformPrefs.profiles
     val profileId = platformPrefs.profileId
+    val appearance = platformPrefs.appearanceFlow
+    fun setTheme(theme: com.joabtv.app.data.local.AppTheme) {
+        platformPrefs.appearance = platformPrefs.appearance.copy(theme = theme)
+    }
+    fun setMotion(motion: com.joabtv.app.data.local.InterfaceMotion) {
+        platformPrefs.appearance = platformPrefs.appearance.copy(motion = motion)
+    }
+    fun setMenu(menu: com.joabtv.app.data.local.MenuStyle) {
+        platformPrefs.appearance = platformPrefs.appearance.copy(menu = menu)
+    }
 
     val hasParentalPin: Boolean get() = platformPrefs.hasParentalPin
     fun setParentalPin(pin: String) = platformPrefs.setParentalPin(pin)
@@ -87,9 +134,9 @@ class SettingsViewModel @Inject constructor(
     val maxQuality: StateFlow<Int> = _maxQuality.asStateFlow()
     fun setMaxQuality(v: Int) { platformPrefs.maxQuality = v; _maxQuality.value = v }
 
-    private val _heroTrailer = MutableStateFlow(platformPrefs.heroTrailer)
-    val heroTrailer: StateFlow<Boolean> = _heroTrailer.asStateFlow()
-    fun setHeroTrailer(v: Boolean) { platformPrefs.heroTrailer = v; _heroTrailer.value = v }
+    // Mesmo valor que a Início e o Personalizar Início seguem, assim os dois botões nunca discordam.
+    val heroTrailer: StateFlow<Boolean> = platformPrefs.heroTrailerFlow
+    fun setHeroTrailer(v: Boolean) { platformPrefs.heroTrailer = v }
 
     // Legenda do perfil. Ligada ao abrir e o idioma em que ela liga sozinha.
     private val _subOn = MutableStateFlow(platformPrefs.subtitleOn)
@@ -99,6 +146,18 @@ class SettingsViewModel @Inject constructor(
     private val _subLang = MutableStateFlow(platformPrefs.subLang)
     val subLang: StateFlow<String> = _subLang.asStateFlow()
     fun setSubLang(v: String) { platformPrefs.subLang = v; _subLang.value = v }
+
+    // Tamanho e fundo da legenda. O player lê os mesmos valores do perfil.
+    private val _subSize = MutableStateFlow(platformPrefs.subSize)
+    val subSize: StateFlow<Float> = _subSize.asStateFlow()
+    fun setSubSize(v: Float) { platformPrefs.subSize = v; _subSize.value = v }
+
+    private val _subBg = MutableStateFlow(platformPrefs.subBg)
+    val subBg: StateFlow<Boolean> = _subBg.asStateFlow()
+    fun setSubBg(v: Boolean) { platformPrefs.subBg = v; _subBg.value = v }
+
+    /** Apaga as posições salvas do perfil ativo. Minha Lista não muda. */
+    fun clearContinueWatching() { viewModelScope.launch { library.clearHistory() } }
 
     private val _platformMode = MutableStateFlow(platformPrefs.platformMode)
     val platformMode: StateFlow<PlatformMode> = _platformMode.asStateFlow()

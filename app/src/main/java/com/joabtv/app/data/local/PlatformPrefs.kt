@@ -45,6 +45,7 @@ internal val SCOPED_KEYS = listOf(
     "recent_searches", "ext_audio_v1", "home_catalogs_v1", "sub_size", "sub_bg",
     "pref_audio", "pref_max_quality", "pref_hero_trailer", "trakt_v1",
     "home_layout_v1", "home_hero_v1", "pref_subtitle_on", "pref_sub_lang", "collections_v1",
+    "pref_theme", "pref_motion", "pref_menu_style", "home_keep_v1", "home_seen_v1", "import_log_v1",
 )
 
 @Singleton
@@ -140,7 +141,50 @@ class PlatformPrefs @Inject constructor(
         prefs.edit().putString("profile", id).apply()
         _profileId.value = id
         refreshLayout()
+        _appearance.value = readAppearance()
+        _heroTrailer.value = prefs.getBoolean(sk("pref_hero_trailer"), true)
+        _importLog.value = readImportLog()
     }
+
+    private fun readAppearance() = AppearancePreferences(
+        theme = AppTheme.fromKey(prefs.getString(sk("pref_theme"), null)),
+        motion = InterfaceMotion.fromKey(prefs.getString(sk("pref_motion"), null)),
+        menu = MenuStyle.fromKey(prefs.getString(sk("pref_menu_style"), null)),
+    )
+
+    // Registro do que veio de cada conta (por perfil). Troca junto com o perfil, em selectProfile.
+    private fun readImportLog() = com.joabtv.app.data.accounts.ImportLog.decode(prefs.getString(sk("import_log_v1"), null))
+
+    private val _importLog = MutableStateFlow(readImportLog())
+    val importLogFlow: StateFlow<com.joabtv.app.data.accounts.ImportLog> = _importLog.asStateFlow()
+    val importLog: com.joabtv.app.data.accounts.ImportLog get() = _importLog.value
+
+    private fun writeImportLog(v: com.joabtv.app.data.accounts.ImportLog) {
+        prefs.edit().putString(sk("import_log_v1"), v.encode()).apply()
+        _importLog.value = v
+    }
+
+    /** Grava o resultado de uma parte assim que ela termina. Duas contas podem trazer ao mesmo tempo, daí o synchronized. */
+    @Synchronized
+    fun recordImport(
+        account: String, part: String, rec: com.joabtv.app.data.accounts.PartRecord,
+        email: String, profile: String, now: Long = System.currentTimeMillis(),
+    ) = writeImportLog(importLog.put(account, part, rec, email, profile, now))
+
+    @Synchronized
+    fun setNuvioPick(p: com.joabtv.app.data.accounts.NuvioPick) = writeImportLog(importLog.withPick(p))
+
+    private val _appearance = MutableStateFlow(readAppearance())
+    val appearanceFlow: StateFlow<AppearancePreferences> = _appearance.asStateFlow()
+
+    var appearance: AppearancePreferences
+        get() = _appearance.value
+        set(value) {
+            prefs.edit().putString(sk("pref_theme"), value.theme.key)
+                .putString(sk("pref_motion"), value.motion.key)
+                .putString(sk("pref_menu_style"), value.menu.key).apply()
+            _appearance.value = value
+        }
 
     // ── Reprodução (por perfil) ───────────────────────────────────────────────
 
@@ -154,10 +198,15 @@ class PlatformPrefs @Inject constructor(
         get() = prefs.getInt(sk("pref_max_quality"), 0)
         set(value) { prefs.edit().putInt(sk("pref_max_quality"), value).apply() }
 
-    /** Trailer mudo no destaque da Início. */
+    /**
+     * Trailer mudo no destaque da Início. Observável porque a Início fica viva enquanto a pessoa
+     * muda a opção em Configurações ou em Personalizar Início, e antes só via a troca ao reabrir o app.
+     */
+    private val _heroTrailer = MutableStateFlow(prefs.getBoolean(sk("pref_hero_trailer"), true))
+    val heroTrailerFlow: StateFlow<Boolean> = _heroTrailer.asStateFlow()
     var heroTrailer: Boolean
-        get() = prefs.getBoolean(sk("pref_hero_trailer"), true)
-        set(value) { prefs.edit().putBoolean(sk("pref_hero_trailer"), value).apply() }
+        get() = _heroTrailer.value
+        set(value) { prefs.edit().putBoolean(sk("pref_hero_trailer"), value).apply(); _heroTrailer.value = value }
 
     /** Legenda ligada ou não, lembrada entre episódios e sessões do mesmo perfil. */
     var subtitleOn: Boolean
@@ -349,6 +398,8 @@ class PlatformPrefs @Inject constructor(
      * Os catálogos de addon instalado daqui em diante entram ligados na Início.
      */
     fun installAddon(url: String, id: String = "") {
+        // Primeira vez deste perfil. O que já existe não vira Nova em Minha Início, só o que o addon trouxer.
+        if (homeSeen == null) homeSeen = homeLayout.mapTo(HashSet()) { it.key }
         val list = addonEntries.toMutableList()
         val i = addonIndex(url, id)
         if (i >= 0) list[i] = AddonEntry(url, true, id.ifBlank { list[i].id })
@@ -357,12 +408,21 @@ class PlatformPrefs @Inject constructor(
         addonEntries = list
     }
 
-    /** Remove o addon. As fileiras dele saem da Início de todos os perfis (o normalize tira). */
+    /** Remove o addon. As fileiras dele saem da Início de todos os perfis, depois da confirmação da tela. */
     fun removeAddon(url: String, id: String = "") {
         val i = addonIndex(url, id)
         if (i < 0) return
         val gone = addonEntries[i]
-        autoOnBases = autoOnBases - baseOf(gone.url)
+        val base = baseOf(gone.url)
+        autoOnBases = autoOnBases - base
+        // As fileiras dele saem da ordem guardada de todos os perfis, assim uma reinstalação volta
+        // com o teto de 10 e não com o liga e desliga de antes.
+        val ed = prefs.edit()
+        _profiles.value.forEach { p ->
+            val k = scopedKey("home_layout_v1", p.id)
+            HomeLayout.decode(prefs.getString(k, null))?.let { list -> ed.putString(k, HomeLayout.encode(HomeLayout.dropBase(list, base))) }
+        }
+        ed.apply()
         addonEntries = addonEntries.filterIndexed { idx, _ -> idx != i }
     }
 
@@ -392,6 +452,12 @@ class PlatformPrefs @Inject constructor(
         ed.apply()
         if (old in autoOnBases) autoOnBases = autoOnBases - old + new
         refreshLayout()
+    }
+
+    /** Mensagem de addon instalado, a mesma na loja, no link e na importação das contas. */
+    fun installText(name: String, url: String): String {
+        val rows = homeLayout.filter { it.ref?.base == baseOf(url) }
+        return HomeLayout.installText(name, rows.count { it.enabled }, rows.size)
     }
 
     // ── Catálogo JOTV (o catálogo próprio do app, fixo e desligável como um addon) ──
@@ -473,10 +539,66 @@ class PlatformPrefs @Inject constructor(
         if (moved !== cur) saveLayout(moved)
     }
 
+    /** Volta ao padrão. Ordem original, nomes e destaque limpos e as sugestões do JOTV religadas. */
     fun resetHomeLayout() {
         saveLayout(HomeLayout.reset(homeLayout))
         heroSource = ""
+        catalogOn = true
     }
+
+    /** Foto do que Voltar ao padrão muda, para o Desfazer. */
+    class HomeSnapshot internal constructor(val profileId: String, val layout: String?, val hero: String, val catalogOn: Boolean)
+
+    fun homeSnapshot() = HomeSnapshot(_profileId.value, prefs.getString(sk("home_layout_v1"), null), heroSource, catalogOn)
+
+    /** Devolve a foto de [homeSnapshot]. Ignora quando o perfil ativo já é outro. */
+    fun restoreHome(s: HomeSnapshot) {
+        if (s.profileId != _profileId.value) return
+        val ed = prefs.edit()
+        if (s.layout == null) ed.remove(sk("home_layout_v1")) else ed.putString(sk("home_layout_v1"), s.layout)
+        ed.apply()
+        heroSource = s.hero
+        catalogOn = s.catalogOn
+        refreshLayout()
+    }
+
+    /** Liga ou desliga várias fileiras de uma vez, gravando uma vez só. */
+    fun setHomeRowsEnabled(keys: Set<String>, on: Boolean) =
+        saveLayout(homeLayout.map { if (it.key in keys) it.copy(enabled = on) else it })
+
+    /** Tira da lista a fileira de addon removido (a pessoa apertou Tirar). */
+    fun dropHomeRow(key: String) = saveLayout(homeLayout.filter { it.key != key })
+
+    /** Grava a ordem que a pessoa escolheu no modo Mover. */
+    fun saveHomeOrder(list: List<HomeRowPref>) = saveLayout(list)
+
+    /** Leva uma fileira a uma posição, sem passar das coleções fixadas nem de Gêneros. */
+    fun moveHomeRowTo(key: String, to: Int) {
+        val cur = homeLayout
+        val pinned = _collections.value.filter { it.pinToTop }.mapTo(HashSet()) { HomeLayout.COL_PREFIX + it.id }
+        val moved = HomeLayout.moveTo(cur, key, to, pinned)
+        if (moved !== cur) saveLayout(moved)
+    }
+
+    /** Deixa ligadas só as primeiras fileiras de um addon grande neste perfil. */
+    fun keepFirstHomeRows(base: String) = saveLayout(HomeLayout.keepFirst(homeLayout, base))
+
+    /** Addons grandes cuja pergunta Deixar 10 o perfil já respondeu com Manter todas. */
+    var homeKeep: Set<String>
+        get() = prefs.getStringSet(sk("home_keep_v1"), emptySet()).orEmpty()
+        set(value) { prefs.edit().putStringSet(sk("home_keep_v1"), value.toSet()).apply() }
+
+    /** Chaves das fileiras que o perfil já viu em Minha Início. null antes da primeira visita. */
+    var homeSeen: Set<String>?
+        get() = prefs.getStringSet(sk("home_seen_v1"), null)
+        set(value) {
+            val ed = prefs.edit()
+            if (value == null) ed.remove(sk("home_seen_v1")) else ed.putStringSet(sk("home_seen_v1"), value.toSet())
+            ed.apply()
+        }
+
+    /** Pedido de uma vez só, em memória, para a Minha Início abrir na primeira fileira nova. */
+    var homeFocusNew = false
 
     private fun saveLayout(list: List<HomeRowPref>) {
         prefs.edit().putString(sk("home_layout_v1"), HomeLayout.encode(list)).apply()
@@ -502,7 +624,7 @@ class PlatformPrefs @Inject constructor(
             m.catalogs.map { c -> HomeCatalogRef(base, c.type, c.id, c.name, m.name) }
         }
         val saved = HomeLayout.decode(prefs.getString(sk("home_layout_v1"), null)) ?: HomeLayout.default(readHomeCatalogs())
-        return HomeLayout.normalize(saved, entries.mapTo(HashSet()) { baseOf(it.url) }, available, autoOnBases, _collections.value)
+        return HomeLayout.normalize(saved, entries.mapTo(HashSet()) { baseOf(it.url) }, available, autoOnBases, _collections.value, keepOrphans = true)
     }
 
     private fun readHomeCatalogs(): List<HomeCatalogRef> = runCatching {

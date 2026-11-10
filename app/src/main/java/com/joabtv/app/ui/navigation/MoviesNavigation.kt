@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -131,6 +132,8 @@ fun MoviesNavigation(
         currentRoute == MoviesRoute.Accounts.route ||
         currentRoute == MoviesRoute.LiveSources.route ||
         currentRoute?.startsWith("movies_live_player") == true
+    val isPlayerRoute = currentRoute?.startsWith("movies_player") == true ||
+        currentRoute?.startsWith("movies_live_player") == true
     val showTabletRail = deviceLayout == DeviceLayout.TABLET && !isFullscreen
 
     fun navigateToPlayer(
@@ -180,6 +183,8 @@ fun MoviesNavigation(
                 if (isTV) com.joabtv.app.ui.tv.TvHomeScreen(
                     onItemClick = openDetail, navigationOpen = menuOpen,
                     onFolderClick = { c, f -> navController.navigate(MoviesRoute.CollectionFolder.create(c, f)) },
+                    onCustomizeHome = { navController.navigate(MoviesRoute.HomeCustomize.route) },
+                    onExploreAddons = { navController.navigate(MoviesRoute.AddonStore.route) },
                 )
                 else MoviesHomeScreen(
                     onItemClick     = openDetail,
@@ -197,6 +202,7 @@ fun MoviesNavigation(
                     com.joabtv.app.ui.collections.CollectionsScreen(
                         onBack = { navController.popBackStack() },
                         onEdit = { id -> navController.navigate(MoviesRoute.CollectionEdit.create(id)) },
+                        onOpenHome = { navController.navigate(MoviesRoute.HomeCustomize.route) },
                     )
                 }
             }
@@ -365,6 +371,7 @@ fun MoviesNavigation(
                         onOpenDebrid = { navController.navigate(MoviesRoute.Debrid.route) },
                         onOpenAccounts = { navController.navigate(MoviesRoute.Accounts.route) },
                         onOpenLive = { navController.navigate(MoviesRoute.LiveSources.route) },
+                        onOpenAddonStore = { navController.navigate(MoviesRoute.AddonStore.route) },
                         onOpenCollections = { navController.navigate(MoviesRoute.Collections.route) },
                     )
                 }
@@ -408,7 +415,12 @@ fun MoviesNavigation(
 
             // Contas Stremio e Nuvio (login, importar addons, lista, progresso e debrid).
             composable(MoviesRoute.Accounts.route) {
-                tvScale(isTV) { com.joabtv.app.ui.settings.AccountsScreen(onBack = { navController.popBackStack() }) }
+                tvScale(isTV) {
+                    com.joabtv.app.ui.settings.AccountsScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenHome = { navController.navigate(MoviesRoute.HomeCustomize.route) },
+                    )
+                }
             }
 
             // Debrid (Real-Debrid, TorBox e Premiumize). Torrent vira link direto.
@@ -422,13 +434,22 @@ fun MoviesNavigation(
                     com.joabtv.app.ui.settings.HomeCustomizeScreen(
                         onBack = { navController.popBackStack() },
                         onOpenAddons = { navController.navigate(MoviesRoute.Addons.route) },
+                        onOpenStore = { navController.navigate(MoviesRoute.AddonStore.route) },
+                        onOpenCollections = { navController.navigate(MoviesRoute.Collections.route) },
+                        onOpenFolder = { c, f -> navController.navigate(MoviesRoute.CollectionFolder.create(c, f)) },
+                        onOpenAccounts = { navController.navigate(MoviesRoute.Accounts.route) },
                     )
                 }
             }
 
             // Explorar addons do catálogo da comunidade (celular). A tela de TV fica para a etapa 7.
             composable(MoviesRoute.AddonStore.route) {
-                tvScale(isTV) { com.joabtv.app.ui.settings.AddonStoreScreen(onBack = { navController.popBackStack() }) }
+                tvScale(isTV) {
+                    com.joabtv.app.ui.settings.AddonStoreScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenHome = { navController.navigate(MoviesRoute.HomeCustomize.route) },
+                    )
+                }
             }
 
             composable(MoviesRoute.Downloads.route) {
@@ -487,6 +508,12 @@ fun MoviesNavigation(
         MoviesRoute.Live.route,
     )
     val showTvMenu = isTV && currentRoute in tvMenuRoutes
+    // Perfis fica de fora porque é centrada e tem fundo próprio até a borda.
+    val tvScaledMenuRoutes = setOf(MoviesRoute.Search.route, MoviesRoute.Addons.route, MoviesRoute.Settings.route)
+    val menuStyle = com.joabtv.app.ui.theme.LocalMenuStyle.current
+    val topMenu = menuStyle == com.joabtv.app.data.local.MenuStyle.TOP
+    // Foco na barra do menu Superior (ela não tem estado aberto).
+    var barFocused by remember { mutableStateOf(false) }
     val profVm: com.joabtv.app.ui.settings.ProfilesViewModel = androidx.hilt.navigation.compose.hiltViewModel()
     val profiles by profVm.profiles.collectAsStateWithLifecycle()
     val pid by profVm.profileId.collectAsStateWithLifecycle()
@@ -497,6 +524,23 @@ fun MoviesNavigation(
     val menuRequesters = remember { mutableMapOf<String, androidx.compose.ui.focus.FocusRequester>() }
     fun menuRequester(route: String) = menuRequesters.getOrPut(route) { androidx.compose.ui.focus.FocusRequester() }
     val contentFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    // Itens do menu da TV, os mesmos no Lateral, no Oculto e no Superior.
+    // Selecionar a própria rota ativa só devolve o foco ao conteúdo (launchSingleTop não muda currentRoute).
+    val go: (String) -> () -> Unit = { r -> {
+        if (r == currentRoute) runCatching { contentFocus.requestFocus() } else navTab(r)
+    } }
+    fun tvMainItems() = buildList {
+        add(TvMenuItem(MoviesRoute.Home.route, "Início", Icons.Default.Home, go(MoviesRoute.Home.route)))
+        if (liveOn) add(TvMenuItem(MoviesRoute.Live.route, "Ao vivo", Icons.Default.LiveTv, go(MoviesRoute.Live.route)))
+        add(TvMenuItem(MoviesRoute.Search.route, "Buscar", Icons.Default.Search, go(MoviesRoute.Search.route)))
+        add(TvMenuItem(MoviesRoute.Descobrir.route, "Descobrir", Icons.Default.Explore, go(MoviesRoute.Descobrir.route)))
+        add(TvMenuItem(MoviesRoute.MinhaLista.route, "Minha Lista", Icons.Default.Bookmark, go(MoviesRoute.MinhaLista.route)))
+        add(TvMenuItem(MoviesRoute.Addons.route, "Addons", Icons.Default.Extension, go(MoviesRoute.Addons.route)))
+    }
+    fun tvBottomItems() = listOf(
+        TvMenuItem(MoviesRoute.Profiles.route, profile.name, null, go(MoviesRoute.Profiles.route), avatar = profile),
+        TvMenuItem(MoviesRoute.Settings.route, "Configurações", androidx.compose.material.icons.Icons.Default.Settings, go(MoviesRoute.Settings.route)),
+    )
     var contentHasFocus by remember { mutableStateOf(false) }
     var askExit by remember { mutableStateOf(false) }
     // Hora da última tecla. O foco automático não briga com quem já está usando o menu.
@@ -524,7 +568,7 @@ fun MoviesNavigation(
         androidx.activity.compose.BackHandler(enabled = currentRoute == MoviesRoute.Home.route) {
             lastKeyAt = android.os.SystemClock.uptimeMillis()
             lastMenuKeyAt = lastKeyAt
-            if (menuOpen) askExit = true
+            if (menuOpen || barFocused) askExit = true
             else {
                 inputModeManager.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
                 runCatching { menuRequester(MoviesRoute.Home.route).requestFocus() }
@@ -539,12 +583,15 @@ fun MoviesNavigation(
     com.joabtv.app.ui.common.ProvideTvMode(isTV) {
     Box(
         Modifier.fillMaxSize().background(Background)
-            .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+            // Nos players o vídeo vai até a borda, inclusive sob o recorte da câmera. Os controles
+            // do player se afastam do recorte sozinhos.
+            .then(if (isPlayerRoute) Modifier else Modifier.windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)))
             .then(if (isTV) Modifier.onPreviewKeyEvent {
                 if (it.type == androidx.compose.ui.input.key.KeyEventType.KeyDown) {
                     lastKeyAt = android.os.SystemClock.uptimeMillis()
                     val kc = it.nativeKeyEvent.keyCode
-                    if (kc == android.view.KeyEvent.KEYCODE_DPAD_LEFT || kc == android.view.KeyEvent.KEYCODE_BACK) lastMenuKeyAt = lastKeyAt
+                    if (kc == android.view.KeyEvent.KEYCODE_DPAD_LEFT || kc == android.view.KeyEvent.KEYCODE_BACK ||
+                        (topMenu && kc == android.view.KeyEvent.KEYCODE_DPAD_UP)) lastMenuKeyAt = lastKeyAt
                     if (menuOpen && kc == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
                         runCatching { contentFocus.requestFocus() }
                         return@onPreviewKeyEvent true
@@ -564,7 +611,12 @@ fun MoviesNavigation(
                 .fillMaxSize()
                 .then(
                     when {
-                        showTvMenu && currentRoute != MoviesRoute.Home.route -> Modifier.padding(start = TvMenuClosed)
+                        showTvMenu && currentRoute != MoviesRoute.Home.route -> {
+                            // Sem a faixa do menu, as telas escaladas alinham com a barra em tvPad dos dois lados.
+                            val gap = if (menuStyle != com.joabtv.app.data.local.MenuStyle.SIDE && currentRoute in tvScaledMenuRoutes)
+                                com.joabtv.app.ui.tv.tvScaledPadGap else 0.dp
+                            Modifier.padding(start = TvMenuClosed + gap, end = gap, top = TvMenuTop)
+                        }
                         showTabletRail -> Modifier.padding(start = tabletRailWidth())
                         hideBar -> Modifier
                         else -> Modifier.padding(bottom = barReserve)
@@ -574,11 +626,16 @@ fun MoviesNavigation(
                     if (isTV) Modifier
                         .onFocusChanged { contentHasFocus = it.hasFocus }
                         .focusRequester(contentFocus)
+                        // Baixo na barra Superior volta ao último elemento focado no conteúdo.
+                        .then(if (topMenu) Modifier.focusRestorer() else Modifier)
                         .focusGroup()
                     else Modifier
                 ),
         ) {
-            navHost()
+            // Os cartões das Configurações levam a seta esquerda direto ao menu (ver LocalMenuFocus).
+            androidx.compose.runtime.CompositionLocalProvider(
+                com.joabtv.app.ui.settings.LocalMenuFocus provides (if (showTvMenu && !topMenu) menuRequester(MoviesRoute.Settings.route) else null),
+            ) { navHost() }
         }
         if (isTV) {
             // Fora da Início, com o menu aberto. Registrado DEPOIS do navHost() de propósito:
@@ -587,11 +644,12 @@ fun MoviesNavigation(
             // dispatcher chama o callback mais recente primeiro. Registrado antes do navHost(),
             // o pop dele ganhava do nosso e Voltar saía trocando de tela (ou nada, dependendo da
             // versão) em vez de só fechar o menu e devolver o foco ao conteúdo.
-            androidx.activity.compose.BackHandler(enabled = currentRoute != MoviesRoute.Home.route && menuOpen) {
+            // No Superior não existe menu aberto. A barra com foco faz o mesmo papel.
+            androidx.activity.compose.BackHandler(enabled = currentRoute != MoviesRoute.Home.route && (menuOpen || barFocused)) {
                 runCatching { contentFocus.requestFocus() }
             }
         }
-        if (showTvMenu) {
+        if (showTvMenu && !topMenu) {
             val reduced = com.joabtv.app.ui.common.rememberReducedMotion()
             val scrim by androidx.compose.animation.core.animateFloatAsState(
                 if (menuOpen) .4f else 0f,
@@ -606,24 +664,9 @@ fun MoviesNavigation(
                         indication = null,
                     ) { runCatching { contentFocus.requestFocus() } } else Modifier),
             )
-            // Selecionar a própria rota ativa só fecha o menu (launchSingleTop não muda currentRoute,
-            // então nada reabriria o foco no conteúdo sozinho).
-            val go: (String) -> () -> Unit = { r -> {
-                if (r == currentRoute) runCatching { contentFocus.requestFocus() } else navTab(r)
-            } }
             TvSideMenu(
-                main = buildList {
-                    add(TvMenuItem(MoviesRoute.Home.route, "Início", Icons.Default.Home, go(MoviesRoute.Home.route)))
-                    if (liveOn) add(TvMenuItem(MoviesRoute.Live.route, "Ao vivo", Icons.Default.LiveTv, go(MoviesRoute.Live.route)))
-                    add(TvMenuItem(MoviesRoute.Search.route, "Buscar", Icons.Default.Search, go(MoviesRoute.Search.route)))
-                    add(TvMenuItem(MoviesRoute.Descobrir.route, "Descobrir", Icons.Default.Explore, go(MoviesRoute.Descobrir.route)))
-                    add(TvMenuItem(MoviesRoute.MinhaLista.route, "Minha Lista", Icons.Default.Bookmark, go(MoviesRoute.MinhaLista.route)))
-                    add(TvMenuItem(MoviesRoute.Addons.route, "Addons", Icons.Default.Extension, go(MoviesRoute.Addons.route)))
-                },
-                bottom = listOf(
-                    TvMenuItem(MoviesRoute.Profiles.route, profile.name, null, go(MoviesRoute.Profiles.route), avatar = profile),
-                    TvMenuItem(MoviesRoute.Settings.route, "Configurações", androidx.compose.material.icons.Icons.Default.Settings, go(MoviesRoute.Settings.route)),
-                ),
+                main = tvMainItems(),
+                bottom = tvBottomItems(),
                 currentRoute = currentRoute,
                 requesters = tvMenuRoutes.associateWith { menuRequester(it) },
                 open = menuOpen,
@@ -634,6 +677,24 @@ fun MoviesNavigation(
                     if (open && android.os.SystemClock.uptimeMillis() - lastMenuKeyAt > 600)
                         runCatching { contentFocus.requestFocus() }
                 },
+                hidden = menuStyle == com.joabtv.app.data.local.MenuStyle.HIDDEN,
+            )
+        }
+        if (showTvMenu && topMenu) {
+            val (profileItem, settingsItem) = tvBottomItems()
+            TvTopMenu(
+                main = tvMainItems(),
+                profile = profileItem,
+                settings = settingsItem,
+                currentRoute = currentRoute,
+                requesters = tvMenuRoutes.associateWith { menuRequester(it) },
+                onFocusChange = { focused ->
+                    barFocused = focused
+                    // Mesmo cuidado do lateral. Foco jogado na barra sem Cima nem Voltar volta ao conteúdo.
+                    if (focused && android.os.SystemClock.uptimeMillis() - lastMenuKeyAt > 600)
+                        runCatching { contentFocus.requestFocus() }
+                },
+                onDown = { runCatching { contentFocus.requestFocus() } },
             )
         }
         if (!hideBar) {
