@@ -1,246 +1,382 @@
 <div align="center">
 
-# JOTV — Android
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme/logo-escuro.png">
+  <img src="docs/readme/logo-claro.png" alt="Logo do JOTV" width="112">
+</picture>
 
-### Um Netflix caseiro, construído sobre o protocolo de addons do Stremio
+# JOTV
 
-[![Kotlin](https://img.shields.io/badge/Kotlin-2.1.20-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
-[![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-BOM%202024.09-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
-[![Android](https://img.shields.io/badge/minSdk-23-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
-[![Hilt](https://img.shields.io/badge/DI-Hilt-00C2A8)](https://dagger.dev/hilt/)
-[![Media3](https://img.shields.io/badge/Player-Media3%20ExoPlayer-FF6D00)](https://developer.android.com/media/media3)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+**Filmes, séries e TV ao vivo no celular e na televisão.**
 
-Um único app Kotlin/Compose para **celular, tablet e Android TV**, com busca de metadados no TMDB
-e fontes de vídeo vindas de addons no padrão [Stremio](https://stremio.github.io/stremio-addon-guide/).
+Um app só para celular, tablet, Android TV, LG webOS e Samsung Tizen.<br>
+O catálogo vem do TMDB, em português. Os vídeos vêm dos addons que você escolhe.
 
-[Instalação](#instalação) · [Funcionalidades](#funcionalidades) · [Arquitetura](#arquitetura) · [Como compilar](#como-compilar) · [Configuração](#configuração) · [Estrutura](#estrutura-do-projeto)
+[![Baixar para Android](https://img.shields.io/badge/Android-baixar%20o%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](../../releases/latest)
+[![Baixar para LG webOS](https://img.shields.io/badge/LG%20webOS-baixar%20o%20IPK-A50034?style=for-the-badge&logo=lg&logoColor=white)](../../releases/latest)
+[![Baixar para Samsung Tizen](https://img.shields.io/badge/Samsung%20Tizen-baixar%20o%20WGT-1428A0?style=for-the-badge&logo=samsung&logoColor=white)](../../releases/latest)
+
+[Novidades](#novidades) · [Na TV](#na-tv) · [No celular](#no-celular) · [Tudo o que o app faz](#tudo-o-que-o-app-faz) · [Instalação](#instalação) · [Para desenvolvedores](#para-desenvolvedores)
 
 </div>
 
----
+<p align="center">
+  <img src="docs/readme/vitrine.jpg" alt="JOTV na TV e no celular, com a Início em destaque" width="100%">
+</p>
 
-## Sobre
+## O que é o JOTV
 
-JOTV é um app de streaming completo pensado pra quem já tem uma coleção de addons Stremio e
-quer assistir numa interface de verdade — sem navegador, sem extensão, com layout adaptado pra
-tela de toque **e** pra controle remoto na TV, no mesmo código-fonte.
+O JOTV junta num lugar só tudo o que você assiste. Capas, sinopses, elenco, trailers e notas vêm do
+**TMDB**, sempre em português. Os vídeos vêm dos **addons no padrão Stremio** que você instala, e o
+app escolhe sozinho a melhor fonte para o seu gosto (dublado ou legendado, até a qualidade que você
+definir). Na TV tudo funciona pelo controle remoto, no celular pelo toque, e cada pessoa da casa tem o
+próprio perfil com lista, histórico e progresso.
 
-Ele não hospeda nem distribui conteúdo nenhum: busca metadados (sinopse, elenco, pôster) no
-**TMDB** e resolve links de vídeo através de addons Stremio que o próprio usuário instala. O app
-é só o player e a interface.
+O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-legal).
+
+## Novidades
+
+### Coleções no formato do Nuvio
+
+Pastas temáticas na Início, como Marvel, Pixar, uma franquia, um canal de streaming ou a obra de um
+diretor. Cada pasta junta catálogos de addon e listas do TMDB e abre com uma aba por fonte e a aba
+**Tudo**, que intercala as fontes sem repetir título. No celular dá para criar e editar tudo. Na TV as
+coleções chegam pela **conta Nuvio**, por **link** ou **colando o JSON**, que é o mesmo arquivo do
+Nuvio, então entra e sai igual.
+
+<p align="center">
+  <img src="docs/readme/tv-colecao-inicio.jpg" alt="Fileira de coleção na Início da TV com as pastas Marvel, Pixar, Star Wars e Netflix" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/readme/tv-colecao-pasta.jpg" alt="Pasta Marvel aberta na TV com as abas Tudo, Marvel Studios e Vingadores" width="100%">
+</p>
+
+### Fontes que se explicam
+
+Cada versão do vídeo vira um cartão com resolução, HDR, Dolby Vision, Atmos, canais de áudio e
+idioma (Dublado, Legendado, Dual áudio). O app testa as fontes antes de tocar, marca a **melhor
+opção**, junta o mesmo arquivo achado em addons diferentes e passa para a próxima quando uma falha.
+
+<p align="center">
+  <img src="docs/readme/tv-fontes.jpg" alt="Lista de fontes na TV com selos 4K, HDR10, Dolby Atmos e Dual áudio" width="100%">
+</p>
+
+### TV ao vivo
+
+Listas **M3U**, contas **Xtream** e addons com canais, com guia de programação **XMLTV**,
+categorias, favoritos, recentes e busca de canal. No player, as setas (ou CH+ e CH-) trocam de canal
+e o OK mostra o que está passando.
+
+<p align="center">
+  <img src="docs/readme/tv-ao-vivo.jpg" alt="Grade de canais ao vivo na TV com categorias" width="100%">
+</p>
+
+### E mais
+
+| | |
+|---|---|
+| **Início do seu jeito** | Ligue, desligue, reordene e renomeie cada fileira, escolha de onde vem o destaque e transforme catálogos de addon em fileiras. Dá até para desligar o catálogo JOTV e deixar só os seus addons. |
+| **Contas Stremio e Nuvio** | Entre por e-mail ou pelo QR code e traga addons, Minha Lista, o que você estava assistindo e as chaves de debrid. O QR é gerado no próprio aparelho. |
+| **Debrid** | Real-Debrid, TorBox e Premiumize. Fonte de torrent que já está pronta no debrid vira link direto e toca na hora, com um raio na lista indicando o que está pronto. |
+| **Legenda no seu idioma** | 53 idiomas, começando no português do Brasil, e a opção de a legenda já entrar ligada. O app prefere a legenda do próprio vídeo e completa com o OpenSubtitles e com as legendas dos addons. |
+| **Torrent direto no celular** | O Android tem motor P2P próprio e o vídeo começa enquanto baixa. Na TV o torrent toca pelo debrid. |
+| **Login com QR na TV** | O login por código do Stremio, do Nuvio, do Real-Debrid e do TorBox mostra o QR ao lado do código. É só apontar a câmera do celular. |
+| **Player novo no celular** | Controles na base da tela, como na TV, com botões maiores para o toque e espaço certo para a fonte ampliada do sistema. |
+
+## Na TV
+
+Versões próprias para **LG webOS** e **Samsung Tizen**, leves e feitas para o controle remoto, e o
+mesmo APK do celular na **Android TV**.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/readme/tv-inicio.jpg" alt="Início da TV com destaque em tela cheia"><br><b>Início</b><br><sub>Destaque em tela cheia que acompanha o título em foco, com trailer opcional.</sub></td>
+    <td width="50%"><img src="docs/readme/tv-detalhe.jpg" alt="Detalhe de um filme na TV"><br><b>Detalhe</b><br><sub>Logo do título, nota, classificação, sinopse e o Assistir que já sabe a melhor fonte.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/readme/tv-descobrir.jpg" alt="Tela Descobrir com filtros"><br><b>Descobrir</b><br><sub>Filtros de conteúdo, ordem, gênero, ano, classificação e nota mínima.</sub></td>
+    <td width="50%"><img src="docs/readme/tv-busca.jpg" alt="Busca com teclado na tela"><br><b>Busca</b><br><sub>Teclado na tela pensado para o controle e buscas recentes.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/readme/tv-perfis.jpg" alt="Seletor de perfis"><br><b>Perfis</b><br><sub>Cada perfil com a própria lista e o próprio histórico, e o perfil infantil.</sub></td>
+    <td width="50%"><img src="docs/readme/tv-configuracoes.jpg" alt="Configurações da TV"><br><b>Configurações</b><br><sub>Início, Coleções, contas, TV ao vivo, addons e debrid, com o resumo ao lado.</sub></td>
+  </tr>
+</table>
+
+## No celular
+
+O mesmo visual da TV, feito para o toque, com a barra em cápsula embaixo. Tem tudo o que a TV tem e
+mais o editor de coleções, downloads, Chromecast e Picture in Picture.
+
+<p align="center">
+  <img src="docs/readme/celular.jpg" alt="Cinco telas do JOTV no celular" width="100%"><br>
+  <sub>Início com a coleção fixada, pasta Marvel com a aba Tudo, detalhe, lista de fontes e TV ao vivo</sub>
+</p>
+
+## Tudo o que o app faz
+
+<details open>
+<summary><b>Catálogo e descoberta</b></summary>
+
+- Início com destaque em tela cheia, trailer opcional que toca sem som depois de alguns segundos, Continuar assistindo e Novos episódios
+- Fileiras de tendências, populares, nos cinemas, lançamentos do ano, trailers e gêneros, todas do TMDB
+- Descobrir com filtros de conteúdo, ordem, gênero, ano, classificação e nota mínima
+- Busca de filmes e séries com buscas recentes
+- Detalhe com elenco, temporadas, episódios, recomendações e a franquia do filme
+- Logo do título em português quando existe, notas com vírgula e classificação indicativa do Brasil
+
+</details>
+
+<details>
+<summary><b>Fontes e player</b></summary>
+
+- Escolha automática da melhor fonte pelo áudio preferido (dublado, legendado ou tanto faz) e pela qualidade máxima
+- Teste rápido das fontes, com troca automática quando uma não responde
+- Lista de fontes com selos de resolução, HDR, Dolby Vision, Atmos, DTS e idioma
+- Som de outra fonte sincronizado, para assistir uma versão ouvindo o áudio dublado de outra
+- Pula a abertura que você já pulou uma vez e passa para o próximo episódio sozinho
+- Legenda com tamanho, fundo e atraso ajustáveis, em 53 idiomas
+- Player do celular com os controles na base, como na TV, e botões grandes para o toque
+- Prévia em miniatura ao arrastar a barra (celular)
+- Chromecast, Picture in Picture e controle pela tela bloqueada ou pelo fone (celular)
+- Download para assistir sem internet (celular)
+- DNS seguro da Cloudflare nos links de vídeo, para fugir de bloqueio de operadora (celular)
+
+</details>
+
+<details>
+<summary><b>Addons</b></summary>
+
+- Gerenciador com ordem de prioridade, liga e desliga
+- Loja com o catálogo da comunidade
+- Configuração no site do addon, com QR code para configurar pelo celular e levar o link pronto para a TV
+- Catálogos dos addons viram fileiras da Início
+- Você decide quais addons usar. O app começa sem nenhum, no celular e na TV, e você instala pelo link do manifest, pela Loja ou trazendo da sua conta Stremio ou Nuvio
+
+</details>
+
+<details>
+<summary><b>Coleções</b></summary>
+
+- Fontes de addon e do TMDB (lista, franquia, estúdio, canal, descoberta com filtros, ator e direção)
+- Pasta com abas e aba Tudo, ou uma fileira por fonte
+- Capa, emoji, GIF animado e formato pôster, paisagem ou quadrado
+- Coleção fixada no topo da Início
+- Editor completo no celular, com atalhos para estúdios e canais conhecidos e busca no TMDB
+- Importa o mesmo JSON do Nuvio pela conta Nuvio, por link ou colando o texto, e exporta pelo celular
+
+</details>
+
+<details>
+<summary><b>Contas, debrid e torrent</b></summary>
+
+- Stremio e Nuvio por e-mail ou QR, importando addons, Minha Lista, progresso e as chaves de debrid salvas na conta
+- Real-Debrid (por código ou chave), TorBox e Premiumize
+- Motor P2P no Android, com o vídeo tocando enquanto baixa
+- Na TV o torrent toca pelo debrid
+
+</details>
+
+<details>
+<summary><b>TV ao vivo</b></summary>
+
+- Listas M3U, contas Xtream e addons com canais
+- Guia XMLTV (inclusive compactado em .gz no celular e na LG)
+- Categorias, favoritos, recentes e busca de canal
+- Troca de canal pelas setas ou pelo CH+ e CH-, com o programa atual na tela
+- A aba Ao vivo só aparece depois que você cadastra uma fonte
+
+</details>
+
+<details>
+<summary><b>Perfis e família</b></summary>
+
+- Vários perfis, cada um com Minha Lista, histórico, progresso e preferências
+- Perfil infantil que só mostra animação e família e bloqueia título acima de 12 anos
+- PIN dos pais para sair do infantil e mexer em perfis e ajustes
+- TV ao vivo, catálogos de addon e coleções ficam fora do perfil infantil
+
+</details>
+
+<details>
+<summary><b>Feito para cada tela</b></summary>
+
+- Celular, tablet e Android TV no mesmo APK, com layout próprio para o controle remoto na TV
+- LG webOS e Samsung Tizen em app próprio, leve e sem framework
+- Navegação inteira pelo controle, com foco sempre visível e retorno ao card de onde você saiu
+- Temas Grafite, Azul e Verde e opção de movimento reduzido (TV)
+
+</details>
 
 ## Instalação
 
-Pegue o `.apk` pronto em **[Releases](../../releases)** — não precisa compilar nada. Se preferir
-compilar você mesmo, veja [Como compilar](#como-compilar).
+Todos os arquivos ficam na página de **[Releases](../../releases/latest)**. Não precisa compilar nada.
 
-### Celular ou tablet Android
+| Aparelho | Arquivo | Precisa de |
+|---|---|---|
+| Celular ou tablet Android | `JOTV-v*.apk` | Android 6 ou mais novo |
+| Android TV e Google TV | `JOTV-v*.apk` | Android TV 6 ou mais novo |
+| TV LG | `JOTV-webOS-v*.ipk` | webOS 4 ou mais novo, em modo desenvolvedor |
+| TV Samsung | `JOTV-Tizen-v*.wgt` | Tizen 5.5 ou mais novo (TVs de 2020 em diante), em modo desenvolvedor |
+
+<details>
+<summary><b>Celular ou tablet Android</b></summary>
+
 1. Baixe o `.apk` da Release direto no aparelho.
-2. Abra o arquivo baixado. Na primeira vez o Android avisa que precisa liberar "instalar app de
-   fonte desconhecida" para o app que você usou pra baixar (navegador, Arquivos...) — libere e
-   confirme a instalação.
+2. Abra o arquivo. Na primeira vez o Android pede para liberar a instalação de fonte desconhecida no app que você usou para baixar (navegador ou Arquivos). Libere e confirme.
 
-### Android TV / Google TV — qualquer marca
-Vale pra **Sony, TCL, Philips, Hisense, Xiaomi, NVIDIA Shield, Chromecast com Google TV, Fire TV**
-e qualquer outro aparelho que rode Android TV ou Google TV. Essas TVs não têm o JOTV na loja
-oficial, então a instalação é por **sideload** (instalar um APK avulso). Dois jeitos:
+</details>
 
-- **Pelo computador, com ADB** (mais confiável): na TV, ative a depuração (em geral
-  **Configurações → Aparelho → Sobre**, toque várias vezes na versão do sistema até liberar as
-  "Opções do desenvolvedor", depois ligue "Depuração USB" ou "Depuração de rede"). No PC, com o
-  [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools)
-  instalado:
-  ```sh
-  adb connect <ip-da-tv>:5555
-  adb install app-release.apk
-  ```
-- **Direto na TV, sem computador**: instale um app tipo "Send Files to TV" ou "Downloader"
-  (disponíveis na própria loja de apps da TV), baixe o `.apk` por ele e instale.
+<details>
+<summary><b>Android TV e Google TV (qualquer marca)</b></summary>
 
-### Samsung Smart TV (Tizen)
-Samsung não roda Android, então o `.apk` não serve aqui. Existe uma versão nativa própria do
-JOTV pra Tizen, empacotada como `.wgt`, pegue o arquivo `JOTV-Tizen-*.wgt` da mesma
-[Release](../../releases).
+Vale para Sony, TCL, Philips, Hisense, Xiaomi, NVIDIA Shield, Chromecast com Google TV, Fire TV e
+qualquer aparelho com Android TV. A instalação é por sideload, de um destes jeitos.
 
-1. Na TV, ligue o modo desenvolvedor (Smart Hub > Apps, selecione qualquer app instalado e
-   digite **1 2 3 4 5** em sequência no controle). Anote o IP que aparece na tela.
-2. No computador, instale o [Tizen Studio](https://samsungtizenos.com/tools-download/)
-   (a opção "CLI installer" já basta, não precisa da IDE gráfica completa). Isso traz o `sdb`,
-   usado pra instalar o pacote na TV.
+**Pelo computador, com ADB.** Na TV, libere as opções do desenvolvedor (em geral tocando várias vezes
+na versão do sistema em Configurações, Sobre) e ligue a depuração de rede. No PC, com o
+[Android Platform Tools](https://developer.android.com/tools/releases/platform-tools) instalado,
+
+```sh
+adb connect <ip-da-tv>:5555
+adb install JOTV-v<versão>.apk
+```
+
+**Direto na TV.** Instale um app como o Downloader ou o Send Files to TV pela loja da própria TV,
+baixe o `.apk` por ele e instale.
+
+</details>
+
+<details>
+<summary><b>TV LG (webOS)</b></summary>
+
+1. Na TV, instale o app **Developer Mode** pela LG Content Store, entre com uma conta grátis de [developer.lge.com](https://developer.lge.com) e ligue o modo desenvolvedor e o Key Server. Anote o IP e a frase (passphrase) que aparecem na tela.
+2. No computador, instale a [CLI do webOS TV](https://webostv.developer.lge.com/develop/tools/cli-installation) (precisa do Node.js) e cadastre a TV uma vez.
+   ```sh
+   npm install -g @webos-tools/cli
+   ares-setup-device
+   ```
+3. Instale e abra o app.
+   ```sh
+   ares-install --device <nome-da-tv> JOTV-webOS-v<versão>.ipk
+   ares-launch --device <nome-da-tv> com.joabtv.app
+   ```
+
+O modo desenvolvedor desliga sozinho depois de alguns dias. Se o app sumir, abra o Developer Mode e
+renove a sessão (o IP e a frase podem mudar).
+
+</details>
+
+<details>
+<summary><b>TV Samsung (Tizen)</b></summary>
+
+1. Na TV, abra a área de Apps, digite **1 2 3 4 5** no controle e ligue o modo desenvolvedor com o IP do seu computador. Reinicie a TV.
+2. No computador, instale o [Tizen Studio](https://samsungtizenos.com/tools-download/) (o instalador de linha de comando basta). Ele traz o `sdb`.
 3. Conecte e instale.
    ```sh
    sdb connect <ip-da-tv>:26101
-   sdb install JOTV-Tizen-v1.3.4.wgt
+   sdb install JOTV-Tizen-v<versão>.wgt
    ```
 
-O `.wgt` já sai assinado com um certificado de desenvolvedor, suficiente pra instalar em modo
-desenvolvedor numa TV própria. Não serve pra publicar na Samsung Apps TV Store, só pra uso
-pessoal via sideload.
+O `.wgt` sai assinado com certificado de desenvolvedor, o que basta para uso pessoal em modo
+desenvolvedor. Ele não serve para a loja da Samsung.
 
-### LG Smart TV (webOS)
-Mesma ideia, versão nativa própria em `.ipk`. Pegue `JOTV-webOS-*.ipk` da mesma
-[Release](../../releases) e siga o passo a passo de instalação pela própria TV (LG Content
-Store > Developer Mode).
+</details>
 
-### Roku, Apple TV, ou qualquer outra TV sem Android, webOS ou Tizen
-Essas não têm versão nativa do JOTV. O jeito de usar o app numa tela assim é plugar um aparelho
-Android TV na entrada HDMI (um Chromecast com Google TV, um TV Box Android qualquer, um Fire TV
-Stick) e instalar o app nele, do jeito da seção acima (a TV vira só o monitor, quem roda o app
-é o aparelho plugado).
+<details>
+<summary><b>Roku, Apple TV ou outra TV sem Android, webOS ou Tizen</b></summary>
 
-## Funcionalidades
+Essas não têm versão própria. Ligue um aparelho com Android TV na entrada HDMI (um Chromecast com
+Google TV, um TV Box Android ou um Fire TV Stick) e instale o APK nele. A TV vira só a tela.
 
-### Catálogo e descoberta
-- Início com destaque em tela cheia (com trailer tocando sozinho depois de alguns segundos parado), Continuar Assistindo, Novos Episódios, recomendados e fileiras de cada addon instalado
-- Descobrir com filtro por gênero, ano, nota e popularidade — grade própria para TV
-- Busca por título com histórico das últimas pesquisas
-- Perfis múltiplos (como o seletor "Quem está assistindo?"), cada um com a própria Minha Lista, histórico e progresso
+</details>
 
-### Player
-- Interface própria sobre o ExoPlayer (Media3): velocidade, qualidade, múltiplas faixas de áudio e legenda
-- **Prévia em miniatura ao arrastar a barra**, tipo YouTube, extraída do próprio vídeo quando a fonte permite
-- **Som de outra fonte sincronizado** com a imagem — assista a versão legendada ouvindo o áudio dublado de outra fonte, no mesmo player
-- Aprendizado automático da abertura (pula sozinho nos episódios seguintes depois que você pula uma vez)
-- Chromecast (transmitir pra TV) e Picture-in-Picture
-- `MediaSession` — controle pela tela bloqueada, fone Bluetooth e Google Assistant — e foco de áudio do sistema (pausa em ligação, para ao tirar o fone)
-- Legenda e idioma de áudio preferido lembrados entre episódios e sessões
+## Para desenvolvedores
 
-### Addons (protocolo Stremio)
-- Gerenciador de addons: instala por URL de manifest, reordena por prioridade, ativa/desativa
-- Loja com catálogo da comunidade e captura automática do link de configuração de addons que exigem isso
-- QR code pra configurar o addon no celular e levar o link pronto pra TV
-- Instalação sempre manual — o app **não vem com addon nenhum pré-instalado**
+Este repositório traz o código do app Android (celular, tablet e Android TV). As versões de LG e
+Samsung saem como pacote pronto nas Releases.
 
-### Perfil infantil
-- Perfil infantil filtra conteúdo adulto automaticamente
-- **PIN dos pais** trava sair do infantil e abrir Addons, a chave do TMDB e as opções de aparelho enquanto o infantil está ativo
-
-### Multiplataforma de verdade
-- Mesmo código reconhece **celular, tablet e TV** (ou deixa forçar o modo manualmente)
-- Layout de TV com menu lateral que desliza por cima do conteúdo com opacidade, navegação 100% por D-pad e foco restaurado ao voltar de uma tela
-- Primeira abertura pede só o nome do perfil e confirma a plataforma detectada (automática por padrão)
-
-### Integrações
-- **TMDB** — metadados, pôsteres, elenco e coleções (chave própria configurável nas Configurações)
-- **Trakt.tv** (opcional) — sincroniza Minha Lista, histórico e scrobble de progresso
-- **DNS-over-HTTPS (Cloudflare)** nas chamadas de vídeo, pra contornar bloqueio de DNS de operadora
-- Download para assistir offline
-
-## Arquitetura
+<details>
+<summary><b>Como o app é feito</b></summary>
 
 ```
-UI (Jetpack Compose)  →  ViewModel (Hilt)  →  Repository  →  Room (local) / Retrofit (TMDB) / addons Stremio (OkHttp)
+UI (Jetpack Compose)  →  ViewModel (Hilt)  →  Repository  →  Room / Retrofit (TMDB) / addons Stremio (OkHttp)
 ```
 
-- **UI**: Jetpack Compose + Material 3, com `androidx.tv` (`tv-foundation`/`tv-material`) para o
-  layout de TV. Uma única árvore de composables se adapta a celular, tablet e TV lendo o
-  [`DeviceLayout`](app/src/main/java/com/joabtv/app/ui/common/DeviceLayout.kt) atual.
-- **Injeção de dependência**: Hilt, módulos em [`di/`](app/src/main/java/com/joabtv/app/di).
-- **Persistência local**: Room (perfis, Minha Lista, histórico, episódios vistos, downloads),
-  com migrações explícitas a cada mudança de schema.
-- **Preferências**: `SharedPreferences` encapsuladas em
-  [`PlatformPrefs`](app/src/main/java/com/joabtv/app/data/local/PlatformPrefs.kt), com chaves
-  escopadas por perfil quando faz sentido.
-- **Rede**: Retrofit + OkHttp para o TMDB e o Trakt; um cliente OkHttp próprio com
-  DNS-over-HTTPS para os links de vídeo dos addons.
-- **Player**: Media3 (ExoPlayer) com `MediaSession`, suporte a Cast e extração de trailers do
-  YouTube com embed bloqueado via NewPipeExtractor.
+- Jetpack Compose com Material 3 e `androidx.tv` para a TV. Uma árvore só de telas se adapta ao celular, ao tablet e à TV.
+- Hilt para injeção de dependência e Room para perfis, Minha Lista, histórico, episódios vistos e downloads.
+- Preferências por perfil em `PlatformPrefs`, inclusive a Início personalizada e as coleções.
+- Media3 (ExoPlayer) com `MediaSession` e Chromecast, e libtorrent4j no motor P2P.
+- Retrofit e OkHttp para o TMDB, com DNS seguro para os links de vídeo dos addons.
 
-## Como compilar
+</details>
 
-Isso aqui é pra quem quer mexer no código. Pra só instalar e usar, veja [Instalação](#instalação).
+<details>
+<summary><b>Como compilar</b></summary>
 
-### Pré-requisitos
-- [Android Studio](https://developer.android.com/studio) (Ladybug ou mais recente) ou só o JDK 17 + Gradle, se preferir linha de comando
-- **JDK 17** — é a versão que o Kotlin 2.1.20/AGP 8.7.0 deste projeto esperam. Com um JDK bem
-  mais novo (21+ já funciona, mas 23+ pode não) como padrão do sistema, o Gradle falha ao
-  avaliar os scripts Kotlin DSL com algo como `IllegalArgumentException: 26.0.1`. Se isso
-  acontecer, aponte o Gradle pro JBR do Android Studio (ou pra um JDK 17/21 instalado à parte)
-  num `gradle.properties` local (não versionado) com `org.gradle.java.home=<caminho-do-jdk>`,
-  ou exporte `JAVA_HOME` antes de rodar `./gradlew`.
-- Um dispositivo ou emulador Android 6.0+ (API 23) — ou um Android TV/Google TV pra testar o layout de TV
-
-### Clonar e configurar
-
-```sh
-git clone <url-deste-repositório>
-cd android
-```
-
-Crie um `local.properties` na raiz (esse arquivo não entra no controle de versão) com, no mínimo:
+Precisa do **JDK 17** (ou do JBR do Android Studio) e do Android SDK. Crie um `local.properties` na
+raiz, que não entra no Git,
 
 ```properties
-sdk.dir=/caminho/para/seu/Android/Sdk
+sdk.dir=/caminho/para/o/Android/Sdk
 ```
 
-Veja [Configuração](#configuração) para a chave do TMDB e o Trakt (opcionais, mas sem a chave do
-TMDB o app te pede uma na primeira vez que abrir).
-
-### Build
+A chave do TMDB pode ir no `~/.gradle/gradle.properties` como `TMDB_API_KEY`. Depois,
 
 ```sh
-# Debug, instala direto num dispositivo conectado
-./gradlew installDebug
-
-# Release (minificado com R8, assinado com a chave de debug — troque por um keystore próprio
-# antes de publicar de verdade, veja app/build.gradle.kts)
-./gradlew assembleRelease
-
-# Testes unitários
-./gradlew testDebugUnitTest
+./gradlew installDebug          # instala num aparelho conectado
+./gradlew assembleRelease       # APK de release em app/build/outputs/apk/release/
+./gradlew testDebugUnitTest     # testes
 ```
 
-O APK de release sai em `app/build/outputs/apk/release/`.
+Sem a `TMDB_API_KEY` o app abre pedindo a sua chave do TMDB em Configurações. O APK das Releases já
+vem com uma chave pronta. A sincronia com o
+Trakt liga quando `TRAKT_CLIENT_ID` e `TRAKT_CLIENT_SECRET` estão no `local.properties`. Chave do
+TMDB em [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) e app do Trakt em
+[trakt.tv/oauth/applications](https://trakt.tv/oauth/applications).
 
-## Configuração
+</details>
 
-| Propriedade | Onde colocar | Obrigatória? |
-|---|---|---|
-| `TMDB_API_KEY` | `local.properties` ou `~/.gradle/gradle.properties` | Não — sem ela, o app pede a chave pessoal em **Configurações → TMDB** na primeira execução |
-| `TRAKT_CLIENT_ID` / `TRAKT_CLIENT_SECRET` | `local.properties` | Não — sem elas, a seção do Trakt fica escondida nas Configurações |
-
-Chave do TMDB em [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) (gratuita).
-App do Trakt em [trakt.tv/oauth/applications](https://trakt.tv/oauth/applications).
-
-Os addons de vídeo (protocolo Stremio) são instalados **dentro do app**, em
-**Configurações → Addons**, por URL de manifest — nenhum vem pré-configurado.
-
-## Estrutura do projeto
+<details>
+<summary><b>Estrutura do projeto</b></summary>
 
 ```
 app/src/main/java/com/joabtv/app/
 ├── data/
-│   ├── local/        # Room (DAOs, entidades, migrações) e PlatformPrefs
-│   ├── remote/        # TMDB, Trakt, addons Stremio, DNS-over-HTTPS
-│   └── repository/     # Camada que a UI consome (biblioteca, downloads)
-├── di/                # Módulos Hilt
-├── domain/model/      # Modelos de domínio (filme, série, episódio, elenco)
+│   ├── accounts/      contas Stremio e Nuvio
+│   ├── collections/   coleções no formato do Nuvio
+│   ├── debrid/        Real-Debrid, TorBox e Premiumize
+│   ├── live/          M3U, Xtream e guia XMLTV
+│   ├── local/         Room e preferências por perfil
+│   ├── remote/        TMDB, addons Stremio, legendas e DNS seguro
+│   ├── repository/    biblioteca e downloads
+│   └── torrent/       motor P2P
+├── di/                módulos Hilt
+├── domain/model/      filme, série, episódio e elenco
 └── ui/
-    ├── common/         # Componentes e navegação compartilhados (foco de TV, layout adaptativo)
-    ├── movies/          # Catálogo, detalhe, player
-    ├── navigation/      # NavHost e menu lateral da TV
-    ├── settings/        # Configurações, addons, perfis, PIN
-    ├── theme/           # Cores e tipografia
-    └── tv/               # Telas e componentes exclusivos da TV
+    ├── collections/   coleções, pasta e editor
+    ├── common/        componentes e layout adaptável
+    ├── live/          TV ao vivo
+    ├── movies/        Início, detalhe, busca e player
+    ├── navigation/    navegação e menu lateral da TV
+    ├── settings/      configurações, addons, contas, debrid e perfis
+    ├── theme/         cores e tipografia
+    └── tv/            telas exclusivas da TV
 ```
 
-## Roteiro
-
-Coisas conhecidas que ainda não entraram:
-
-- Progresso de reprodução por episódio (hoje é uma entrada de histórico por série)
-- Exportar/importar backup de addons, perfis e Minha Lista
-- Busca por voz e integração com o Watch Next do Google TV
+</details>
 
 ## Aviso legal
 
-Este app não hospeda, distribui nem armazena nenhum conteúdo de vídeo. Ele é um cliente para
-addons de terceiros no protocolo Stremio, que o próprio usuário escolhe instalar. O uso e a
-legalidade das fontes acessadas por esses addons são de responsabilidade de quem os instala.
+O JOTV não hospeda, não distribui e não guarda vídeo nenhum. Ele é um player e uma interface para
+addons de terceiros no protocolo Stremio, que a própria pessoa escolhe instalar. O uso e a legalidade
+das fontes acessadas por esses addons são responsabilidade de quem os instala.
 
-Este produto usa a API do TMDB, mas não é endossado nem certificado pelo TMDB.
+Este produto usa a API do TMDB, mas não é endossado nem certificado pelo TMDB. As capturas usam
+dados públicos do TMDB, canais abertos e o filme aberto Sintel, da Blender Foundation (CC BY 3.0),
+numa fonte de demonstração.
 
 ## Licença
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE)
