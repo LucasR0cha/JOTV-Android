@@ -37,6 +37,26 @@ O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-leg
 
 ## Novidades
 
+### Seu catálogo, mais fácil de configurar
+
+As Configurações abrem com **Seu catálogo**, cinco cartões que mostram o estado de cada coisa e já trazem o botão da próxima ação. Entrou no Nuvio ou no Stremio, o **Trazer tudo** aparece no próprio cartão, e o painel **O que veio** mostra o que chegou e o motivo de cada parte que não veio. Na **Minha Início** a linha inteira liga e desliga, o modo **Mover** troca a ordem (na TV pelas setas, no celular por Para o topo e Para o fim), e dá para renomear, escolher o destaque em lista e **Voltar ao padrão** com Desfazer. Cada addon tem o painel **Fileiras**, e o addon novo entra com as 10 primeiras fileiras para a Início não encher de uma vez. A Início vazia ensina o caminho, com Ligar sugestões, Explorar addons e Organizar a Início.
+
+<p align="center">
+  <img src="docs/readme/tv-minha-inicio.jpg" alt="Minha Início na Android TV com a lista de fileiras, o resumo ao lado e os botões Mover e Renomear" width="100%">
+</p>
+
+### Torrent sem debrid também na TV LG e no Windows
+
+Fonte de torrent agora toca direto na **TV LG** (webOS recente, que roda Node 20 no serviço do app) e no **Windows**, sem conta de debrid, como o Android já fazia. O vídeo começa enquanto baixa e só o arquivo escolhido é baixado. Na LG o motor fica na memória, não grava no disco e não envia nada. No Windows tudo é apagado ao parar e o envio fica limitado a 2 MB/s. A espera depende de ter gente compartilhando o torrent. Na Samsung o P2P é **experimental** e vem desligado, e com debrid o torrent pronto continua tocando na hora.
+
+### Menus à sua escolha
+
+Em Configurações, Aparência, cada perfil escolhe o menu da TV e do computador. **Lateral** é o de sempre, **Superior** é uma barra no alto, com uma fileira inteira na Início e a seguinte espiando embaixo para mostrar que há mais listas, e **Oculto** esconde a lateral até você ir para o lado esquerdo (no Windows, o mouse na borda esquerda também abre).
+
+### Mais leve na LG
+
+A Início e a troca de tela ficaram mais rápidas na LG, porque as fileiras fora da tela e as telas escondidas deixam de refazer o layout a cada passo. Na 55QNED70, medido com teclas automáticas, trocar de fileira ficou perto de duas vezes mais rápido e a volta do detalhe para a Início, no pior caso, caiu de cerca de 2 s para 0,2 s.
+
 ### Coleções no formato do Nuvio
 
 Pastas temáticas na Início, como Marvel, Pixar, uma franquia, um canal de streaming ou a obra de um
@@ -77,11 +97,12 @@ e o OK mostra o que está passando.
 
 | | |
 |---|---|
-| **Início do seu jeito** | Ligue, desligue, reordene e renomeie cada fileira, escolha de onde vem o destaque e transforme catálogos de addon em fileiras. Dá até para desligar o catálogo JOTV e deixar só os seus addons. |
-| **Contas Stremio e Nuvio** | Entre por e-mail ou pelo QR code e traga addons, Minha Lista, o que você estava assistindo e as chaves de debrid. O QR é gerado no próprio aparelho. |
+| **Início do seu jeito** | Ligue, desligue, reordene e renomeie cada fileira, escolha de onde vem o destaque e transforme catálogos de addon em fileiras. Dá até para desligar as Sugestões do JOTV e deixar só os seus addons, e o Voltar ao padrão tem Desfazer. |
+| **Contas Stremio e Nuvio** | Entre por e-mail ou pelo QR code e use o Trazer tudo para buscar addons, Minha Lista, o que você estava assistindo, coleções e as chaves de debrid. O QR é gerado no próprio aparelho e o painel O que veio mostra o resultado de cada parte. |
 | **Debrid** | Real-Debrid, TorBox e Premiumize. Fonte de torrent que já está pronta no debrid vira link direto e toca na hora, com um raio na lista indicando o que está pronto. |
 | **Legenda no seu idioma** | 53 idiomas, começando no português do Brasil, e a opção de a legenda já entrar ligada. O app prefere a legenda do próprio vídeo e completa com o OpenSubtitles e com as legendas dos addons. |
-| **Torrent direto no celular** | O Android tem motor P2P próprio e o vídeo começa enquanto baixa. Na TV o torrent toca pelo debrid. |
+| **Torrent sem debrid** | O Android, o Windows e a LG webOS recente têm motor P2P próprio e o vídeo começa enquanto baixa. Na Samsung o P2P é experimental e vem desligado. Com debrid, o torrent pronto toca na hora. |
+| **Loja com mouse** | No Windows e com o Magic Remote da LG, o clique escolhe o addon e cada cartão tem o próprio botão Instalar, Configurar ou Instalado. Passar o mouse por cima não troca mais a ficha. |
 | **Login com QR na TV** | O login por código do Stremio, do Nuvio, do Real-Debrid e do TorBox mostra o QR ao lado do código. É só apontar a câmera do celular. |
 | **Player novo no celular** | Controles na base da tela, como na TV, com botões maiores para o toque e espaço certo para a fonte ampliada do sistema. |
 
@@ -120,7 +141,8 @@ mais o editor de coleções, downloads, Chromecast e Picture in Picture.
 O mesmo app da TV no computador, leve e em tela cheia, com o vídeo tocando no mpv e os controles do
 player iguais aos da TV. Funciona com teclado (setas, Enter e Esc) e com mouse. Para sair da tela
 cheia, aperte F11 ou leve o mouse ao topo da tela, que aparecem os botões de sair da tela cheia,
-minimizar e fechar.
+minimizar e fechar. Torrent toca sem debrid pelo motor P2P embutido, e os menus Lateral, Superior e
+Oculto funcionam com o mouse.
 
 ## Tudo o que o app faz
 
@@ -159,7 +181,7 @@ minimizar e fechar.
 - Gerenciador com ordem de prioridade, liga e desliga
 - Loja com o catálogo da comunidade
 - Configuração no site do addon, com QR code para configurar pelo celular e levar o link pronto para a TV
-- Catálogos dos addons viram fileiras da Início
+- Catálogos dos addons viram fileiras da Início, com o painel Fileiras para escolher quais aparecem (um addon novo entra com 10)
 - Você decide quais addons usar. O app começa sem nenhum, no celular e na TV, e você instala pelo link do manifest, pela Loja ou trazendo da sua conta Stremio ou Nuvio
 
 </details>
@@ -181,8 +203,9 @@ minimizar e fechar.
 
 - Stremio e Nuvio por e-mail ou QR, importando addons, Minha Lista, progresso e as chaves de debrid salvas na conta
 - Real-Debrid (por código ou chave), TorBox e Premiumize
-- Motor P2P no Android, com o vídeo tocando enquanto baixa
-- Na TV o torrent toca pelo debrid
+- Motor P2P no Android, no Windows e na LG webOS recente, com o vídeo tocando enquanto baixa
+- Na Samsung o P2P é experimental e vem desligado, e sem ele o torrent toca pelo debrid
+- Trazer tudo e painel O que veio mostram o resultado de cada parte importada, com o registro por perfil
 
 </details>
 
@@ -215,6 +238,7 @@ minimizar e fechar.
 - Windows 10 e 11 em app próprio, com a interface da TV e o player mpv
 - Navegação inteira pelo controle, com foco sempre visível e retorno ao card de onde você saiu
 - Temas Grafite, Azul e Verde e opção de movimento reduzido (TV)
+- Menus Lateral, Superior e Oculto por perfil, na TV e no computador
 
 </details>
 
@@ -363,7 +387,7 @@ TMDB em [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api) e
 ```
 app/src/main/java/com/joabtv/app/
 ├── data/
-│   ├── accounts/      contas Stremio e Nuvio
+│   ├── accounts/      contas Stremio e Nuvio e o registro de importação
 │   ├── collections/   coleções no formato do Nuvio
 │   ├── debrid/        Real-Debrid, TorBox e Premiumize
 │   ├── live/          M3U, Xtream e guia XMLTV
@@ -378,8 +402,8 @@ app/src/main/java/com/joabtv/app/
     ├── common/        componentes e layout adaptável
     ├── live/          TV ao vivo
     ├── movies/        Início, detalhe, busca e player
-    ├── navigation/    navegação e menu lateral da TV
-    ├── settings/      configurações, addons, contas, debrid e perfis
+    ├── navigation/    navegação e menus da TV (lateral, superior e oculto)
+    ├── settings/      Seu catálogo, Minha Início, addons, contas, debrid e perfis
     ├── theme/         cores e tipografia
     └── tv/            telas exclusivas da TV
 ```
