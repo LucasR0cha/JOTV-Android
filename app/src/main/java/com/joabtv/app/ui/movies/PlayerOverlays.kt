@@ -156,6 +156,7 @@ internal fun PlayerLoadingOverlay(
     posterUrl: String,
     title: String,
     episodeLine: String?,
+    status: String? = null,
 ) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (bannerUrl.isNotBlank()) {
@@ -196,9 +197,35 @@ internal fun PlayerLoadingOverlay(
             }
             if (episodeLine != null) Text(episodeLine, color = TextSecondary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             CircularProgressIndicator(color = Accent, trackColor = Color.White.copy(alpha = 0.14f), strokeWidth = 4.dp)
+            if (status != null) Text(status, color = TextSecondary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
         }
     }
 }
+
+/** Situação do torrent enquanto carrega (conexões e velocidade). Null quando a fonte não é P2P. */
+@Composable
+internal fun rememberP2pStatus(url: String?, loading: Boolean): String? {
+    var text by remember(url) { mutableStateOf<String?>(null) }
+    LaunchedEffect(url, loading) {
+        if (!loading || !com.joabtv.app.data.torrent.TorrentMagnet.isMagnet(url)) { text = null; return@LaunchedEffect }
+        while (true) {
+            val st = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.joabtv.app.data.torrent.Torrents.ifStarted()?.status(url)
+            }
+            text = when {
+                st == null || (!st.hasMetadata && st.peers == 0) -> "P2P · procurando quem compartilha"
+                !st.hasMetadata -> "P2P · ${st.peers} conexões · lendo o torrent"
+                else -> "P2P · ${st.peers} conexões · ${speedLabel(st.downloadBps)}"
+            }
+            delay(1_000)
+        }
+    }
+    return text
+}
+
+private fun speedLabel(bps: Int): String =
+    if (bps >= 1_000_000) String.format(java.util.Locale("pt", "BR"), "%.1f MB/s", bps / 1_000_000.0)
+    else "${bps / 1_000} KB/s"
 
 /** Som de outra fonte carregando. A imagem espera parada. */
 @Composable

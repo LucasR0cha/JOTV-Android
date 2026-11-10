@@ -36,6 +36,8 @@ internal object ScrubThumbnailer {
 
     /** Frame mais próximo de [posMs] em [url], ou null se a fonte não deixar. */
     suspend fun frameAt(url: String, posMs: Long): Bitmap? = withContext(Dispatchers.IO) {
+        // Prévia de torrent pediria pedaços espalhados do arquivo e roubaria banda do vídeo.
+        if (com.joabtv.app.data.torrent.TorrentMagnet.isMagnet(url)) return@withContext null
         val bucket = posMs / 2000 // janela de 2s: não precisa do frame exato, e cacheia mais
         cache[bucket]?.let { return@withContext it }
         lock.withLock {

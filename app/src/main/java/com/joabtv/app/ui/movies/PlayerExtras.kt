@@ -78,6 +78,20 @@ internal fun hhmm(epochMs: Long, tz: java.util.TimeZone = java.util.TimeZone.get
 }
 
 /** Hora atual e, com duração conhecida, a hora em que o vídeo acaba na velocidade atual. */
+internal val PLAYBACK_SPEEDS = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
+
+/** Largura preserva a classificação do vídeo quando o filme tem barras de cinema. */
+internal fun videoResolutionLabel(width: Int, height: Int): String = when {
+    width <= 0 || height <= 0 -> ""
+    width >= 3800 -> "4K"
+    width >= 2500 -> "2K"
+    width >= 1900 -> "1080p"
+    width >= 1200 -> "720p"
+    else -> "${height}p"
+}
+
+internal fun playbackSpeedText(speed: Float): String = (if (speed == speed.toInt().toFloat()) speed.toInt().toString() else speed.toString()).replace('.', ',') + "x"
+
 internal fun clockLine(nowMs: Long, posMs: Long, durMs: Long, speed: Float, tz: java.util.TimeZone = java.util.TimeZone.getDefault()): String {
     val now = hhmm(nowMs, tz)
     if (durMs <= 0 || posMs >= durMs) return now

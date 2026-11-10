@@ -21,6 +21,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -33,7 +34,14 @@ class MoviesHomeViewModel @Inject constructor(
     private val youtubeTrailer: com.joabtv.app.data.remote.YoutubeTrailer,
     private val stremio: com.joabtv.app.data.remote.StremioAddonService,
     trakt: com.joabtv.app.data.remote.TraktService,
+    private val addonMetas: com.joabtv.app.data.remote.AddonMetaResolver,
+    collections: com.joabtv.app.data.collections.CollectionsRepository,
+    private val posterInfo: com.joabtv.app.data.local.PosterInfo,
+    private val continueArt: com.joabtv.app.data.repository.ContinueArtworkRepository,
 ) : ViewModel() {
+    /** Coleções do perfil, para as fileiras de pastas da Início. */
+    val collectionsFlow: StateFlow<List<com.joabtv.app.data.collections.MediaCollection>> = collections.flow
+
     init {
         // Abrir a Início (e trocar de perfil, que reabre o app) sincroniza com o Trakt.
         // ponytail: sem o intervalo de 30 min do webOS, a sincronia roda a cada abertura da Início.
@@ -112,6 +120,7 @@ class MoviesHomeViewModel @Inject constructor(
         val continueProgress: Map<Int, Float> = emptyMap(),  // tmdbId -> fração assistida
         val continueRemaining: Map<Int, Int> = emptyMap(),   // tmdbId -> minutos restantes
         val continueEpisode: Map<Int, String> = emptyMap(),  // tmdbId -> selo do episódio ("T2 E5")
+        val continueArtwork: Map<String, com.joabtv.app.data.repository.ContinueArtwork> = emptyMap(),
         // ── Fileiras fixas da home estilo Netflix ──
         val nowPlaying: List<MovieItem> = emptyList(),     // Filmes nos cinemas
         val releases2026: List<MovieItem> = emptyList(),   // Lançamentos 2026
@@ -132,6 +141,13 @@ class MoviesHomeViewModel @Inject constructor(
         val newEpisodes: List<NewEpisode> = emptyList(),
         /** Trailer mudo no destaque, conforme a preferência do perfil. */
         val heroTrailer: Boolean = true,
+        /** Fileiras que aparecem, na ordem do perfil (Personalizar Início). Já sem as desligadas. */
+        val layout: List<com.joabtv.app.data.local.HomeRowPref> = emptyList(),
+        /** Catálogo JOTV ligado (fileiras do TMDB). */
+        val catalogOn: Boolean = true,
+        /** Chave da fileira que alimenta o destaque. Vazio = automático. */
+        val heroSource: String = "",
+        val releasesYear: Int = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR),
     )
 
     /** Fileira de um catálogo de addon. [skip] é quanto já foi lido do catálogo. */
@@ -141,6 +157,8 @@ class MoviesHomeViewModel @Inject constructor(
         val skip: Int = 0,
         val more: Boolean = true,
         val loading: Boolean = true,
+        /** Nome na Início (o que a pessoa escolheu ou o do catálogo). */
+        val title: String = ref.name,
     )
 
     // ── Últimos Trailers ──────────────────────────────────────────────────────
@@ -239,6 +257,9 @@ class MoviesHomeViewModel @Inject constructor(
      * título = sinal forte), e tudo que ele já viu sai da lista.
      */
     private fun buildRecommendations(history: List<com.joabtv.app.data.local.entity.MovieHistoryEntity>) {
+        lastHistory = history
+        // Recomendação é do catálogo JOTV (TMDB). Desligado, nem chama a rede.
+        if (!prefs.catalogOn) return
         val apiKey = prefs.tmdbApiKey
         if (apiKey.isBlank() || history.isEmpty()) {
             if (history.isEmpty()) _uiState.update { it.copy(recommended = emptyList(), recommendedBecause = "") }
@@ -377,7 +398,6 @@ class MoviesHomeViewModel @Inject constructor(
     }
 
     // ── Catálogos de addon na Início ──────────────────────────────────────────
-    private val imdbToTmdb = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private val addonRowsInFlight = HashSet<String>()
 
     /** Lê a próxima página da fileira. Chamado ao montar e quando o fim da fileira aparece. */
@@ -403,45 +423,71 @@ class MoviesHomeViewModel @Inject constructor(
         }
     }
 
-    /** Troca o id do Stremio (tt ou tmdb:) pelo do TMDB, para o cartão abrir o detalhe normal. */
-    private suspend fun resolveAddonMetas(metas: List<com.joabtv.app.data.remote.AddonMeta>, series: Boolean): List<MovieItem> = coroutineScope {
-        val apiKey = prefs.tmdbApiKey
-        metas.map { m ->
-            async {
-                if (m.poster.isBlank()) return@async null
-                val tm = Regex("""^tmdb:(\d+)""").find(m.id)?.groupValues?.get(1)?.toIntOrNull()
-                val imdb = Regex("""^tt\d+""").find(m.id)?.value
-                val id = tm ?: imdb?.let { tt ->
-                    imdbToTmdb[tt] ?: runCatching {
-                        val r = tmdb.findByImdb(tt, apiKey = apiKey)
-                        val hit = if (series) r.tvResults.firstOrNull() ?: r.movieResults.firstOrNull()
-                        else r.movieResults.firstOrNull() ?: r.tvResults.firstOrNull()
-                        hit?.id
-                    }.getOrNull()?.also { imdbToTmdb[tt] = it }
-                } ?: return@async null
-                MovieItem(
-                    tmdbId = id, embedId = id.toString(), title = m.name, overview = m.description,
-                    posterUrl = m.poster, backdropUrl = m.background, year = m.year, rating = m.rating,
-                    type = if (series) MediaType.SERIES else MediaType.MOVIE,
+    private suspend fun resolveAddonMetas(metas: List<com.joabtv.app.data.remote.AddonMeta>, series: Boolean): List<MovieItem> =
+        addonMetas.resolve(metas, series)
+
+    /** Último histórico visto, para refazer a recomendação quando o catálogo JOTV volta. */
+    private var lastHistory: List<com.joabtv.app.data.local.entity.MovieHistoryEntity> = emptyList()
+
+    private data class HomeInputs(
+        val layout: List<com.joabtv.app.data.local.HomeRowPref>,
+        val catalogOn: Boolean,
+        val addons: List<com.joabtv.app.data.local.AddonEntry>,
+        val hero: String,
+    )
+    private var lastCatalogOn: Boolean? = null
+
+    /** Aplica o layout do perfil. Fileira nova de addon começa a carregar, catálogo JOTV liga e desliga. */
+    private fun applyLayout(i: HomeInputs) {
+        val addonOn = i.addons.associate { com.joabtv.app.data.remote.AddonLinks.baseOf(it.url) to it.enabled }
+        val visible = i.layout.filter { r ->
+            val sys = r.system
+            r.enabled && when {
+                sys != null -> !sys.catalog || i.catalogOn
+                // Perfil infantil não mostra catálogo de addon nem coleção (não dá pra filtrar por idade).
+                r.collectionId != null -> !kids
+                else -> !kids && addonOn[r.ref?.base] == true
+            }
+        }
+        val refs = visible.mapNotNull { r -> r.ref?.let { it to r.displayTitle } }
+        val old = _uiState.value.addonRows.associateBy { it.ref.key }
+        _uiState.update { st ->
+            st.copy(
+                layout = visible, catalogOn = i.catalogOn, heroSource = i.hero,
+                addonRows = refs.map { (ref, title) -> old[ref.key]?.copy(title = title) ?: AddonRow(ref, title = title) },
+            )
+        }
+        refs.filter { old[it.first.key] == null }.forEach { loadAddonRow(it.first.key) }
+        val prev = lastCatalogOn
+        lastCatalogOn = i.catalogOn
+        if (prev == null || prev == i.catalogOn) return
+        if (i.catalogOn) {
+            load()
+            selectTrailerTab(_uiState.value.trailerTab)
+            lastRecKey = ""
+            buildRecommendations(lastHistory)
+        } else {
+            _uiState.update {
+                it.copy(
+                    trendingMovies = emptyList(), trendingTv = emptyList(), nowPlaying = emptyList(),
+                    releases2026 = emptyList(), homeSections = emptyList(), latestTrailers = emptyList(),
+                    recommended = emptyList(), recommendedBecause = "", heroLogos = emptyMap(),
                 )
             }
-        }.awaitAll().filterNotNull()
+        }
     }
 
     init {
-        // Fileiras de addon acompanham a escolha feita em Addons, sem reabrir o app.
+        // A Início segue o Personalizar Início e o liga e desliga dos addons, sem reabrir o app.
         viewModelScope.launch {
-            prefs.homeCatalogsFlow.collect { all ->
-                // Perfil infantil não mostra catálogo de addon (não dá pra filtrar por idade).
-                val refs = if (kids) emptyList() else all
-                val old = _uiState.value.addonRows.associateBy { it.ref.key }
-                _uiState.update { it.copy(addonRows = refs.map { r -> old[r.key] ?: AddonRow(r) }) }
-                refs.filter { old[it.key] == null }.forEach { loadAddonRow(it.key) }
-            }
+            kotlinx.coroutines.flow.combine(
+                prefs.homeLayoutFlow, prefs.catalogOnFlow, prefs.addons, prefs.heroSourceFlow,
+            ) { layout, catalogOn, addons, hero -> HomeInputs(layout, catalogOn, addons, hero) }
+                .collect { applyLayout(it) }
         }
         _uiState.update { it.copy(heroTrailer = prefs.heroTrailer) }
         load()
-        selectTrailerTab(TrailerTab.POPULAR)
+        if (prefs.catalogOn) selectTrailerTab(TrailerTab.POPULAR)
         viewModelScope.launch {
             kotlinx.coroutines.flow.combine(library.recentlyPlayed(), library.watchlist()) { h, w ->
                 (h.filter { it.type == MediaType.SERIES.name }.map { Triple(it.tmdbId, it.title, it.posterUrl) } +
@@ -451,7 +497,7 @@ class MoviesHomeViewModel @Inject constructor(
         }
         // Continuar assistindo: observa o histórico (reproduções recentes) e mapeia p/ MovieItem.
         viewModelScope.launch {
-            library.recentlyPlayed().collect { list ->
+            library.recentlyPlayed().collectLatest { list ->
                 // Terminado (90%+) some da lista; série nesse ponto mostra o PRÓXIMO episódio em
                 // vez do já visto (mesmo critério e cálculo de "terminado"/"próximo episódio" de
                 // DetailPrimary.kt: posição >= 90% da duração, próximo = +1 na temporada ou E1 da
@@ -482,11 +528,27 @@ class MoviesHomeViewModel @Inject constructor(
                     it.copy(
                         continueWatching = items, continueProgress = progress,
                         continueRemaining = remaining, continueEpisode = episode,
+                        continueArtwork = it.continueArtwork.filterKeys { key -> items.any { m -> com.joabtv.app.data.local.posterKey(m) == key } },
                     )
                 }
                 // Toda vez que o histórico muda, a recomendação é refeita. É isso que faz a
                 // lista acompanhar o que a pessoa anda assistindo.
                 buildRecommendations(list)
+                coroutineScope {
+                    continueList.take(20).map { h -> async {
+                        val item = items.firstOrNull { it.tmdbId == h.tmdbId && it.type.name == h.type } ?: return@async
+                        val art = continueArt.resolve(item, h.lastEpisode)
+                        _uiState.update { current -> current.copy(
+                            continueArtwork = current.continueArtwork + (com.joabtv.app.data.local.posterKey(item) to art),
+                            continueWatching = current.continueWatching.map { m ->
+                                if (m.tmdbId != item.tmdbId || m.type != item.type) m else m.copy(
+                                    title = m.title.ifBlank { art.title }, posterUrl = m.posterUrl.ifBlank { art.posterUrl },
+                                    backdropUrl = m.backdropUrl.ifBlank { art.imageUrl },
+                                )
+                            },
+                        ) }
+                    } }.awaitAll()
+                }
             }
         }
     }
@@ -731,9 +793,16 @@ class MoviesHomeViewModel @Inject constructor(
     }
 
     fun load() {
+        // Ranking de hoje para a etiqueta "#3 Hoje" dos pôsteres (vale também para fileira de addon).
+        posterInfo.loadRanks()
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
             val apiKey = prefs.tmdbApiKey
+            // Catálogo JOTV desligado. A Início fica com o progresso e as fileiras de addon.
+            if (!prefs.catalogOn) {
+                _uiState.update { it.copy(isLoading = false, error = null, hasTmdbKey = apiKey.isNotBlank()) }
+                return@launch
+            }
+            _uiState.update { it.copy(isLoading = true, error = null) }
 
             // Somente catálogo TMDB. As 6 chamadas rodam EM PARALELO (async/await) — antes eram
             // em série (6 round-trips somados = segundos de "Carregando" em rede/CPU fraca).
@@ -763,7 +832,7 @@ class MoviesHomeViewModel @Inject constructor(
             }
             val releases2026D = async {
                 if (apiKey.isBlank()) emptyList()
-                else runCatching { tmdb.discoverMovies(sort = SORT_RELEASE_MOVIE, year = 2026, apiKey = apiKey).results.filterNot { it.adult }.map { it.toMovieItem() } }.getOrDefault(emptyList())
+                else runCatching { tmdb.discoverMovies(sort = SORT_RELEASE_MOVIE, year = _uiState.value.releasesYear, apiKey = apiKey).results.filterNot { it.adult }.map { it.toMovieItem() } }.getOrDefault(emptyList())
             }
             val trendingMovies = trendingMoviesD.await()
             val trendingTv = trendingTvD.await()
@@ -802,7 +871,8 @@ class MoviesHomeViewModel @Inject constructor(
                             }
                         }.awaitAll()
                     }.filter { it.second.isNotBlank() }.toMap()
-                    _uiState.update { it.copy(heroLogos = logos) }
+                    // Soma ao que já tinha (o destaque de outra fileira busca logo sob demanda).
+                    _uiState.update { it.copy(heroLogos = it.heroLogos + logos) }
                 }
             }
 
@@ -852,10 +922,14 @@ class MoviesHomeViewModel @Inject constructor(
         return out
     }
 
+    /** Fileira Gêneros ligada no Personalizar Início (e catálogo JOTV ligado). */
+    private fun genresOn() = prefs.catalogOn &&
+        prefs.homeLayout.any { it.key == com.joabtv.app.data.local.SystemRow.GENRES.key && it.enabled }
+
     /** Carrega o próximo lote de seções (chamado ao rolar perto do fim). */
     fun loadMoreSections() {
         val s = _uiState.value
-        if (s.isLoadingSections) return
+        if (s.isLoadingSections || !genresOn()) return
         if (nextSpecIndex >= sectionSpecs.size) return
         val apiKey = prefs.tmdbApiKey
         if (apiKey.isBlank()) return

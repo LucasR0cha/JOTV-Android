@@ -4,34 +4,34 @@ import androidx.compose.ui.graphics.Color
 
 // Paleta do webOS (webos/src/css/app.css), a mesma que o usuário aprovou na TV.
 // Camadas de fundo
-val Background         = Color(0xFF080C16)
-val BackgroundElevated = Color(0xFF0D1421)
-val BackgroundCard     = Color(0xFF101725)
-val BackgroundCard2    = Color(0xFF182131)
-val Surface2           = Color(0xFF222E41)
+val Background         = Color(0xFF0D0D0D)
+val BackgroundElevated = Color(0xFF191919)
+val BackgroundCard     = Color(0xFF222222)
+val BackgroundCard2    = Color(0xFF1A1A1A)
+val Surface2           = Color(0xFF2B2B2B)
 
 // Destaque azul
-val Accent       = Color(0xFF59A9FF)
-val AccentFill   = Color(0xFF005CDB)
+val Accent       = Color(0xFFA7CAFF)
+val AccentFill   = Color(0xFF377BCE)
 val AccentDark   = Color(0xFF1565C0)
-val AccentSoft   = Color(0xFF132D50)
+val AccentSoft   = Color(0xFF202C3C)
 
 // Estado
 val LiveRed    = Color(0xFFE5484D) // --danger
 val Danger     = Color(0xFFE5484D)
 val DangerText = Color(0xFFFF8C8F)
-val Gold       = Color(0xFFFFD700)
+val Gold       = Color(0xFFF4CC75)
 val Ok         = Color(0xFF3DDC84)
 val GreenMatch = Ok
 
 // Texto. O terciário é 999999 e não 808080 para passar de 4.5 para 1 também sobre o cartão.
-val TextPrimary   = Color(0xFFFFFFFF)
-val TextSecondary = Color(0xFFC6CEDB)
-val TextTertiary  = Color(0xFF9BA8BA)
+val TextPrimary   = Color(0xFFF5F7F8)
+val TextSecondary = Color(0xFFC3C5C9)
+val TextTertiary  = Color(0xFFA0A3AA)
 val TextOnLight   = Color(0xFF0A0A0A) // texto em fundo branco (foco e botão principal)
 
 // Bordas
-val Border       = Color(0xFF333333)
+val Border       = Color(0xFF373737)
 val BorderSubtle = Color(0x0FFFFFFF) // branco 6 por cento, divisória do resumo
 
 // Vidro e sobreposições

@@ -31,6 +31,8 @@ class JotvApplication : Application(), ImageLoaderFactory {
         val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
         val lowRam = am.isLowRamDevice || am.memoryClass <= 128
         return ImageLoader.Builder(this)
+            // As imagens seguem o resolvedor do catálogo para evitar capas vazias por falha de DNS.
+            .okHttpClient { com.joabtv.app.data.remote.AppDns.mediaClient }
             .crossfade(if (lowRam) 0 else 150)
             .allowRgb565(true)
             .memoryCachePolicy(CachePolicy.ENABLED)
@@ -49,6 +51,11 @@ class JotvApplication : Application(), ImageLoaderFactory {
             .apply {
                 // Sem hardware bitmap em Android < 8 OU device fraco (mais estável em listas longas).
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || lowRam) allowHardware(false)
+            }
+            // GIF anima (capa das pastas das coleções). Android 9+ usa o decodificador do sistema.
+            .components {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) add(coil.decode.ImageDecoderDecoder.Factory())
+                else add(coil.decode.GifDecoder.Factory())
             }
             .build()
     }

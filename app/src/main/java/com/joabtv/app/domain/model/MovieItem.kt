@@ -13,8 +13,13 @@ data class MovieItem(
     val type: MediaType = MediaType.MOVIE,
     // Classificação indicativa (ex.: "L", "10", "12", "14", "16", "18"). Vazio = sem dado.
     val certification: String = "",
-    // Data completa de lançamento (yyyy-MM-dd) — p/ mostrar no detalhe. Vazio no catálogo.
+    // Data completa de lançamento (yyyy-MM-dd). Também vem nas listas, para a etiqueta Novo e Em breve.
     val releaseDate: String = "",
+    // Para a etiqueta e a faixa do pôster (idioma original, votos da nota, gênero e país).
+    val genreIds: List<Int> = emptyList(),
+    val originalLanguage: String = "",
+    val voteCount: Int = 0,
+    val originCountry: List<String> = emptyList(),
 )
 
 enum class MediaType { MOVIE, SERIES }

@@ -32,11 +32,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -48,10 +53,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.em
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.joabtv.app.domain.model.MovieItem
+import com.joabtv.app.ui.common.PosterDecorations
+import com.joabtv.app.ui.common.rememberPosterVisual
 import com.joabtv.app.ui.common.SpinningIcon
 import com.joabtv.app.ui.common.rememberReducedMotion
 import com.joabtv.app.ui.theme.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitCancellation
 
 // ── MEDIDAS ─────────────────────────────────────────────────────────────────
 // O webOS mede tudo em rem, com 1rem = 1/120 da largura da tela (16px em 1920). Aqui igual,
@@ -60,7 +71,10 @@ import kotlinx.coroutines.launch
 /** dp de 1rem do webOS nesta tela. */
 @Composable
 @ReadOnlyComposable
-fun remDp(): Float = LocalConfiguration.current.screenWidthDp / 120f
+fun remDp(): Float = LocalConfiguration.current.let { tvRem(it.screenWidthDp, it.screenHeightDp) }
+
+internal fun tvRem(widthDp: Int, heightDp: Int): Float =
+    minOf(widthDp / 120f, heightDp / 67.5f).coerceAtLeast(1f)
 
 /** Medida em rem do webOS. */
 val Number.r: Dp
@@ -143,13 +157,26 @@ fun TvRow(
     state: LazyListState = rememberLazyListState(),
     gap: Dp = 1.25.r,
     vertical: Dp = 1.r,
+    preserveColumnOnVertical: Boolean = false,
     content: LazyListScope.() -> Unit,
 ) {
     val pad = tvPad
     val px = with(LocalDensity.current) { pad.toPx() }
+    val rowFocus = if (preserveColumnOnVertical) {
+        val requester = remember { FocusRequester() }
+        Modifier.focusRequester(requester).focusProperties {
+            onExit = { requester.saveFocusedChild() }
+            onEnter = {
+                // Cima e baixo acompanham a coluna atual, sem recuperar um cartão antigo da fileira.
+                if (requestedFocusDirection != FocusDirection.Up && requestedFocusDirection != FocusDirection.Down && requester.restoreFocusedChild()) {
+                    cancelFocusChange()
+                }
+            }
+        }
+    } else Modifier.focusRestorer()
     CompositionLocalProvider(LocalBringIntoViewSpec provides remember(px) { RowSpec(px) }) {
         LazyRow(
-            modifier.fillMaxWidth().focusRestorer(),
+            modifier.fillMaxWidth().then(rowFocus),
             state = state,
             contentPadding = PaddingValues(start = pad, end = pad, top = vertical, bottom = vertical * 1.4f),
             horizontalArrangement = Arrangement.spacedBy(gap),
@@ -194,11 +221,12 @@ fun TvRail(
     eyebrow: String? = null,
     trailing: (@Composable () -> Unit)? = null,
     state: LazyListState = rememberLazyListState(),
+    preserveColumnOnVertical: Boolean = false,
     content: LazyListScope.() -> Unit,
 ) {
     Column(modifier.fillMaxWidth().tvRow().padding(top = 1.3.r, bottom = 0.2.r)) {
         TvRailHead(title, eyebrow, trailing)
-        TvRow(state = state, content = content)
+        TvRow(state = state, preserveColumnOnVertical = preserveColumnOnVertical, content = content)
     }
 }
 
@@ -232,8 +260,7 @@ fun Modifier.tvClick(onClick: () -> Unit, onLongClick: (() -> Unit)? = null, ena
 
 @Composable
 fun TvPoster(
-    title: String,
-    imageUrl: String,
+    item: MovieItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     width: Dp = 12.5.r,
@@ -245,8 +272,24 @@ fun TvPoster(
     typeBadge: String? = null,
     onFocus: () -> Unit = {},
     onLongClick: (() -> Unit)? = null,
+    qualityNeighbors: List<MovieItem> = emptyList(),
 ) {
+    val title = item.title
     var focused by remember { mutableStateOf(false) }
+    val visual = rememberPosterVisual(item, badge, typeBadge != null, showTag = order <= 0, requestQuality = false)
+    val posterInfo = com.joabtv.app.ui.common.LocalPosterInfo.current
+    if (focused && badge == null && posterInfo != null) LaunchedEffect(item.tmdbId, item.type, qualityNeighbors) {
+        delay(700)
+        val nearby = listOf(item) + qualityNeighbors.take(7)
+        nearby.forEach(posterInfo::want)
+        try { awaitCancellation() } finally { nearby.forEach(posterInfo::unwant) }
+    }
+    val context = LocalContext.current
+    val readColor = visual.onImage != null
+    val image = remember(context, item.posterUrl, item.backdropUrl, readColor) {
+        ImageRequest.Builder(context).data(item.posterUrl.ifBlank { item.backdropUrl })
+            .apply { if (readColor) allowHardware(false) }.build()
+    }
     val s = tvFocusScale(focused, 1.06f)
     val shape = RoundedCornerShape(0.9.r)
     Column(modifier.then(if (width == Dp.Unspecified) Modifier.fillMaxWidth() else Modifier.width(width))) {
@@ -266,23 +309,17 @@ fun TvPoster(
                 title, color = TextTertiary, fontSize = 1.05.rs, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                 maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.align(Alignment.Center).padding(1.r),
             )
-            AsyncImage(imageUrl, title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            if (typeBadge != null) Text(
-                typeBadge.uppercase(), color = Color.White, fontSize = 0.75.rs, fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.align(Alignment.TopStart).padding(0.6.r).clip(RoundedCornerShape(0.4.r))
-                    .background(Accent.copy(alpha = .92f)).padding(horizontal = 0.5.r, vertical = 0.2.r),
+            AsyncImage(
+                image, title, Modifier.fillMaxSize().padding(bottom = 2.09.r), contentScale = ContentScale.Crop,
+                onSuccess = { visual.onImage?.invoke(it.result.drawable) },
             )
+            PosterDecorations(item, visual, unit = 0.095.r, textUnit = 0.095.rs)
             if (order > 0) Box(
                 Modifier.align(Alignment.TopStart).padding(0.6.r).size(2.r).clip(CircleShape)
                     .background(if (current) Accent else Color.Black.copy(alpha = .72f)),
                 contentAlignment = Alignment.Center,
             ) { Text("$order", color = if (current) Color(0xFF06070A) else Color.White, fontSize = 0.9.rs, fontWeight = FontWeight.ExtraBold) }
-            if (badge != null) Text(
-                badge, color = Color.White, fontSize = 0.8.rs, fontWeight = FontWeight.ExtraBold,
-                modifier = Modifier.align(Alignment.TopEnd).padding(0.6.r).clip(RoundedCornerShape(0.4.r))
-                    .background(Color.Black.copy(alpha = .78f)).padding(horizontal = 0.5.r, vertical = 0.22.r),
-            )
-            if (progress != null) Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(0.32.r).background(Color.Black.copy(alpha = .55f))) {
+            if (progress != null) Box(Modifier.align(Alignment.BottomStart).padding(bottom = 2.09.r).fillMaxWidth().height(0.32.r).background(Color.Black.copy(alpha = .55f))) {
                 Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).fillMaxHeight().background(Accent))
             }
         }
@@ -299,6 +336,25 @@ fun TvPoster(
 }
 
 // ── CARTÃO LARGO (.wide-card) ───────────────────────────────────────────────
+
+/** O nome fica visível enquanto a arte do título carrega ou quando a imagem falha. */
+@Composable
+fun TvTitleArtwork(title: String, logoUrl: String, modifier: Modifier = Modifier, hero: Boolean = false) {
+    var loaded by remember(logoUrl) { mutableStateOf(false) }
+    var failed by remember(logoUrl) { mutableStateOf(false) }
+    val fontSize = if (hero) 4.rs else 3.6.rs
+    val lineHeight = if (hero) 4.12.rs else 3.8.rs
+    if (logoUrl.isBlank() || failed) Text(
+        title, color = TextPrimary, fontSize = fontSize, lineHeight = lineHeight,
+        fontFamily = DisplayFont, fontWeight = FontWeight.ExtraBold, maxLines = 2,
+        overflow = TextOverflow.Ellipsis, modifier = modifier,
+    ) else Box(modifier.height(9.r).widthIn(max = 34.r), contentAlignment = Alignment.BottomStart) {
+        if (!loaded) Text(title, color = TextPrimary, fontSize = fontSize, lineHeight = lineHeight,
+            fontFamily = DisplayFont, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        AsyncImage(logoUrl, title, Modifier.fillMaxSize(), contentScale = ContentScale.Fit, alignment = Alignment.BottomStart,
+            onSuccess = { loaded = true }, onError = { failed = true })
+    }
+}
 
 class TvBadge(val text: String, val color: Color = Color.Black.copy(alpha = .72f))
 

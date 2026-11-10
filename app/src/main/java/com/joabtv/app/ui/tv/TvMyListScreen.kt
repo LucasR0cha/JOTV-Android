@@ -47,6 +47,7 @@ private fun TvMyListScreenBody(
 ) {
     val saved by vm.watchlist.collectAsStateWithLifecycle()
     val recent by vm.recentlyPlayed.collectAsStateWithLifecycle()
+    val artwork by vm.recentArtwork.collectAsStateWithLifecycle()
     var filter by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf<Triple<String, String, () -> Unit>?>(null) }
     val gs = rememberLazyGridState()
@@ -104,11 +105,12 @@ private fun TvMyListScreenBody(
                     TvRail("Continuar assistindo", eyebrow = "Recentes", trailing = { TvCountPill(count(recent.size)) }) {
                         items(recent, key = { "${it.tmdbId}:${it.type}" }) { h ->
                             val ep = h.lastEpisode.replace(":", " ")
-                            TvPoster(
-                                h.title, h.posterUrl, { onItemClick(stub(h.tmdbId, h.type, h.title, h.posterUrl, "")) },
+                            TvContinueCard(
+                                stub(h.tmdbId, h.type, h.title, h.posterUrl, ""), { onItemClick(stub(h.tmdbId, h.type, h.title, h.posterUrl, "")) },
+                                artwork = artwork[com.joabtv.app.data.local.posterKey(type(h.type), h.tmdbId)],
                                 progress = if (h.durationMs > 0) h.positionMs.toFloat() / h.durationMs else null,
-                                badge = ep.ifBlank { null },
-                                subtitle = remaining(h.positionMs, h.durationMs) ?: ep.ifBlank { null }?.let { "Episódio $it" },
+                                remaining = if (h.durationMs > h.positionMs) ((h.durationMs - h.positionMs) / 60_000L).toInt() else null,
+                                episode = ep,
                                 onLongClick = { confirm = Triple("Remover de Continuar assistindo?", h.title) { vm.removeFromContinue(h.tmdbId, h.type) } },
                             )
                         }
@@ -142,8 +144,8 @@ private fun TvMyListScreenBody(
                 items(list.size, key = { "s:${list[it].tmdbId}:${list[it].type}" }) { i ->
                     val w = list[i]
                     TvPoster(
-                        w.title, w.posterUrl, { onItemClick(stub(w.tmdbId, w.type, w.title, w.posterUrl, w.year)) },
-                        width = Dp.Unspecified, subtitle = w.year.ifBlank { null },
+                        stub(w.tmdbId, w.type, w.title, w.posterUrl, w.year), { onItemClick(stub(w.tmdbId, w.type, w.title, w.posterUrl, w.year)) },
+                        width = Dp.Unspecified,
                         onLongClick = { confirm = Triple("Tirar da Minha Lista?", w.title) { vm.removeFromWatchlist(w.tmdbId, w.type) } },
                     )
                 }

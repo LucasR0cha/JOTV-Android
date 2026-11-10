@@ -59,3 +59,7 @@
 -dontwarn java.beans.Introspector
 -dontwarn java.beans.PropertyDescriptor
 -dontwarn javax.script.ScriptEngineFactory
+
+# libtorrent4j (fontes P2P). O nativo chama classes e métodos Java pelo nome (JNI e SWIG).
+-keep class org.libtorrent4j.** { *; }
+-dontwarn org.libtorrent4j.**

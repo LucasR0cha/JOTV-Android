@@ -6,6 +6,7 @@ import com.joabtv.app.data.local.PlatformPrefs
 import com.joabtv.app.data.remote.StremioAddonService
 import com.joabtv.app.data.remote.TmdbApiService
 import com.joabtv.app.data.remote.dto.bestLogoUrl
+import com.joabtv.app.data.remote.dto.toDomain
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -24,7 +25,18 @@ class EpisodePlayerViewModel @Inject constructor(
     private val prefs: PlatformPrefs,
     private val subtitleService: com.joabtv.app.data.remote.SubtitleService,
     private val prober: com.joabtv.app.data.remote.SourceProber,
+    private val debrid: com.joabtv.app.data.debrid.DebridService,
 ) : ViewModel() {
+
+    /** Serviço de debrid em uso ("Real-Debrid"). null sem conta ou desligado. */
+    fun debridLabel(): String? = debrid.active()?.provider?.label
+    /** O serviço tem esse torrent pronto? null quando ainda não se sabe. */
+    fun debridCached(url: String): Boolean? = debrid.knownCached(url)
+    /** Link direto já resolvido, sem rede (serve para o Chromecast). */
+    fun debridNow(url: String, season: Int, episode: Int): String? = debrid.resolvedNow(url, season, episode)
+    suspend fun debridResolve(url: String, season: Int, episode: Int) = debrid.resolve(url, season, episode)
+    /** Torrent sem cache fica de fora (ajuste do Debrid). */
+    fun debridHideUncached(): Boolean = debrid.settings.value.hideUncached
 
     /** Teste da fonte já feito (no detalhe ou aqui), sem esperar. */
     fun probeCached(url: String) = prober.cached(url)
@@ -62,6 +74,20 @@ class EpisodePlayerViewModel @Inject constructor(
         val apiKey = prefs.tmdbApiKey
         if (apiKey.isBlank() || tmdbId <= 0 || season <= 0) return 0
         return runCatching { tmdb.getSeason(tmdbId, season, apiKey = apiKey).episodes.size }.getOrDefault(0)
+    }
+
+    private val seasonCache = mutableMapOf<Pair<Int, Int>, List<com.joabtv.app.domain.model.EpisodeItem>>()
+
+    suspend fun seasonEpisodes(tmdbId: Int, season: Int): List<com.joabtv.app.domain.model.EpisodeItem> {
+        seasonCache[tmdbId to season]?.let { return it }
+        if (prefs.tmdbApiKey.isBlank() || tmdbId <= 0 || season <= 0) return emptyList()
+        val episodes = runCatching { tmdb.getSeason(tmdbId, season, apiKey = prefs.tmdbApiKey).episodes.map { it.toDomain() } }
+            .getOrDefault(emptyList())
+        if (episodes.isNotEmpty()) {
+            if (seasonCache.size >= 10) seasonCache.remove(seasonCache.keys.first())
+            seasonCache[tmdbId to season] = episodes
+        }
+        return episodes
     }
 
     /** Nº de temporadas da série (p/ oferecer "Próxima Temporada" no fim da última). 0 se falhar. */
@@ -106,7 +132,7 @@ class EpisodePlayerViewModel @Inject constructor(
             // de cada addon, pra prioridade do gerenciador continuar valendo.
             .groupBy { it.addon }.values.flatMap { g -> g.sortedByDescending { it.qualityRank } }
             .let { prefs.sortStreams(it) }
-            .map { MoviePlayerSource(it.label, it.url, addon = it.addon) }
+            .map { MoviePlayerSource(it.label, it.url, addon = it.addon, stream = it) }
     }
 
     // ── Abertura rápida do próximo episódio ───────────────────────────────────
@@ -162,7 +188,7 @@ class EpisodePlayerViewModel @Inject constructor(
         var last: List<MoviePlayerSource> = emptyList()
         runCatching {
             stremio.streamsProgressive(addons, "series", imdb, season, episode, tmdbId) { partial ->
-                last = prefs.sortStreams(partial).map { MoviePlayerSource(it.label, it.url, addon = it.addon) }
+                last = prefs.sortStreams(partial).map { MoviePlayerSource(it.label, it.url, addon = it.addon, stream = it) }
                 onPartial(last)
             }
         }

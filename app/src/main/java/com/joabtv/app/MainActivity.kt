@@ -29,6 +29,7 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var platformPrefs: PlatformPrefs
+    @Inject lateinit var posterInfo: com.joabtv.app.data.local.PosterInfo
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,10 +63,12 @@ class MainActivity : ComponentActivity() {
                     }
                     return@JoabTvTheme
                 }
-                MoviesNavigation(
-                    deviceLayout = deviceLayout,
-                    onRestartApp = { restartApp() },
-                )
+                androidx.compose.runtime.CompositionLocalProvider(com.joabtv.app.ui.common.LocalPosterInfo provides posterInfo) {
+                    MoviesNavigation(
+                        deviceLayout = deviceLayout,
+                        onRestartApp = { restartApp() },
+                    )
+                }
             }
         }
     }

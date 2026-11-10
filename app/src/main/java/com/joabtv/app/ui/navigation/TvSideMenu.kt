@@ -1,8 +1,11 @@
 package com.joabtv.app.ui.navigation
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -27,6 +30,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,12 +58,9 @@ class TvMenuItem(
 )
 
 val TvMenuClosed: androidx.compose.ui.unit.Dp
-    @Composable @ReadOnlyComposable get() = 6.r
+    @Composable @ReadOnlyComposable get() = 6.5.r
 
-/**
- * Menu sobreposto com painel em degradê e nomes que entram com opacidade e deslocamento.
- * A animação não altera a largura do conteúdo. A seta entra sempre pelo item ativo.
- */
+/** Cápsula flutuante do webOS, com seleção que acompanha o foco do controle remoto. */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun TvSideMenu(
@@ -68,85 +72,78 @@ fun TvSideMenu(
     onOpenChange: (Boolean) -> Unit,
 ) {
     val reduced = rememberReducedMotion()
-    val progress = animateFloatAsState(if (open) 1f else 0f, com.joabtv.app.ui.common.joabTween(220, reduced), label = "menuReveal")
-    val closedWidth = TvMenuClosed
-    val openWidth = 22.r
-    val panelWidth = 30.r
-    val panelSlide = panelWidth - closedWidth
-    val labelSlide = 0.6.r
-    val active = (main + bottom).firstOrNull { it.route == currentRoute } ?: main.first()
-    Box(Modifier.fillMaxHeight().width(if (open) openWidth else closedWidth)) {
-        Box(
-            Modifier.fillMaxHeight().wrapContentWidth(Alignment.Start, unbounded = true).width(panelWidth)
-                .graphicsLayer { translationX = -panelSlide.toPx() * (1f - progress.value) }
-                .background(Brush.horizontalGradient(
-                    0f to Color(0xFA050A14), .65f to Color(0xF0050A14), 1f to Color.Transparent,
-                )),
-        )
-        Column(
-            Modifier.fillMaxHeight().width(if (open) openWidth else closedWidth)
-            .onFocusChanged { onOpenChange(it.hasFocus) }
-            .focusProperties { enter = { requesters[active.route] ?: FocusRequester.Default } }
-            .focusGroup()
-            .padding(top = 2.6.r, bottom = 2.r),
-        ) {
-            Row(Modifier.height(3.6.r).wrapContentWidth(Alignment.Start, unbounded = true).width(openWidth).padding(start = 1.5.r), verticalAlignment = Alignment.CenterVertically) {
-                Image(painterResource(R.drawable.jotv_logo), "JOTV", Modifier.size(3.r))
-                Text(
-                    "JOTV", color = TextPrimary, fontSize = 1.7.rs, fontWeight = FontWeight.Bold, fontFamily = DisplayFont,
-                    letterSpacing = (-0.068).rs,
-                    modifier = Modifier.padding(start = 1.r).graphicsLayer {
-                        alpha = progress.value
-                        translationX = -labelSlide.toPx() * (1f - progress.value)
-                    },
-                )
-            }
-            Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(0.56.r, Alignment.CenterVertically)) {
-                main.forEach { TvMenuRow(it, it.route == currentRoute, progress, requesters[it.route]) }
-            }
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(0.56.r)) {
-                bottom.forEach { TvMenuRow(it, it.route == currentRoute, progress, requesters[it.route]) }
+    val progress = animateFloatAsState(if (open) 1f else 0f, tween(if (reduced) 0 else 220), label = "menuReveal")
+    val dockWidth by animateDpAsState(if (open) 19.5.r else 4.75.r, tween(if (reduced) 0 else 220), label = "menuWidth")
+    val entries = main + bottom
+    val active = entries.firstOrNull { it.route == currentRoute } ?: main.first()
+    var focusedRoute by remember { mutableStateOf<String?>(null) }
+    val pillRoute = if (open) focusedRoute ?: active.route else active.route
+    val index = entries.indexOfFirst { it.route == pillRoute }.coerceAtLeast(0)
+    val sectionGap = if (bottom.isEmpty()) 0f else 1.26f
+    val dockHeight = (1.4f + entries.size * 4.4f + sectionGap).r
+    val pillY by animateDpAsState((.95f + index * 4.4f + if (index >= main.size) sectionGap else 0f).r,
+        tween(if (reduced) 0 else 250), label = "menuSelection")
+    val labelSlide = .6.r
+    Box(Modifier.fillMaxHeight().width(if (open) 21.25.r else TvMenuClosed)) {
+        Row(Modifier.align(Alignment.TopStart).padding(top = 2.4.r, start = 1.6.r)
+            .wrapContentWidth(Alignment.Start, unbounded = true).width(20.r).height(3.6.r), verticalAlignment = Alignment.CenterVertically) {
+            Image(painterResource(R.drawable.jotv_nav_logo), "JOTV", Modifier.size(3.25.r))
+            Text("JOTV", color = TextPrimary, fontSize = 1.7.rs, fontWeight = FontWeight.Bold, fontFamily = DisplayFont,
+                letterSpacing = (-.068).rs, modifier = Modifier.padding(start = 1.r).graphicsLayer {
+                    alpha = progress.value; translationX = -labelSlide.toPx() * (1f - progress.value)
+                })
+        }
+        Box(Modifier.align(Alignment.CenterStart).padding(start = .875.r).width(dockWidth).height(dockHeight)
+            .clip(RoundedCornerShape(2.6.r)).background(Color(0xF7191919))
+            .then(Modifier.border(.06.r, Color.White.copy(alpha = .09f), RoundedCornerShape(2.6.r)))) {
+            Box(Modifier.offset(x = .4.r, y = pillY).width(dockWidth - .8.r).height(3.9.r)
+                .background(Color(0xFFF5F5F5), RoundedCornerShape(2.r)))
+            Column(Modifier.width(dockWidth).padding(vertical = .7.r)
+                .onFocusChanged { onOpenChange(it.hasFocus) }
+                .focusProperties { enter = { requesters[active.route] ?: FocusRequester.Default } }.focusGroup()) {
+                main.forEach { item ->
+                    TvMenuRow(item, item.route == currentRoute, item.route == pillRoute, progress, requesters[item.route]) { focusedRoute = item.route }
+                }
+                if (bottom.isNotEmpty()) {
+                    Box(Modifier.padding(top = .6.r, bottom = .6.r).padding(horizontal = .4.r)
+                        .fillMaxWidth().height(.06.r).background(Color.White.copy(alpha = .08f)))
+                    bottom.forEach { item ->
+                        TvMenuRow(item, item.route == currentRoute, item.route == pillRoute, progress, requesters[item.route]) { focusedRoute = item.route }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun TvMenuRow(item: TvMenuItem, active: Boolean, progress: State<Float>, requester: FocusRequester?) {
-    var focused by remember { mutableStateOf(false) }
-    val labelSlide = 0.6.r
-    val fg = when {
-        focused -> TextPrimary
-        active -> TextPrimary
-        else -> TextSecondary
-    }
-    Box(
-        Modifier
-            .padding(horizontal = 1.r)
-            .fillMaxWidth()
-            .height(3.7.r)
-            .clip(RoundedCornerShape(0.55.r))
-            .background(if (focused) Color.White.copy(alpha = .12f) else Color.Transparent)
-            .then(if (requester != null) Modifier.focusRequester(requester) else Modifier)
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(remember { MutableInteractionSource() }, null, role = Role.Tab, onClick = item.onClick),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        if (active) Box(Modifier.size(0.2.r, 1.5.r).clip(RoundedCornerShape(0.2.r)).background(Accent))
-        Row(Modifier.wrapContentWidth(Alignment.Start, unbounded = true).width(20.r).padding(start = 1.1.r), verticalAlignment = Alignment.CenterVertically) {
-            if (item.avatar != null) {
+private fun TvMenuRow(
+    item: TvMenuItem,
+    active: Boolean,
+    selectedPill: Boolean,
+    progress: State<Float>,
+    requester: FocusRequester?,
+    onFocused: () -> Unit,
+) {
+    val labelSlide = .6.r
+    val fg = if (selectedPill) TextOnLight else if (active) TextSecondary else TextTertiary
+    Box(Modifier.padding(horizontal = .4.r, vertical = .25.r).fillMaxWidth().height(3.9.r)
+        .clip(RoundedCornerShape(2.r))
+        .then(if (requester != null) Modifier.focusRequester(requester) else Modifier)
+        .onFocusChanged { if (it.isFocused) onFocused() }
+        .semantics { contentDescription = item.label; selected = active }
+        .clickable(remember { MutableInteractionSource() }, null, role = Role.Tab, onClick = item.onClick),
+        contentAlignment = Alignment.CenterStart) {
+        Row(Modifier.wrapContentWidth(Alignment.Start, unbounded = true).width(18.7.r).padding(start = 1.075.r),
+            verticalAlignment = Alignment.CenterVertically) {
+            if (item.avatar != null) Box(Modifier.clearAndSetSemantics {}) {
                 com.joabtv.app.ui.settings.ProfileAvatar(item.avatar, 1.8.r)
-            } else if (item.icon != null) {
-                Icon(item.icon, item.label, tint = if (active && !focused) Accent else fg, modifier = Modifier.size(1.75.r))
-            }
-            Text(
-                item.label, color = fg, fontSize = 1.35.rs, fontWeight = FontWeight.SemiBold, fontFamily = DisplayFont,
+            } else item.icon?.let { Icon(it, null, tint = fg, modifier = Modifier.size(1.75.r)) }
+            Text(item.label, color = fg, fontSize = 1.35.rs, fontWeight = FontWeight.SemiBold, fontFamily = DisplayFont,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 1.3.r, end = 0.8.r).graphicsLayer {
-                    alpha = progress.value
-                    translationX = -labelSlide.toPx() * (1f - progress.value)
-                },
-            )
+                modifier = Modifier.padding(start = 1.3.r, end = .8.r).clearAndSetSemantics {}.graphicsLayer {
+                    alpha = progress.value; translationX = -labelSlide.toPx() * (1f - progress.value)
+                })
         }
     }
 }

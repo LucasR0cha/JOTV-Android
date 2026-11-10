@@ -21,10 +21,12 @@ internal fun resolveDeviceLayout(
     televisionFeature: Boolean,
     widthDp: Int,
     heightDp: Int,
+    fontScale: Float = 1f,
 ): DeviceLayout {
-    if (mode == PlatformMode.TV ||
-        (mode == PlatformMode.AUTO && (televisionMode || leanback || televisionFeature))
-    ) return DeviceLayout.TV
+    val hardwareTv = televisionMode || leanback || televisionFeature
+    val textScale = fontScale.coerceAtLeast(1f)
+    val tvFits = widthDp / textScale >= 960 && heightDp / textScale >= 540
+    if ((mode != PlatformMode.PHONE && hardwareTv) || (mode == PlatformMode.TV && tvFits)) return DeviceLayout.TV
 
     return if (widthDp >= 600 && heightDp >= 480) DeviceLayout.TABLET else DeviceLayout.PHONE
 }
@@ -46,5 +48,6 @@ fun currentDeviceLayout(mode: PlatformMode): DeviceLayout {
     return resolveDeviceLayout(
         mode, tvSignals.first, tvSignals.second, tvSignals.third,
         configuration.screenWidthDp, configuration.screenHeightDp,
+        configuration.fontScale,
     )
 }

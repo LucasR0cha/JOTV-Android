@@ -44,6 +44,7 @@ fun scopedKey(key: String, profileId: String): String =
 internal val SCOPED_KEYS = listOf(
     "recent_searches", "ext_audio_v1", "home_catalogs_v1", "sub_size", "sub_bg",
     "pref_audio", "pref_max_quality", "pref_hero_trailer", "trakt_v1",
+    "home_layout_v1", "home_hero_v1", "pref_subtitle_on", "pref_sub_lang", "collections_v1",
 )
 
 @Singleton
@@ -51,9 +52,9 @@ class PlatformPrefs @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
     companion object {
-        // Chave TMDB do app. Vem da gradle property TMDB_API_KEY (local.properties ou
-        // ~/.gradle/gradle.properties, fora do controle de versão — veja o README).
-        // Sem ela, fica em branco e cada pessoa informa a própria chave em Configurações.
+        // Chave TMDB do app. Vem da gradle property TMDB_API_KEY (~/.gradle/gradle.properties,
+        // fora do controle de versão, veja o README). Sem ela fica em branco e cada pessoa
+        // informa a própria chave em Configurações.
         private val DEFAULT_TMDB_KEY = BuildConfig.TMDB_API_KEY
 
         /** Chave do formato novo (JSON com ordem + ativo). */
@@ -138,7 +139,7 @@ class PlatformPrefs @Inject constructor(
         if (_profiles.value.none { it.id == id }) return
         prefs.edit().putString("profile", id).apply()
         _profileId.value = id
-        _homeCatalogs.value = readHomeCatalogs()
+        refreshLayout()
     }
 
     // ── Reprodução (por perfil) ───────────────────────────────────────────────
@@ -162,6 +163,11 @@ class PlatformPrefs @Inject constructor(
     var subtitleOn: Boolean
         get() = prefs.getBoolean(sk("pref_subtitle_on"), false)
         set(value) { prefs.edit().putBoolean(sk("pref_subtitle_on"), value).apply() }
+
+    /** Idioma em que a legenda liga sozinha, código do OpenSubtitles (ver [SubLangs]). */
+    var subLang: String
+        get() = prefs.getString(sk("pref_sub_lang"), null)?.takeIf { SubLangs.of(it) != null } ?: SubLangs.DEFAULT
+        set(value) { prefs.edit().putString(sk("pref_sub_lang"), value).apply() }
 
     /** Fontes na ordem da preferência do perfil (estável, igual ao sortSources do webOS). */
     fun sortStreams(list: List<com.joabtv.app.data.remote.StremioStream>) =
@@ -326,6 +332,7 @@ class PlatformPrefs @Inject constructor(
             val clean = value.distinctBy { it.url }
             prefs.edit().putString(KEY_ADDONS_V2, encodeEntries(clean)).apply()
             _addons.value = clean
+            refreshLayout()
         }
 
     private val _addons = MutableStateFlow(addonEntries)
@@ -337,47 +344,165 @@ class PlatformPrefs @Inject constructor(
         it.url.equals(url, true) || (id.isNotBlank() && it.id == id)
     }
 
-    /** Instala no fim da fila, ou troca a URL no lugar quando o mesmo addon já existe. */
+    /**
+     * Instala no fim da fila, ou troca a URL no lugar quando o mesmo addon já existe.
+     * Os catálogos de addon instalado daqui em diante entram ligados na Início.
+     */
     fun installAddon(url: String, id: String = "") {
         val list = addonEntries.toMutableList()
         val i = addonIndex(url, id)
         if (i >= 0) list[i] = AddonEntry(url, true, id.ifBlank { list[i].id })
         else list += AddonEntry(url, true, id)
+        autoOnBases = autoOnBases + baseOf(url)
         addonEntries = list
     }
 
-    /** Remove o addon e tira da Início as fileiras que vinham dele. */
+    /** Remove o addon. As fileiras dele saem da Início de todos os perfis (o normalize tira). */
     fun removeAddon(url: String, id: String = "") {
         val i = addonIndex(url, id)
         if (i < 0) return
         val gone = addonEntries[i]
+        autoOnBases = autoOnBases - baseOf(gone.url)
         addonEntries = addonEntries.filterIndexed { idx, _ -> idx != i }
-        val base = gone.url.removeSuffix("/manifest.json").trimEnd('/')
-        homeCatalogs = homeCatalogs.filterNot { it.base == base }
-        // ponytail: só limpa as fileiras do perfil ativo. Nos outros a fileira do addon removido
-        // fica vazia até a pessoa desmarcar. Limpar todos os perfis aqui se isso incomodar.
     }
 
-    // ── Catálogos de addon na Início ──────────────────────────────────────────
-    private val _homeCatalogs = MutableStateFlow(readHomeCatalogs())
-    val homeCatalogsFlow: StateFlow<List<HomeCatalogRef>> = _homeCatalogs.asStateFlow()
+    private fun baseOf(url: String) = url.trim().removeSuffix("/manifest.json").trimEnd('/')
 
-    var homeCatalogs: List<HomeCatalogRef>
-        get() = _homeCatalogs.value
-        set(value) {
-            val arr = org.json.JSONArray()
-            value.distinctBy { it.key }.forEach {
-                arr.put(org.json.JSONObject().put("b", it.base).put("t", it.type).put("i", it.id).put("n", it.name).put("a", it.addon))
+    /**
+     * Addon que mudou de URL (token novo, host novo). As fileiras dele na Início de todos os
+     * perfis passam para a base nova, com o liga e desliga e o nome que cada perfil escolheu.
+     */
+    fun rebaseAddon(oldUrl: String, newUrl: String) {
+        val old = baseOf(oldUrl)
+        val new = baseOf(newUrl)
+        if (old == new) return
+        val ed = prefs.edit()
+        _profiles.value.forEach { p ->
+            val k = scopedKey("home_layout_v1", p.id)
+            HomeLayout.decode(prefs.getString(k, null))?.let { list ->
+                ed.putString(k, HomeLayout.encode(list.map { r ->
+                    val ref = r.ref
+                    if (ref != null && ref.base == old) ref.copy(base = new).let { nr -> r.copy(key = nr.key, ref = nr) } else r
+                }))
             }
-            prefs.edit().putString(sk(KEY_HOME_CATALOGS), arr.toString()).apply()
-            _homeCatalogs.value = value.distinctBy { it.key }
+            val hk = scopedKey("home_hero_v1", p.id)
+            val hero = prefs.getString(hk, "").orEmpty()
+            if (hero.startsWith("$old|")) ed.putString(hk, new + hero.removePrefix(old))
         }
+        ed.apply()
+        if (old in autoOnBases) autoOnBases = autoOnBases - old + new
+        refreshLayout()
+    }
 
-    /** Liga ou desliga a fileira. Devolve true quando ela passou a aparecer. */
-    fun toggleHomeCatalog(ref: HomeCatalogRef): Boolean {
-        val had = homeCatalogs.any { it.key == ref.key }
-        homeCatalogs = if (had) homeCatalogs.filterNot { it.key == ref.key } else homeCatalogs + ref
-        return !had
+    // ── Catálogo JOTV (o catálogo próprio do app, fixo e desligável como um addon) ──
+    private val _catalogOn = MutableStateFlow(prefs.getBoolean("jotv_catalog_on", true))
+    /** Catálogo JOTV ligado. Desligado, as fileiras do TMDB somem da Início de todos os perfis. */
+    val catalogOnFlow: StateFlow<Boolean> = _catalogOn.asStateFlow()
+    var catalogOn: Boolean
+        get() = _catalogOn.value
+        set(value) { prefs.edit().putBoolean("jotv_catalog_on", value).apply(); _catalogOn.value = value }
+
+    // ── Manifests guardados (nome e catálogos de cada addon, para a Início abrir sem rede) ──
+    private val _addonMeta = MutableStateFlow(HomeLayout.decodeAddons(prefs.getString("addon_meta_v1", null)))
+    val addonMetaFlow: StateFlow<Map<String, CachedAddon>> = _addonMeta.asStateFlow()
+
+    /**
+     * Guarda o que o manifest diz. Chamado toda vez que um manifest é lido com sucesso, às vezes
+     * vários ao mesmo tempo (o gerenciador lê todos em paralelo), daí o synchronized.
+     */
+    fun cacheManifest(url: String, name: String, catalogs: List<com.joabtv.app.data.remote.AddonCatalog>, id: String = "") {
+        val base = baseOf(url)
+        val now = CachedAddon(name, catalogs, id)
+        synchronized(_addonMeta) {
+            if (_addonMeta.value[base] == now) return
+            val map = _addonMeta.value + (base to now)
+            prefs.edit().putString("addon_meta_v1", HomeLayout.encodeAddons(map)).apply()
+            _addonMeta.value = map
+        }
+        refreshLayout()
+    }
+
+    /** Bases de addon instalado depois da Início personalizável. Catálogo novo deles entra ligado. */
+    private var autoOnBases: Set<String>
+        get() = prefs.getStringSet("home_auto_on_v1", emptySet()).orEmpty()
+        set(value) { prefs.edit().putStringSet("home_auto_on_v1", value.toSet()).apply() }
+
+    // ── Início personalizável (por perfil) ────────────────────────────────────
+    /** De onde vem o destaque do topo. Vazio = automático (em alta do JOTV ou a 1ª fileira). */
+    private val _heroSource = MutableStateFlow(prefs.getString(sk("home_hero_v1"), "").orEmpty())
+    val heroSourceFlow: StateFlow<String> = _heroSource.asStateFlow()
+    var heroSource: String
+        get() = _heroSource.value
+        set(value) { prefs.edit().putString(sk("home_hero_v1"), value).apply(); _heroSource.value = value }
+
+    // ── Coleções (formato do Nuvio), por perfil. Antes do layout, que conta com elas. ──
+    private fun readCollections(): List<com.joabtv.app.data.collections.MediaCollection> =
+        prefs.getString(sk("collections_v1"), null)
+            ?.let { com.joabtv.app.data.collections.CollectionsJson.parse(it).getOrNull() }
+            .orEmpty()
+
+    private val _collections = MutableStateFlow(readCollections())
+    val collectionsFlow: StateFlow<List<com.joabtv.app.data.collections.MediaCollection>> = _collections.asStateFlow()
+
+    fun saveCollections(list: List<com.joabtv.app.data.collections.MediaCollection>) {
+        prefs.edit().putString(sk("collections_v1"), com.joabtv.app.data.collections.CollectionsJson.encode(list)).apply()
+        refreshLayout()
+    }
+
+    private val _homeLayout = MutableStateFlow(computeLayout())
+    /** Todas as fileiras do perfil na ordem escolhida, ligadas ou não. */
+    val homeLayoutFlow: StateFlow<List<HomeRowPref>> = _homeLayout.asStateFlow()
+    val homeLayout: List<HomeRowPref> get() = _homeLayout.value
+
+    /** Liga ou desliga a fileira. [ref] serve para catálogo que ainda não estava na lista. */
+    fun setHomeRowEnabled(key: String, on: Boolean, ref: HomeCatalogRef? = null) {
+        val cur = homeLayout
+        saveLayout(
+            if (cur.any { it.key == key }) cur.map { if (it.key == key) it.copy(enabled = on) else it }
+            else if (ref != null) cur + HomeRowPref(key, on, "", ref) else cur
+        )
+    }
+
+    /** Dá outro nome à fileira. Vazio volta ao nome original. */
+    fun renameHomeRow(key: String, title: String) =
+        saveLayout(homeLayout.map { if (it.key == key) it.copy(title = title.trim().take(60)) else it })
+
+    fun moveHomeRow(key: String, delta: Int, visible: (HomeRowPref) -> Boolean = { true }) {
+        val cur = homeLayout
+        val moved = HomeLayout.move(cur, key, delta, visible)
+        if (moved !== cur) saveLayout(moved)
+    }
+
+    fun resetHomeLayout() {
+        saveLayout(HomeLayout.reset(homeLayout))
+        heroSource = ""
+    }
+
+    private fun saveLayout(list: List<HomeRowPref>) {
+        prefs.edit().putString(sk("home_layout_v1"), HomeLayout.encode(list)).apply()
+        refreshLayout()
+    }
+
+    private fun refreshLayout() {
+        // Proteção para chamada durante a construção, antes do fluxo existir.
+        @Suppress("SENSELESS_COMPARISON")
+        if (_homeLayout == null) return
+        // Coleções são do perfil. Troca de perfil passa por aqui e recarrega as dele.
+        _collections.value = readCollections()
+        _homeLayout.value = computeLayout()
+        _heroSource.value = prefs.getString(sk("home_hero_v1"), "").orEmpty()
+    }
+
+    private fun computeLayout(): List<HomeRowPref> {
+        val entries = addonEntries
+        val meta = _addonMeta.value
+        val available = entries.flatMap { e ->
+            val base = baseOf(e.url)
+            val m = meta[base] ?: return@flatMap emptyList()
+            m.catalogs.map { c -> HomeCatalogRef(base, c.type, c.id, c.name, m.name) }
+        }
+        val saved = HomeLayout.decode(prefs.getString(sk("home_layout_v1"), null)) ?: HomeLayout.default(readHomeCatalogs())
+        return HomeLayout.normalize(saved, entries.mapTo(HashSet()) { baseOf(it.url) }, available, autoOnBases, _collections.value)
     }
 
     private fun readHomeCatalogs(): List<HomeCatalogRef> = runCatching {

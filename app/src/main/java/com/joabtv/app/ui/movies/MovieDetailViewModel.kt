@@ -35,6 +35,8 @@ class MovieDetailViewModel @Inject constructor(
     private val youtubeTrailer: com.joabtv.app.data.remote.YoutubeTrailer,
     private val prober: com.joabtv.app.data.remote.SourceProber,
     private val trakt: com.joabtv.app.data.remote.TraktService,
+    private val debrid: com.joabtv.app.data.debrid.DebridService,
+    private val posterInfo: com.joabtv.app.data.local.PosterInfo,
 ) : ViewModel() {
 
     // URLs já mandadas pro teste. A lista é recriada a cada addon que responde, então o
@@ -49,7 +51,49 @@ class MovieDetailViewModel @Inject constructor(
                 _uiState.update { it.copy(probes = it.probes + (u to r)) }
             }
         }
+        scheduleDebridCheck()
     }
+
+    private var debridJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Pergunta ao debrid quais torrents ele tem prontos. Espera os addons pararem de chegar
+     * (1,2 s), porque o Real-Debrid confere tentando resolver e só vale gastar com os melhores.
+     */
+    private fun scheduleDebridCheck() {
+        val a = debrid.active() ?: return
+        debridJob?.cancel()
+        debridJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(1_200)
+            val st = _uiState.value
+            val ep = st.selectedEpisode
+            val streams = if (ep != null) st.episodeStremioStreams else st.stremioStreams
+            val cap = prefs.maxQuality.takeIf { it > 0 } ?: Int.MAX_VALUE
+            val magnets = streams.filter { com.joabtv.app.data.torrent.TorrentMagnet.isMagnet(it.url) }
+                .sortedWith(
+                    compareByDescending<com.joabtv.app.data.remote.StremioStream> { if (it.qualityRank > cap) 0 else it.qualityRank }
+                        .thenByDescending { com.joabtv.app.data.torrent.TorrentMagnet.seeders(it.label) }
+                ).map { it.url }
+            if (magnets.isEmpty()) return@launch
+            debrid.check(magnets, ep?.first ?: 0, ep?.second ?: 0)
+            val known = magnets.mapNotNull { u -> debrid.knownCached(u)?.let { u to it } }.toMap()
+            _uiState.update { cur ->
+                val map = cur.debridCached + known
+                val hide = debrid.settings.value.hideUncached
+                cur.copy(
+                    debridCached = map,
+                    debridTag = a.provider.short,
+                    stremioStreams = if (hide) cur.stremioStreams.filterNot { map[it.url] == false } else cur.stremioStreams,
+                    episodeStremioStreams = if (hide) cur.episodeStremioStreams.filterNot { map[it.url] == false } else cur.episodeStremioStreams,
+                )
+            }
+        }
+    }
+
+    /** Tira da lista o torrent que o debrid disse que não tem, quando o ajuste pede. */
+    private fun dropUncached(list: List<com.joabtv.app.data.remote.StremioStream>, st: UiState) =
+        if (!debrid.settings.value.hideUncached || debrid.active() == null) list
+        else list.filterNot { st.debridCached[it.url] == false }
 
     /**
      * Índice da fonte do Assistir dentro de [UiState.stremioStreams]. Melhor resolução que
@@ -136,13 +180,18 @@ class MovieDetailViewModel @Inject constructor(
         val runtimeMin: Int = 0,
         /** Teste das fontes por URL (filme e episódio). */
         val probes: Map<String, com.joabtv.app.data.remote.ProbeResult> = emptyMap(),
+        /** Magnet → o debrid tem pronto (true) ou não tem (false). Ausente = não se sabe. */
+        val debridCached: Map<String, Boolean> = emptyMap(),
+        /** Sigla do debrid em uso ("RD", "TB", "PM"). */
+        val debridTag: String = "",
     ) {
         /** Fontes com o resultado do teste. [runtime] 0 desliga a checagem de outro filme. */
         fun factsOf(streams: List<com.joabtv.app.data.remote.StremioStream>, runtime: Int) = streams.map {
             val p = probes[it.url]
             com.joabtv.app.data.remote.SourceFacts(
-                it.url, it.addon, it.label, it.qualityRank, p,
+                it.url, it.addon, it.releaseText.ifBlank { it.label }, it.qualityRank, p,
                 wrongTitle = p != null && com.joabtv.app.data.remote.durationMismatch(runtime, p.sec),
+                debrid = if (debridCached[it.url] == true) 2 else 0,
             )
         }
         fun movieFacts() = factsOf(stremioStreams, runtimeMin)
@@ -257,20 +306,20 @@ class MovieDetailViewModel @Inject constructor(
                 // addon não devolve nada por IMDB (UnioFlix rende mais assim, FrostStream só "tt").
                 val stremioId = if (resolvedEmbedId.startsWith("tt")) resolvedEmbedId else ""
                 val srcJobs = mutableListOf<kotlinx.coroutines.Job>()
+                val slots = arrayOfNulls<List<com.joabtv.app.data.remote.StremioStream>>(addons.size)
                 if (addons.isNotEmpty() && tmdbId > 0) {
                     // PROGRESSIVO por addon: cada um aparece assim que chega, na ORDEM dos addons
                     // (FrostStream 1º). Addon morto/lento preenche seu slot vazio no timeout, mas
                     // NÃO segura os que já carregaram (antes o awaitAll esperava todos).
                     _uiState.update { it.copy(stremioLoading = true) }
-                    val slots = arrayOfNulls<List<com.joabtv.app.data.remote.StremioStream>>(addons.size)
                     addons.forEachIndexed { idx, addon ->
                         srcJobs += launch {
                             val s = runCatching { stremio.getStreams(addon, "movie", stremioId, tmdbId = tmdbId) }.getOrDefault(emptyList())
                             slots[idx] = s
                             _uiState.update { st ->
                                 st.copy(
-                                    stremioStreams = prefs.sortStreams(slots.filterNotNull()
-                                        .flatMap { g -> g.sortedByDescending { it.qualityRank } }),
+                                    stremioStreams = dropUncached(prefs.sortStreams(slots.filterNotNull()
+                                        .flatMap { g -> g.sortedByDescending { it.qualityRank } }), st),
                                     stremioLoading = slots.any { it == null },
                                 )
                             }
@@ -321,7 +370,12 @@ class MovieDetailViewModel @Inject constructor(
                 }
 
                 // Libera "Assistir" só quando todos os addons responderem.
-                launch { srcJobs.joinAll(); _uiState.update { it.copy(sourcesLoading = false) } }
+                launch {
+                    srcJobs.joinAll()
+                    // Resumo para os selos do pôster (4K, HDR, Dolby, DUB), igual ao webOS.
+                    if (srcJobs.isNotEmpty()) posterInfo.remember(com.joabtv.app.domain.model.MediaType.MOVIE, tmdbId, slots.filterNotNull().flatten())
+                    _uiState.update { it.copy(sourcesLoading = false) }
+                }
             } else {
                 // Chamadas INDEPENDENTES em paralelo (antes tudo em série → detalhe de série lento).
                 val detailDtoD = async {
@@ -472,14 +526,16 @@ class MovieDetailViewModel @Inject constructor(
                     val s = runCatching { stremio.getStreams(addon, "series", imdb, season, episode, seriesTmdb) }
                         .getOrDefault(emptyList())
                     slots[idx] = s
+                    // Todos os addons responderam. O episódio também vale para o pôster da série.
+                    if (slots.none { it == null }) posterInfo.remember(com.joabtv.app.domain.model.MediaType.SERIES, seriesTmdb, slots.filterNotNull().flatten())
                     if (_uiState.value.selectedEpisode == (season to episode)) verify(s)
                     _uiState.update { st ->
                         if (st.selectedEpisode != (season to episode)) st
                         else st.copy(
                             // Ordem dos ADDONS (slots seguem o gerenciador) e, dentro de cada
                             // addon, maior qualidade primeiro.
-                            episodeStremioStreams = prefs.sortStreams(slots.filterNotNull()
-                                .flatMap { g -> g.sortedByDescending { it.qualityRank } }),
+                            episodeStremioStreams = dropUncached(prefs.sortStreams(slots.filterNotNull()
+                                .flatMap { g -> g.sortedByDescending { it.qualityRank } }), st),
                             episodeStremioLoading = slots.any { it == null },
                         )
                     }

@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -394,7 +395,7 @@ fun FilterChipPill(
         contentAlignment = Alignment.Center,
     ) {
         Row(
-            Modifier.scale(s).height(40.dp).clip(RoundedCornerShape(999.dp)).background(bg).padding(horizontal = 16.dp),
+            Modifier.scale(s).heightIn(min = 48.dp).clip(RoundedCornerShape(999.dp)).background(bg).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -424,6 +425,12 @@ fun MediaPosterCard(
     progress: Float? = null,
     onLongClick: (() -> Unit)? = null,
     cleanPoster: Boolean = false,
+    /** Espaço embaixo da imagem (faixa do pôster). A imagem termina onde ela começa. */
+    imageBottom: Dp = 0.dp,
+    /** Recebe a imagem carregada sem bitmap de hardware, para tirar a cor do pôster. */
+    onImage: ((android.graphics.drawable.Drawable) -> Unit)? = null,
+    /** Desenhado por cima da arte (etiqueta, faixa e selos do pôster). */
+    decor: (@Composable BoxScope.() -> Unit)? = null,
 ) {
     val src = remember { MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
@@ -449,9 +456,18 @@ fun MediaPosterCard(
         // Sem imagem fica o nome no meio, como o .pc-fallback.
         Text(
             title, color = TextTertiary, fontSize = 13.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-            maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.align(Alignment.Center).padding(10.dp),
+            maxLines = 3, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.align(Alignment.Center).padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 10.dp + imageBottom),
         )
-        AsyncImage(model = imageUrl, contentDescription = title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        val ctx = LocalContext.current
+        // Bitmap de software só para quem vai ler os pixels (o de hardware não deixa).
+        val model: Any? = if (onImage == null) imageUrl
+        else remember(imageUrl) { coil.request.ImageRequest.Builder(ctx).data(imageUrl).allowHardware(false).build() }
+        AsyncImage(
+            model = model, contentDescription = title, contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().padding(bottom = imageBottom),
+            onSuccess = onImage?.let { f -> { s: coil.compose.AsyncImagePainter.State.Success -> f(s.result.drawable) } },
+        )
         if (!cleanPoster) {
             Box(
                 Modifier.fillMaxSize().background(
@@ -469,12 +485,16 @@ fun MediaPosterCard(
                 )
             }
         }
-        // Barra de progresso colada embaixo, como a .pbar do webOS.
+        // Barra de progresso colada embaixo da imagem, como a .pbar do webOS.
         if (progress != null) {
-            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color.Black.copy(alpha = .55f))) {
+            Box(
+                Modifier.align(Alignment.BottomStart).padding(bottom = imageBottom).fillMaxWidth().height(4.dp)
+                    .background(Color.Black.copy(alpha = .55f)),
+            ) {
                 Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).fillMaxHeight().background(Accent))
             }
         }
+        decor?.invoke(this)
     }
 }
 
@@ -561,8 +581,7 @@ fun JoabButton(
     Row(
         modifier
             .scale(s)
-            .heightIn(min = 48.dp)
-            .height(if (compact) 48.dp else 52.dp)
+            .heightIn(min = if (compact) 48.dp else 52.dp)
             .clip(shape)
             .background(bg)
             .then(if (showFocus) Modifier.border(3.dp, if (tone == ButtonTone.PRIMARY && enabled) Accent else Color.White, shape) else Modifier)
@@ -572,7 +591,7 @@ fun JoabButton(
                 interactionSource = src, indication = null, enabled = tv || (enabled && !busy), role = Role.Button,
                 onClick = { if (enabled && !busy) onClick() },
             )
-            .padding(horizontal = if (compact) 16.dp else 22.dp),
+            .padding(horizontal = if (compact) 16.dp else 22.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
@@ -585,7 +604,8 @@ fun JoabButton(
         }
         Text(
             if (busy) busyLabel else text, color = fg, fontSize = if (compact) 14.sp else 15.sp,
-            fontWeight = FontWeight.Bold, fontFamily = Inter, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            fontWeight = FontWeight.Bold, fontFamily = Inter, maxLines = if (tv) 1 else 2,
+            textAlign = TextAlign.Center, overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -656,9 +676,12 @@ fun SidePanel(
     width: Dp = 440.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val touch = !LocalIsTv.current
+    val shortWindow = touch && LocalConfiguration.current.screenHeightDp < 480
     Box(
         modifier.fillMaxSize()
             .background(Brush.horizontalGradient(listOf(Color.Black.copy(alpha = .15f), Color.Black.copy(alpha = .7f))))
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             // Sem foco próprio. Quem abriu o painel (o player, na TV) continua dono do D-pad.
             .focusProperties { canFocus = false }
             .clickable(remember { MutableInteractionSource() }, null, onClick = onDismiss),
@@ -670,12 +693,16 @@ fun SidePanel(
                 .background(PanelBackground)
                 .focusProperties { canFocus = false }
                 .clickable(remember { MutableInteractionSource() }, null) {}
-                .padding(start = 18.dp, end = 18.dp, top = 22.dp, bottom = 16.dp),
+                .padding(start = 18.dp, end = 18.dp, top = if (shortWindow) 12.dp else 22.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(title, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, fontFamily = Inter, modifier = Modifier.weight(1f, fill = false))
+                Text(title, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, fontFamily = Inter,
+                    lineHeight = if (touch) 28.sp else androidx.compose.ui.unit.TextUnit.Unspecified,
+                    maxLines = if (touch) 2 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = touch))
                 titleTrailing?.invoke()
+                if (touch) GlassCircleButton(Icons.Default.Close, onDismiss, size = 48.dp, contentDescription = "Fechar painel")
             }
             if (!sub.isNullOrBlank()) Text(sub, color = subColor, fontSize = 13.sp, fontFamily = Inter)
             content()

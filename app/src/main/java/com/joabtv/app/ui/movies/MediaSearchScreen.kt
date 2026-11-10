@@ -261,7 +261,7 @@ private fun ColumnScope.SearchBody(
                     }
 
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(112.dp),
+                        columns = GridCells.Adaptive(com.joabtv.app.ui.common.posterWidth()),
                         contentPadding = PaddingValues(
                             start = 16.dp,
                             end = 16.dp,
@@ -272,15 +272,8 @@ private fun ColumnScope.SearchBody(
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         items(results, key = { it.tmdbId }) { item ->
-                            MediaPosterCard(
-                                title = item.title,
-                                imageUrl = item.posterUrl,
-                                onClick = { onItemClick(item) },
-                                subtitle = posterSubtitle(item),
-                                badge = if (item.rating > 0.0) {
-                                    { RatingBadge(item.rating) }
-                                } else null,
-                            )
+                            // Busca mistura filme e série, então a etiqueta diz qual é (igual ao webOS).
+                            com.joabtv.app.ui.common.PosterCard(item = item, onClick = { onItemClick(item) }, typeBadge = true)
                         }
                     }
                 }

@@ -44,6 +44,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.node.DelegatableNode
 import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -249,7 +251,7 @@ fun TvTextPrompt(
  * No celular desenha o campo direto.
  */
 @Composable
-fun TvTextFieldGate(modifier: Modifier = Modifier, field: @Composable (Modifier) -> Unit) {
+fun TvTextFieldGate(modifier: Modifier = Modifier, label: String? = null, field: @Composable (Modifier) -> Unit) {
     if (!LocalIsTv.current) { field(modifier); return }
     var editing by remember { mutableStateOf(false) }
     val fieldFocus = remember { FocusRequester() }
@@ -277,6 +279,7 @@ fun TvTextFieldGate(modifier: Modifier = Modifier, field: @Composable (Modifier)
         )
         if (!editing) Box(
             Modifier.matchParentSize().clip(RoundedCornerShape(12.dp))
+                .then(label?.let { name -> Modifier.semantics { contentDescription = name } } ?: Modifier)
                 // Passa o foco direto ao campo no mesmo clique. Se o botão sumisse antes, o foco
                 // cairia em outro lugar e o campo nem chegaria a abrir.
                 .clickable(role = Role.Button, onClickLabel = "Digitar") {

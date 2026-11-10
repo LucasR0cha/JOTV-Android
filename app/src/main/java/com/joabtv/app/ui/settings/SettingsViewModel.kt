@@ -91,6 +91,15 @@ class SettingsViewModel @Inject constructor(
     val heroTrailer: StateFlow<Boolean> = _heroTrailer.asStateFlow()
     fun setHeroTrailer(v: Boolean) { platformPrefs.heroTrailer = v; _heroTrailer.value = v }
 
+    // Legenda do perfil. Ligada ao abrir e o idioma em que ela liga sozinha.
+    private val _subOn = MutableStateFlow(platformPrefs.subtitleOn)
+    val subOn: StateFlow<Boolean> = _subOn.asStateFlow()
+    fun setSubOn(v: Boolean) { platformPrefs.subtitleOn = v; _subOn.value = v }
+
+    private val _subLang = MutableStateFlow(platformPrefs.subLang)
+    val subLang: StateFlow<String> = _subLang.asStateFlow()
+    fun setSubLang(v: String) { platformPrefs.subLang = v; _subLang.value = v }
+
     private val _platformMode = MutableStateFlow(platformPrefs.platformMode)
     val platformMode: StateFlow<PlatformMode> = _platformMode.asStateFlow()
 

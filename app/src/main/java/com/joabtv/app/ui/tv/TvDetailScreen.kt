@@ -139,14 +139,7 @@ private fun TvDetailScreenBody(
                                 Brush.verticalGradient(listOf(Color.Transparent, Background))
                             ))
                             Column(Modifier.align(Alignment.BottomStart).padding(start = tvPad, bottom = 2.2.r).fillMaxWidth(0.62f)) {
-                                if (state.logoUrl.isNotBlank()) AsyncImage(
-                                    state.logoUrl, title, contentScale = ContentScale.Fit, alignment = Alignment.BottomStart,
-                                    modifier = Modifier.padding(bottom = 1.3.r).heightIn(max = 9.r).widthIn(max = 34.r),
-                                ) else Text(
-                                    title, color = TextPrimary, fontSize = 3.6.rs, lineHeight = 3.8.rs, fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = (-0.07).rs, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(bottom = 1.r),
-                                )
+                                TvTitleArtwork(title, state.logoUrl, Modifier.padding(bottom = 1.3.r))
                                 TvMetaRow(
                                     rating, cert, year,
                                     extra = listOf(if (isSeries) (if (seasons == 1) "1 temporada" else "$seasons temporadas") else runtime),
@@ -247,6 +240,7 @@ private fun TvDetailScreenBody(
                                     },
                                     onDownload = { null },
                                     cols = 2,
+                                    television = true,
                                 )
                             }
                             when {
@@ -268,8 +262,8 @@ private fun TvDetailScreenBody(
                             itemsIndexed(state.collectionItems, key = { _, m -> m.tmdbId }) { i, m ->
                                 val cur = m.tmdbId == state.item?.tmdbId
                                 TvPoster(
-                                    m.title, m.posterUrl, { if (!cur) onRelatedClick(m) }, order = i + 1, current = cur,
-                                    subtitle = if (cur) "Assistindo" else m.year.ifBlank { "Sem data" },
+                                    m, { if (!cur) onRelatedClick(m) }, order = i + 1, current = cur,
+                                    subtitle = if (cur) "Assistindo" else null,
                                 )
                             }
                         }
@@ -277,7 +271,7 @@ private fun TvDetailScreenBody(
                     if (state.related.isNotEmpty()) item(key = "rel") {
                         TvRail("Relacionados") {
                             items(state.related, key = { it.tmdbId }) { m ->
-                                TvPoster(m.title, m.posterUrl, { onRelatedClick(m) }, subtitle = m.year.ifBlank { null })
+                                TvPoster(m, { onRelatedClick(m) })
                             }
                         }
                     }
@@ -301,12 +295,13 @@ private fun TvDetailScreenBody(
                         viewModel.clearSelectedEpisode()
                         onPlayDirect(
                             s.url, 0, "T$season:E$episode",
-                            state.episodeStremioStreams.map { MoviePlayerSource(it.label, it.url, addon = it.addon) },
+                            state.episodeStremioStreams.map { MoviePlayerSource(it.label, it.url, addon = it.addon, stream = it) },
                             season, episode, state.seasons[season]?.size ?: 0,
                         )
                     },
                     onDownload = { null },
                     cols = 1,
+                    television = true,
                 )
                 when {
                     state.episodeStremioLoading -> TvSpinner("Buscando fontes")
@@ -443,7 +438,7 @@ private fun TvPersonOverlay(name: String, items: List<MovieItem>, loading: Boole
                     else -> items(items.size, key = { items[it].tmdbId }) { i ->
                         val m = items[i]
                         TvPoster(
-                            m.title, m.posterUrl, { onPick(m) }, width = Dp.Unspecified, subtitle = m.year.ifBlank { null },
+                            m, { onPick(m) }, width = Dp.Unspecified,
                             typeBadge = if (m.type == MediaType.SERIES) "Série" else "Filme",
                         )
                     }

@@ -63,6 +63,7 @@ import com.joabtv.app.ui.theme.*
 fun AddonManagerScreen(
     onBack: () -> Unit,
     onExplore: () -> Unit = {},
+    onCustomizeHome: () -> Unit = {},
     viewModel: AddonsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -142,6 +143,21 @@ fun AddonManagerScreen(
                 item { ExploreEntry(onExplore) }
                 // ── Instalar ──
                 item { install() }
+            }
+
+            // ── Catálogo próprio do app, fixo no topo e desligável como um addon ──
+            item {
+                Column(Modifier.padding(top = 8.dp, bottom = 2.dp)) {
+                    com.joabtv.app.ui.common.Eyebrow("Catálogo do app")
+                }
+            }
+            item {
+                JotvCatalogCard(
+                    on = state.catalogOn,
+                    rowsOn = state.jotvRowsOn,
+                    onToggle = { viewModel.setCatalogOn(!state.catalogOn) },
+                    onCustomize = onCustomizeHome,
+                )
             }
 
             // ── Cabeçalho da lista ──
@@ -625,6 +641,82 @@ private fun HomeCatalogsDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Pronto", color = Accent, fontWeight = FontWeight.ExtraBold) } },
     )
+}
+
+/**
+ * Catálogo JOTV. Não sai da lista nem muda de lugar (não tem fonte, então não entra na
+ * prioridade). Desligado, a Início fica só com o progresso e os catálogos de addon.
+ */
+@Composable
+private fun JotvCatalogCard(on: Boolean, rowsOn: Int, onToggle: () -> Unit, onCustomize: () -> Unit) {
+    val contentAlpha by animateFloatAsState(if (on) 1f else 0.45f, tween(180), label = "jotvAlpha")
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(BackgroundCard2)
+            .border(1.dp, if (on) Accent.copy(alpha = 0.35f) else BorderSubtle, RoundedCornerShape(16.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(
+                Modifier.size(52.dp).clip(RoundedCornerShape(14.dp)).background(Surface2).alpha(contentAlpha),
+                contentAlignment = Alignment.Center,
+            ) {
+                androidx.compose.foundation.Image(
+                    androidx.compose.ui.res.painterResource(com.joabtv.app.R.drawable.jotv_logo), "JOTV",
+                    modifier = Modifier.size(34.dp),
+                )
+            }
+            Column(Modifier.weight(1f).alpha(contentAlpha)) {
+                Text(
+                    "JOTV Catálogo", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                // Etiquetas na linha de baixo, assim o nome nunca corta.
+                Row(
+                    Modifier.padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    TinyPill("Fixo", TextTertiary)
+                    TinyPill(if (on) "Ativo" else "Desligado", if (on) Ok else DangerText)
+                    Text(
+                        if (on) "$rowsOn fileiras" else "Fora da Início",
+                        color = TextTertiary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Switch(
+                checked = on,
+                onCheckedChange = { onToggle() },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = Accent,
+                    uncheckedThumbColor = TextTertiary,
+                    uncheckedTrackColor = BackgroundCard2,
+                    uncheckedBorderColor = Border,
+                ),
+            )
+        }
+        Text(
+            "Em alta, nos cinemas, lançamentos, trailers e gêneros, direto do TMDB. Desligue para montar a Início só com catálogos de addon.",
+            color = TextSecondary, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.alpha(contentAlpha),
+        )
+        HorizontalDivider(color = BorderSubtle)
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClick = onCustomize)
+                .padding(horizontal = 10.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Personalizar Início", color = Accent, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = ManropeFontFamily)
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Accent, modifier = Modifier.size(18.dp))
+        }
+    }
 }
 
 /** Entrada para a loja de addons da comunidade. */

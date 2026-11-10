@@ -36,6 +36,10 @@ class AddonsViewModel @Inject constructor(
         val installedNow: String? = null,
         /** Chaves (base|tipo|id) dos catálogos que viram fileira na Início. */
         val homeCatalogKeys: Set<String> = emptySet(),
+        /** Catálogo JOTV (addon fixo do app) ligado. */
+        val catalogOn: Boolean = true,
+        /** Quantas fileiras do catálogo JOTV o perfil deixou ligadas. */
+        val jotvRowsOn: Int = 0,
     )
 
     private val _uiState = MutableStateFlow(UiState())
@@ -52,9 +56,20 @@ class AddonsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            prefs.homeCatalogsFlow.collect { l -> _uiState.update { it.copy(homeCatalogKeys = l.mapTo(HashSet()) { c -> c.key }) } }
+            prefs.homeLayoutFlow.collect { l ->
+                _uiState.update {
+                    it.copy(
+                        homeCatalogKeys = l.filter { r -> r.enabled && r.ref != null }.mapTo(HashSet()) { r -> r.key },
+                        jotvRowsOn = l.count { r -> r.enabled && r.system?.catalog == true },
+                    )
+                }
+            }
         }
+        viewModelScope.launch { prefs.catalogOnFlow.collect { on -> _uiState.update { it.copy(catalogOn = on) } } }
     }
+
+    /** Liga ou desliga o catálogo JOTV (o addon fixo do app). Local, sem servidor. */
+    fun setCatalogOn(on: Boolean) { prefs.catalogOn = on }
 
     private fun persist(list: List<AddonEntry>) {
         prefs.addonEntries = list
@@ -63,11 +78,10 @@ class AddonsViewModel @Inject constructor(
 
     /** Marca ou desmarca um catálogo do addon como fileira da Início. Local, sem servidor. */
     fun toggleHomeCatalog(addonUrl: String, addonName: String, c: com.joabtv.app.data.remote.AddonCatalog) {
-        prefs.toggleHomeCatalog(
-            com.joabtv.app.data.local.HomeCatalogRef(
-                com.joabtv.app.data.remote.AddonLinks.baseOf(addonUrl), c.type, c.id, c.name, addonName,
-            )
+        val ref = com.joabtv.app.data.local.HomeCatalogRef(
+            com.joabtv.app.data.remote.AddonLinks.baseOf(addonUrl), c.type, c.id, c.name, addonName,
         )
+        prefs.setHomeRowEnabled(ref.key, ref.key !in _uiState.value.homeCatalogKeys, ref)
     }
 
     /** Baixa o manifest de cada addon instalado (nome/logo/descrição) em paralelo. */
@@ -153,12 +167,8 @@ class AddonsViewModel @Inject constructor(
             val list = _uiState.value.addons.map {
                 if (it.url == oldUrl) it.copy(url = url, id = m.id.ifBlank { it.id }) else it
             }
-            // A base antiga pode ter fileiras mortas na Início (token vencido na URL velha).
-            // Some elas daqui; o usuário marca de novo se quiser (mesmo cálculo do removeAddon).
-            val oldBase = com.joabtv.app.data.remote.AddonLinks.baseOf(oldUrl)
-            if (oldBase != com.joabtv.app.data.remote.AddonLinks.baseOf(url)) {
-                prefs.homeCatalogs = prefs.homeCatalogs.filterNot { it.base == oldBase }
-            }
+            // Base nova (token novo na URL). As fileiras da Início acompanham a troca.
+            prefs.rebaseAddon(oldUrl, url)
             _uiState.update {
                 it.copy(
                     installing = false,

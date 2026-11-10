@@ -32,7 +32,7 @@ internal fun rememberDetailPrimary(
     onPlayDirect: (String, Long, String, List<MoviePlayerSource>, Int, Int, Int) -> Unit,
 ): DetailPrimary {
     val isSeries = item.type == MediaType.SERIES
-    val playerSources = state.stremioStreams.map { MoviePlayerSource(it.label, it.url, addon = it.addon) }
+    val playerSources = state.stremioStreams.map { MoviePlayerSource(it.label, it.url, addon = it.addon, stream = it) }
     val numberOfSeasons = state.series?.numberOfSeasons ?: 1
     val seriesFinished = isSeries && state.resumeDurationMs > 0 && state.resumePositionMs >= state.resumeDurationMs * 0.9
     val hasAnySource = if (isSeries) state.seasons.values.any { it.isNotEmpty() } else playerSources.isNotEmpty()

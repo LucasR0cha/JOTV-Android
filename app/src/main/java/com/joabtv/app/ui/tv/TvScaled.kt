@@ -16,11 +16,12 @@ import androidx.compose.ui.unit.Density
 @Composable
 fun TvScaled(content: @Composable () -> Unit) {
     val d = LocalDensity.current
-    val widthPx = LocalConfiguration.current.screenWidthDp * d.density
+    val config = LocalConfiguration.current
+    val scale = minOf(config.screenWidthDp * d.density / 1600f, config.screenHeightDp * d.density / 900f)
     // Margem calculada antes da troca de escala, em rem da tela real.
     val inset = 3.r
-    CompositionLocalProvider(LocalDensity provides Density(widthPx / 1600f, d.fontScale)) {
-        TvScrollArea(inset = with(d) { inset.toPx() }.let { px -> androidx.compose.ui.unit.Dp(px / (widthPx / 1600f)) }) {
+    CompositionLocalProvider(LocalDensity provides Density(scale, d.fontScale)) {
+        TvScrollArea(inset = with(d) { inset.toPx() }.let { px -> androidx.compose.ui.unit.Dp(px / scale) }) {
             TvText(content)
         }
     }

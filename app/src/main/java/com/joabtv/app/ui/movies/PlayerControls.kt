@@ -45,14 +45,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.joabtv.app.ui.theme.*
 import kotlinx.coroutines.delay
+import com.joabtv.app.ui.tv.r
 
-// Controles do player no desenho do player do webOS. Topo com título, fonte e relógio,
-// barra de progresso com os tempos dos lados e chips embaixo.
+// Na TV, título e controles seguem a composição inferior do player do webOS.
+// O celular usa controles por toque que se adaptam à altura e à fonte do sistema.
 
 /** Chip da barra de baixo (Zoom, Velocidade, Legendas, Áudio, Fontes), navegável por D-pad na TV. */
 internal data class PlayerChipItem(
     val icon: ImageVector,
     val label: String,
+    val active: Boolean = false,
+    val value: String = "",
+    val main: Boolean = false,
     val onRun: () -> Unit,
 )
 
@@ -80,77 +84,24 @@ internal fun CustomPlayerControls(
     onSeekTo: (Long) -> Unit,
     videoUrl: String = "",
     isTv: Boolean = false,
-    tvMode: Boolean = false,
     tvChips: List<PlayerChipItem> = emptyList(),
     tvChipIdx: Int = -1,
-    chips: @Composable RowScope.() -> Unit,
+    resolution: String = "",
+    formatTags: List<String> = emptyList(),
+    playbackInfo: String = "",
+    buffered: Long = 0,
 ) {
-    BoxWithConstraints(
-        Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    0f to Color.Black.copy(alpha = 0.78f),
-                    0.24f to Color.Transparent,
-                    0.58f to Color.Transparent,
-                    1f to Color.Black.copy(alpha = 0.88f),
-                )
-            )
-    ) {
-        // Em tela estreita os botões do topo ocupam a largura toda, então o título desce para a
-        // linha de baixo deles. Em tela larga fica ao lado, com espaço reservado.
-        val narrow = maxWidth < 600.dp
-        PlayerTitleBlock(
-            title, subtitle, clock,
-            Modifier.align(Alignment.TopStart).padding(
-                start = 20.dp, top = if (narrow) 76.dp else 18.dp,
-                end = if (narrow) 20.dp else topActionsWidth(isTv),
-            ),
-        )
-
-        // Centro: voltar 10 s, tocar ou pausar, avançar 10 s.
-        Row(
-            Modifier.align(Alignment.Center),
-            horizontalArrangement = Arrangement.spacedBy(36.dp, Alignment.CenterHorizontally),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CtlButton(Icons.Default.Replay10, "Voltar 10 segundos", 60.dp, onClick = onSeekBack)
-            CtlButton(
-                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                if (isPlaying) "Pausar" else "Reproduzir", 84.dp, big = true, onClick = onToggle,
-            )
-            CtlButton(Icons.Default.Forward10, "Avançar 10 segundos", 60.dp, onClick = onSeekFwd)
-        }
-
-        Column(
-            Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            PlayerSeekRow(position, duration, onSeekTo, videoUrl)
-            PlayerChipRow(tvMode, tvChips, tvChipIdx, chips)
-        }
+    if (isTv) {
+        TvPlayerControls(title, subtitle, clock, resolution, formatTags, playbackInfo, position, duration, buffered, onSeekTo, tvChips, tvChipIdx)
+        return
     }
-}
-
-@Composable
-private fun PlayerTitleBlock(title: String, subtitle: String, clock: String, modifier: Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Text(
-            title, color = Color.White, fontSize = 22.sp, lineHeight = 27.sp, fontWeight = FontWeight.ExtraBold,
-            fontFamily = Inter, maxLines = 1, overflow = TextOverflow.Ellipsis,
-        )
-        if (subtitle.isNotBlank()) Text(
-            subtitle, color = TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-            fontFamily = Inter, maxLines = 1, overflow = TextOverflow.Ellipsis,
-        )
-        // Hora atual e quando o vídeo termina, já contando a velocidade (.pl-clock).
-        Text(clock, color = TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, fontFamily = Inter, maxLines = 1)
-    }
+    TouchPlayerControls(title, subtitle, clock, resolution, formatTags, playbackInfo,
+        isPlaying, position, duration, buffered, videoUrl, onToggle, onSeekBack, onSeekFwd, onSeekTo, tvChips, tvChipIdx)
 }
 
 /** Tempo, barra fina com bolinha e duração na mesma linha (.pl-bar-row). Toque ou arraste busca. */
 @Composable
-private fun PlayerSeekRow(position: Long, duration: Long, onSeekTo: (Long) -> Unit, videoUrl: String) {
+internal fun PlayerSeekRow(position: Long, duration: Long, onSeekTo: (Long) -> Unit, videoUrl: String, buffered: Long = 0, showTimes: Boolean = true) {
     val total = if (duration > 0) duration else 0L
     val frac = if (total > 0) (position.toFloat() / total).coerceIn(0f, 1f) else 0f
     var barW by remember { mutableFloatStateOf(1f) }
@@ -170,12 +121,11 @@ private fun PlayerSeekRow(position: Long, duration: Long, onSeekTo: (Long) -> Un
         ScrubThumbnailer.frameAt(videoUrl, scrubMs)?.let { preview = it }
     }
 
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        TimePill(formatTime(position))
+    Column(Modifier.fillMaxWidth()) {
         Box(
             Modifier
-                .weight(1f)
-                .height(32.dp)
+                .fillMaxWidth()
+                .height(48.dp)
                 .onSizeChanged { barW = it.width.toFloat().coerceAtLeast(1f) }
                 .pointerInput(total) {
                     detectTapGestures { off -> if (total > 0) onSeekTo(((off.x / barW).coerceIn(0f, 1f) * total).toLong()) }
@@ -195,17 +145,22 @@ private fun PlayerSeekRow(position: Long, duration: Long, onSeekTo: (Long) -> Un
                 },
             contentAlignment = Alignment.CenterStart,
         ) {
-            Box(Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = 0.22f)))
-            Box(Modifier.fillMaxWidth(frac).height(5.dp).clip(RoundedCornerShape(3.dp)).background(Accent))
+            Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = 0.22f)))
+            val buffer = if (total > 0) (buffered.toFloat() / total).coerceIn(0f, 1f) else 0f
+            Box(Modifier.fillMaxWidth(buffer).height(4.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = .35f)))
+            Box(Modifier.fillMaxWidth(frac).height(4.dp).clip(RoundedCornerShape(3.dp)).background(Color.White))
             Box(Modifier.fillMaxWidth(frac), contentAlignment = Alignment.CenterEnd) {
-                Box(Modifier.size(16.dp).clip(CircleShape).background(Color.White))
+                Box(Modifier.requiredSize(12.dp).clip(CircleShape).background(Color.White))
             }
             if (scrubbing) ScrubPreview(
                 bitmap = preview, timeMs = scrubMs, xPx = scrubX, barWidthPx = barW,
                 modifier = Modifier.align(Alignment.TopStart),
             )
         }
-        TimePill(if (total > 0) formatTime(total) else "AO VIVO")
+        if (showTimes) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TimePill(formatTime(position))
+            TimePill(if (total > 0) formatTime(total) else "AO VIVO")
+        }
     }
 }
 
@@ -260,7 +215,7 @@ private fun PlayerChipRow(tvMode: Boolean, tvChips: List<PlayerChipItem>, tvChip
 @Composable
 internal fun TimePill(text: String) {
     Text(
-        text, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, fontFamily = Inter,
+        text, color = Color.White, fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold, fontFamily = Inter,
         modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(Color.Black.copy(alpha = 0.45f))
             .padding(horizontal = 10.dp, vertical = 5.dp),
     )
@@ -315,8 +270,9 @@ internal fun PlayerTopActions(
     onLock: () -> Unit,
     onBack: () -> Unit,
 ) {
+    if (isTv) return
     Row(
-        Modifier.padding(top = 14.dp, end = 14.dp),
+        Modifier.windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)).padding(top = 8.dp, end = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

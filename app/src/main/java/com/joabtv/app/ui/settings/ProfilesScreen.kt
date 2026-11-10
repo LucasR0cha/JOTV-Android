@@ -69,6 +69,17 @@ class ProfilesViewModel @Inject constructor(
 /** Círculo com a inicial na cor do perfil. Usado na grade, na barra e nas Configurações. */
 @Composable
 fun ProfileAvatar(profile: Profile, size: Dp, modifier: Modifier = Modifier) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val initialSize = with(density) { (size * 0.44f).toSp() }
+    val kidsSize = with(density) { (size * 0.13f).coerceAtLeast(7.dp).toSp() }
+    val avatarText = androidx.compose.ui.text.TextStyle(
+        fontFamily = com.joabtv.app.ui.theme.Inter,
+        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+        lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
+            alignment = androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center,
+            trim = androidx.compose.ui.text.style.LineHeightStyle.Trim.Both,
+        ),
+    )
     Box(
         modifier.size(size).clip(RoundedCornerShape(size * 0.28f))
             .background(Color(PROFILE_COLORS[profile.color.mod(PROFILE_COLORS.size)])),
@@ -76,11 +87,13 @@ fun ProfileAvatar(profile: Profile, size: Dp, modifier: Modifier = Modifier) {
     ) {
         Text(
             profile.name.trim().take(1).uppercase().ifBlank { "?" },
-            color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = (size.value * 0.44f).sp,
+            color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = initialSize,
+            lineHeight = initialSize, textAlign = TextAlign.Center, style = avatarText,
         )
         if (profile.kids && size >= 48.dp) {
             Text(
-                "KIDS", color = Color.White, fontSize = (size.value * 0.13f).coerceAtLeast(7f).sp, fontWeight = FontWeight.Black,
+                "KIDS", color = Color.White, fontSize = kidsSize, lineHeight = kidsSize,
+                fontWeight = FontWeight.Black, textAlign = TextAlign.Center, style = avatarText,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = size * 0.06f),
             )
         }
@@ -225,8 +238,9 @@ fun ProfilesScreen(
 @Composable
 private fun ProfileTile(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, avatar: @Composable () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val tileScale = androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceIn(1f, 1.5f)
     Column(
-        modifier.width(120.dp).onFocusChanged { focused = it.isFocused }
+        modifier.width(120.dp * tileScale).onFocusChanged { focused = it.isFocused }
             .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null, onClick = onClick)
             .padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -238,7 +252,8 @@ private fun ProfileTile(label: String, selected: Boolean, onClick: () -> Unit, m
         Spacer(Modifier.height(10.dp))
         Text(
             label, color = if (selected || focused) TextPrimary else TextSecondary, fontSize = 16.sp,
-            fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            fontWeight = FontWeight.Bold, lineHeight = 22.sp, maxLines = 2,
+            textAlign = TextAlign.Center, overflow = TextOverflow.Ellipsis,
         )
     }
 }

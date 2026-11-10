@@ -15,8 +15,8 @@ android {
         applicationId  = "com.joabtv.app"
         minSdk         = 23
         targetSdk      = 35
-        versionCode    = 3
-        versionName    = "1.0.2"
+        versionCode    = 8
+        versionName    = "1.0.7"
         // Chave TMDB lida de gradle property (local.properties / ~/.gradle/gradle.properties),
         // fora do VCS. Sem ela, fica vazia e o usuário informa a própria chave em Configurações.
         val tmdbKey = (project.findProperty("TMDB_API_KEY") as String?) ?: ""
@@ -61,6 +61,8 @@ android {
         compose = true
         buildConfig = true
     }
+    // Nativo do torrent comprimido no APK (sem isso o APK cresce uns 27 MB).
+    packaging { jniLibs { useLegacyPackaging = true } }
 }
 
 dependencies {
@@ -97,6 +99,8 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
+    // Capa animada (GIF) das pastas das coleções, igual ao Nuvio. Mesma versão do Coil.
+    implementation("io.coil-kt:coil-gif:2.7.0")
     // QR code da configuração de addon na TV (abre a página no celular).
     implementation("com.google.zxing:core:3.5.3")
 
@@ -126,7 +130,20 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // Fontes P2P dos addons (torrent). Nativo ARM pra celular e TV box, x86_64 só no debug (emulador).
+    implementation("org.libtorrent4j:libtorrent4j:2.1.0-39")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-39")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm:2.1.0-39")
+    debugImplementation("org.libtorrent4j:libtorrent4j-android-x86_64:2.1.0-39")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+
     testImplementation("junit:junit:4.13.2")
+    // org.json de verdade nos testes de JVM (o do Android é só casca e lança "not mocked").
+    testImplementation("org.json:json:20240303")
+    // XmlPullParser de verdade para testar o guia XMLTV fora do Android.
+    testImplementation("net.sf.kxml:kxml2:2.3.0")
+    // Nativo do Windows só pro teste do motor de torrent rodar no PC.
+    testImplementation("org.libtorrent4j:libtorrent4j-windows:2.1.0-39")
     // SQLite de verdade no teste da migração do banco (roda no PC, sem emulador).
     testImplementation("org.xerial:sqlite-jdbc:3.41.2.2")
 }

@@ -50,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -81,12 +82,16 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.joabtv.app.data.local.SubLangs
+import com.joabtv.app.data.torrent.TorrentMagnet
+import com.joabtv.app.data.torrent.Torrents
 import com.joabtv.app.ui.common.ImmersiveFullscreen
 import com.joabtv.app.ui.common.KeepScreenOn
 import com.joabtv.app.ui.theme.*
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 
 import com.joabtv.app.data.remote.SourceFacts
 import com.joabtv.app.data.remote.durationMismatch
@@ -101,6 +106,7 @@ data class MoviePlayerSource(
     val url: String,
     /** Addon de origem (nome do manifest), mostrado no seletor e no player. */
     val addon: String = "",
+    val stream: com.joabtv.app.data.remote.StremioStream? = null,
 )
 
 /** Nome amigável de uma faixa de áudio (label do stream → idioma → "Faixa N"). */
@@ -121,8 +127,12 @@ private fun audioTrackLabel(group: androidx.media3.common.Tracks.Group, index: I
 /** Fonte de mídia com DNS da Cloudflare, Referer e arquivos locais (downloads). */
 @OptIn(UnstableApi::class)
 private fun mediaSourceFactory(context: android.content.Context): DefaultMediaSourceFactory {
-    // OkHttpDataSource usa o DNS-over-HTTPS Cloudflare (AppDns.mediaClient).
-    val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(com.joabtv.app.data.remote.AppDns.mediaClient)
+    // OkHttpDataSource usa o DNS-over-HTTPS Cloudflare (AppDns.mediaClient). O torrent local tem cliente próprio.
+    val calls = object : okhttp3.Call.Factory {
+        override fun newCall(request: okhttp3.Request) =
+            (if (request.url.host == "127.0.0.1") localMediaClient else com.joabtv.app.data.remote.AppDns.mediaClient).newCall(request)
+    }
+    val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(calls)
         .setDefaultRequestProperties(STREAM_HEADERS)
     // DefaultDataSource delega file://, content:// e asset:// para as fontes locais.
     return DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(context, http))
@@ -133,9 +143,16 @@ private fun extName(src: MoviePlayerSource, title: String) =
     parseSourceLabel(src.label, src.addon, sourceQualityRank(src.label), title)
         .let { listOf(it.addon, it.server, it.language) }.filter { it.isNotBlank() }.joinToString(" · ")
 
-private fun mediaItemFor(url: String): MediaItem {
-    val b = MediaItem.Builder().setUri(url)
-    if (url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)) b.setMimeType(MimeTypes.APPLICATION_M3U8)
+// Torrent entrega o começo só depois de achar pares e baixar as primeiras peças, então espera bem mais.
+private val localMediaClient by lazy {
+    com.joabtv.app.data.remote.AppDns.mediaClient.newBuilder().readTimeout(150, java.util.concurrent.TimeUnit.SECONDS).build()
+}
+
+/** Magnet vira o endereço local do motor P2P na hora de tocar, a fonte guardada continua sendo o magnet. */
+private fun mediaItemFor(context: android.content.Context, url: String): MediaItem {
+    val play = if (TorrentMagnet.isMagnet(url)) Torrents.get(context).playUrl(url) else url
+    val b = MediaItem.Builder().setUri(play)
+    if (play.substringBefore('?').endsWith(".m3u8", ignoreCase = true)) b.setMimeType(MimeTypes.APPLICATION_M3U8)
     return b.build()
 }
 
@@ -155,6 +172,7 @@ fun MoviePlayerScreen(
     episode: Int = 0,
     episodeTotal: Int = 0,
     sources: List<MoviePlayerSource> = emptyList(),
+    television: Boolean = com.joabtv.app.ui.common.LocalIsTv.current,
     progressVm: PlayerProgressViewModel = androidx.hilt.navigation.compose.hiltViewModel(),
     episodeVm: EpisodePlayerViewModel = androidx.hilt.navigation.compose.hiltViewModel(),
 ) {
@@ -165,7 +183,7 @@ fun MoviePlayerScreen(
     val scope = rememberCoroutineScope()
     // Estado e regra do player moram na sessão. A função de tela ficou pequena e o Android volta
     // a compilar o código (antes passava do limite de instruções e rodava interpretado).
-    val forceTv = com.joabtv.app.ui.common.LocalIsTv.current
+    val forceTv = television
     val s = remember {
         PlayerSession(
             context, scope, progressVm, episodeVm,
@@ -234,9 +252,13 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
         }
     }
 
-    // Legendas externas do episódio/filme atual (só busca; fica desativada até escolher).
+    // Legendas externas do episódio ou filme atual. Episódio novo solta a legenda externa do
+    // anterior (ela não serve no outro) e devolve a escolha para o automático.
     LaunchedEffect(tmdbId, type, curSeason, curEpisode) {
+        selectedSubUrl = null
+        subPicked = false
         externalSubs = runCatching { episodeVm.subtitlesFor(tmdbId, type, curSeason, curEpisode) }.getOrDefault(emptyList())
+        pickAutoSub()
     }
     LaunchedEffect(selectedSubUrl) {
         externalCues = emptyList()
@@ -248,8 +270,35 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
     // legenda não recarrega o vídeo.
     LaunchedEffect(streamUrl) {
         val url = streamUrl ?: return@LaunchedEffect
+        playVia = ""
+        var play = url
+        if (TorrentMagnet.isMagnet(url)) {
+            // Com conta de debrid, o torrent vira link direto. Sem cache no serviço, toca por P2P.
+            val service = episodeVm.debridLabel()
+            val r = if (service != null) {
+                switching = true
+                debridStatus = "$service · preparando o link"
+                episodeVm.debridResolve(url, curSeason, curEpisode)
+            } else null
+            debridStatus = null
+            if (streamUrl != url) return@LaunchedEffect
+            if (r is com.joabtv.app.data.debrid.DebridResolve.Ok) {
+                play = r.url; playVia = "debrid"
+            } else {
+                if (r is com.joabtv.app.data.debrid.DebridResolve.NotCached && episodeVm.debridHideUncached() && !userLockedSource && nextMovieSource()) {
+                    toastMsg = "$service não tem essa fonte pronta. Tentando a próxima."
+                    return@LaunchedEffect
+                }
+                playVia = "p2p"
+                when (r) {
+                    is com.joabtv.app.data.debrid.DebridResolve.NotCached -> toastMsg = "$service não tem esse arquivo pronto. Tocando por P2P."
+                    is com.joabtv.app.data.debrid.DebridResolve.Failed -> toastMsg = "${r.message}. Tocando por P2P."
+                    else -> Unit
+                }
+            }
+        }
         try {
-            exoPlayer.setMediaSource(mediaSourceFactory(context).createMediaSource(mediaItemFor(url)))
+            exoPlayer.setMediaSource(mediaSourceFactory(context).createMediaSource(mediaItemFor(context, play)))
             exoPlayer.prepare()
             if (!didSeek && pendingSeekMs > 0) { exoPlayer.seekTo(pendingSeekMs); didSeek = true }
             // Transmitindo: mantém o player local MUDO (o Cast recebe a fonte em efeito próprio).
@@ -276,14 +325,13 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 audioGroups = tracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO && it.length > 0 }
                 textGroups = tracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT && it.length > 0 }
-                // Episódio novo com faixa de texto: se o perfil deixou a legenda ligada, liga
-                // sozinho de novo (sem isso religava a cada troca de episódio). Som externo
-                // sincronizado (selectedSubUrl) manda mais que a legenda embutida.
-                if (subtitleOn && selectedSubUrl == null && textGroups.isNotEmpty()) enableFirstTextTrack()
+                // Faixas novas (episódio ou fonte trocados). Com a legenda ligada no perfil, liga a
+                // do idioma escolhido. Escolha à mão no vídeo atual não é desfeita.
+                pickAutoSub()
             }
             // Resolução real do que está tocando (ex "1080p") — mostrada junto da fonte.
             override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) {
-                videoQualityLabel = if (size.height > 0) "${size.height}p" else ""
+                videoQualityLabel = videoResolutionLabel(size.width, size.height)
             }
         }
         exoPlayer.addListener(l); onDispose { exoPlayer.removeListener(l) }
@@ -310,7 +358,13 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
     // começando do ponto onde o local estava, e silencia o player local.
     LaunchedEffect(casting, streamUrl) {
         val cp = castPlayer ?: return@LaunchedEffect
-        val url = streamUrl
+        val src = streamUrl
+        // Torrent só vai pro Chromecast pelo link do debrid. O motor P2P roda dentro deste aparelho.
+        val url = if (TorrentMagnet.isMagnet(src)) src?.let { episodeVm.debridNow(it, curSeason, curEpisode) } else src
+        if (casting && TorrentMagnet.isMagnet(src) && url == null) {
+            toastMsg = "Fonte P2P não vai pro Chromecast. Escolha outra fonte ou pare de transmitir."
+            return@LaunchedEffect
+        }
         if (casting && url != null) {
             val start = runCatching { exoPlayer.currentPosition }.getOrDefault(0L)
                 .let { if (it > 0) it else pendingSeekMs }.coerceAtLeast(0L)
@@ -446,7 +500,13 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
-    DisposableEffect(Unit) { onDispose { extSync?.release(); exoPlayer.release(); mediaSession.release(); ScrubThumbnailer.release() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            extSync?.release(); exoPlayer.release(); mediaSession.release(); ScrubThumbnailer.release()
+            // Saiu do player, o aparelho para de baixar e de compartilhar o torrent.
+            Torrents.ifStarted()?.let { e -> Thread { e.stopAll() }.start() }
+        }
+    }
 
     // Registra o gatilho de PiP enquanto houver fonte tocando no ExoPlayer.
     DisposableEffect(streamUrl) {
@@ -528,6 +588,29 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
         movieStarted = false
         val u = streamUrl ?: return@LaunchedEffect
         triedUrls += u
+        if (TorrentMagnet.isMagnet(u)) {
+            // Espera o debrid decidir entre link direto e P2P antes de contar o tempo.
+            var w = 0L
+            while (playVia == "" && streamUrl == u && w < 40_000) { delay(250); w += 250 }
+            if (movieStarted || streamUrl != u) return@LaunchedEffect
+        }
+        if (TorrentMagnet.isMagnet(u) && playVia != "debrid") {
+            // P2P precisa achar pares e baixar o começo. Desiste aos 45 s só se nunca apareceu par nem
+            // metadado (torrent morto). Achou alguém, espera até 2 min, pares caem e voltam no começo.
+            var waited = 0L
+            var alive = false
+            while (waited < 120_000) {
+                delay(5_000); waited += 5_000
+                if (movieStarted || streamUrl != u) return@LaunchedEffect
+                val st = Torrents.ifStarted()?.status(u)
+                if (st != null && (st.peers > 0 || st.hasMetadata)) alive = true
+                if (waited >= 45_000 && !alive) break
+            }
+            if (movieStarted || streamUrl != u) return@LaunchedEffect
+            if (userLockedSource) sourceFailed = true
+            else if (!nextMovieSource(slow = true)) sourceFailed = true
+            return@LaunchedEffect
+        }
         val hasMirror = !userLockedSource && sameMirror(facts(), currentSourceIdx, triedUrls) >= 0
         kotlinx.coroutines.delay(if (hasMirror) 5_000 else 12_000)
         if (movieStarted || streamUrl != u) return@LaunchedEffect
@@ -595,12 +678,17 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
     LaunchedEffect(buffering, streamUrl) {
         if (!buffering || streamUrl == null) return@LaunchedEffect
         val u = streamUrl
-        val startPos = position
-        kotlinx.coroutines.delay(12_000)
-        // Ainda travando na mesma fonte e sem progredir → troca (ou avisa, se travada à mão).
-        if (buffering && streamUrl == u && position <= startPos + 500) {
+        val p2p = TorrentMagnet.isMagnet(u) && playVia != "debrid"
+        var startPos = position
+        while (true) {
+            kotlinx.coroutines.delay(if (p2p) 30_000 else 12_000)
+            if (!buffering || streamUrl != u || position > startPos + 500) return@LaunchedEffect
+            // P2P que ainda recebe dado num ritmo razoável segue esperando em vez de trocar.
+            if (p2p && (Torrents.ifStarted()?.status(u)?.downloadBps ?: 0) > 64_000) { startPos = position; continue }
+            // Ainda travando na mesma fonte e sem progredir → troca (ou avisa, se travada à mão).
             if (userLockedSource) sourceFailed = true
             else if (!nextMovieSource(slow = true)) sourceFailed = true
+            return@LaunchedEffect
         }
     }
     // Todas as fontes falharam → avisa e volta ao detalhe (não deixa preso no preto).
@@ -676,7 +764,14 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                             panelActions.getOrNull(sourcePanelIdx)?.let { it.onRun(); if (!it.keepOpen) sourcePanelOpen = false }; true
                         }
-                        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { sourcePanelOpen = false; true }
+                        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            if (panelKind == "episodes" && sourcePanelIdx == 0 && numSeasons > 1) {
+                                val step = if (kc == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1
+                                selectPanelSeason((panelSeason + step - 1 + numSeasons) % numSeasons + 1)
+                            } else if (kc == KeyEvent.KEYCODE_DPAD_LEFT) sourcePanelOpen = false
+                            true
+                        }
+                        KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { sourcePanelOpen = false; true }
                         else -> true
                     }
                 }
@@ -749,6 +844,8 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                     },
                     update = {
                         it.resizeMode = screenModes[screenModeIdx].second
+                        it.scaleX = if (screenModeIdx == 2) 1.33f else 1f
+                        it.scaleY = if (screenModeIdx == 2) 1.33f else 1f
                         // Legenda embutida segue o tamanho e o fundo escolhidos.
                         it.subtitleView?.apply {
                             setFractionalTextSize(androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * subSize)
@@ -761,7 +858,7 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                             ))
                         }
                     },
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().clipToBounds(),
                 )
 
                 // Legenda externa desenhada aqui, com o atraso escolhido.
@@ -806,10 +903,13 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                     }
                 }
 
+                val p2pText = rememberP2pStatus(if (playVia == "p2p") streamUrl else null, buffering || switching)
+                val p2pStatus = debridStatus ?: p2pText
                 if (buffering || switching) {
                     PlayerLoadingOverlay(
                         bannerUrl = metaBg.ifBlank { backdropUrl }, logoUrl = logoUrl, posterUrl = posterUrl, title = title,
                         episodeLine = if (type == "SERIES" && curEpisode > 0) "T$curSeason · E$curEpisode" else null,
+                        status = p2pStatus,
                     )
                 }
 
@@ -832,13 +932,13 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                         title = displayTitle,
                         clock = clockLine(System.currentTimeMillis(), position, duration, speeds[speedIdx]),
                         // Info da fonte no player: ADDON · fonte · qualidade detectada.
-                        subtitle = remember(currentSourceIdx, currentSourceLabel, currentSources, videoQualityLabel) {
+                        subtitle = remember(currentSourceIdx, currentSourceLabel, currentSources, title) {
                             val src = currentSources.getOrNull(currentSourceIdx)
-                            listOfNotNull(
-                                src?.addon?.takeIf { it.isNotBlank() },
-                                currentSourceLabel.takeIf { it.isNotBlank() },
-                                videoQualityLabel.takeIf { it.isNotBlank() },
-                            ).joinToString("  ·  ")
+                            if (src != null) {
+                                val info = releaseInfo(src.stream ?: com.joabtv.app.data.remote.StremioStream(src.label, src.url, src.addon), title)
+                                listOf(src.addon, info.server).filter { it.isNotBlank() }.distinct().joinToString("  ·  ")
+                            } else
+                            currentSourceLabel
                         },
                         isPlaying = isPlaying,
                         position = position,
@@ -860,44 +960,20 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                         // Barra de chips por D-pad: realçada na TV OU sempre que estiver focada
                         // (controle em device comum). Só volta pros chips de toque fora do modo chip.
                         isTv = isTv,
-                        tvMode = isTv || chipFocused,
                         tvChips = tvChips,
                         tvChipIdx = if (chipFocused) chipIdx else -1,
-                        chips = {
-                            // ZOOM (modo de tela)
-                            PlayerChip(Icons.Default.AspectRatio, "Zoom") {
-                                screenModeIdx = (screenModeIdx + 1) % screenModes.size
-                                gestureHud = screenModes[screenModeIdx].first to 1f
-                            }
-                            // VELOCIDADE
-                            PlayerChip(Icons.Default.Speed, if (speeds[speedIdx] == 1f) "1x" else "${speeds[speedIdx]}x") {
-                                speedIdx = (speedIdx + 1) % speeds.size
-                                runCatching { currentPlayer().setPlaybackSpeed(speeds[speedIdx]) }
-                            }
-                            // LEGENDAS e ÁUDIO abrem o mesmo painel lateral da TV.
-                            if (subActions.isNotEmpty()) {
-                                val on = subtitleOn || selectedSubUrl != null
-                                PlayerChip(if (on) Icons.Default.ClosedCaption else Icons.Default.ClosedCaptionOff, "Legendas", active = on) { openDpadPanel("subs") }
-                            }
-                            if (audioGroups.size > 1 || currentSources.size > 1)
-                                PlayerChip(Icons.Default.Audiotrack, "Áudio", active = extUrl != null) { openDpadPanel("audio") }
-                            // FONTES
-                            if (currentSources.size > 1) {
-                                PlayerChip(Icons.Default.SwapHoriz, "Fontes") { sourcePanelOpen = true }
-                                // Fixa a fonte atual. Ligado, nada de troca automática por lentidão.
-                                PlayerChip(Icons.Default.PushPin, if (pinnedSource) "Fixa" else "Fixar", active = pinnedSource) {
-                                    pinnedSource = !pinnedSource
-                                    userLockedSource = pinnedSource
-                                    toastMsg = if (pinnedSource)
-                                        "Fonte fixada. O player não troca sozinho, nem se demorar pra carregar."
-                                    else
-                                        "Fonte solta. Volta a trocar sozinha quando a atual falhar."
-                                }
-                            }
-                            // EPISÓDIOS (séries)
-                            if (type == "SERIES" && curEpisode > 1) PlayerChip(Icons.Default.SkipPrevious, "Anterior") { playPrevEpisode() }
-                            if (hasNextEpisode) PlayerChip(Icons.Default.SkipNext, "Próximo") { playNextEpisode() }
-                        },
+                        resolution = videoQualityLabel,
+                        formatTags = currentSources.getOrNull(currentSourceIdx)?.let { source ->
+                            releaseInfo(source.stream ?: com.joabtv.app.data.remote.StremioStream(source.label, source.url, source.addon), title).tags
+                        }.orEmpty(),
+                        playbackInfo = listOf(
+                            if (extUrl != null) "Som de outra fonte" else audioGroups.indexOfFirst { it.isSelected }
+                                .takeIf { it >= 0 }?.let { audioTrackLabel(audioGroups[it], it) }
+                                .orEmpty().takeUnless { it.equals("UND", true) }.orEmpty(),
+                            screenModes[screenModeIdx].first, playbackSpeedText(speeds[speedIdx]),
+                        ).filter { it.isNotBlank() }.joinToString("  ·  "),
+                        buffered = currentPlayer().bufferedPosition,
+
                     )
                 }
 
@@ -981,6 +1057,7 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                 movieTitle = title,
                 onPick = { act -> act.onRun(); if (!act.keepOpen) sourcePanelOpen = false },
                 onDismiss = { sourcePanelOpen = false },
+                television = isTv,
             )
         }
     }
@@ -1023,8 +1100,8 @@ internal class PlayerSession(
     // Abre LIMPO (sem controles) — mostra logo + animação de carregamento; controles só ao mexer.
     var controlsVisible by run { mutableStateOf(false) }
     // Velocidade de reprodução (chip "1x") — cicla 1x/1.25x/1.5x/2x.
-    val speeds get() = listOf(1f, 1.25f, 1.5f, 2f)
-    var speedIdx by run { mutableIntStateOf(0) }
+    val speeds get() = PLAYBACK_SPEEDS
+    var speedIdx by run { mutableIntStateOf(PLAYBACK_SPEEDS.indexOf(1f)) }
     var didSeek by run { mutableStateOf(false) }
     // Posição a retomar (continuar OU ao trocar de fonte mantém o tempo)
     var pendingSeekMs by run { mutableLongStateOf(startPositionMs) }
@@ -1039,6 +1116,11 @@ internal class PlayerSession(
     var chipIdx by run { mutableIntStateOf(0) }
     // Tipo do painel D-pad aberto: "sources" | "subs" | "audio".
     var panelKind by run { mutableStateOf("sources") }
+    var panelSeason by mutableIntStateOf(season.coerceAtLeast(1))
+    var panelEpisodes by mutableStateOf<List<com.joabtv.app.domain.model.EpisodeItem>>(emptyList())
+    var panelEpisodesLoading by mutableStateOf(false)
+    private var episodePanelJob: kotlinx.coroutines.Job? = null
+    private var sourceLimit by mutableIntStateOf(30)
     var currentSources by run { mutableStateOf(sources) }
     var currentSourceLabel by run { mutableStateOf(sources.firstOrNull { it.url == embedUrl }?.label ?: "Fonte") }
     // Preferência de fonte que ATRAVESSA episódio e temporada.
@@ -1088,6 +1170,10 @@ internal class PlayerSession(
     var toastMsg by run { mutableStateOf("") }          // aviso curto (ex "Abertura marcada")
     // Trocando de episódio/temporada: mostra o loading NA HORA, sem ficar preso na cena anterior.
     var switching by run { mutableStateOf(false) }
+    // Torrent tocando por onde. "" ainda decidindo, "debrid" link direto do serviço, "p2p" motor do aparelho.
+    var playVia by run { mutableStateOf("") }
+    // Texto do carregando enquanto o debrid prepara o link.
+    var debridStatus by run { mutableStateOf<String?>(null) }
     // Episódio cujo SUCESSOR já foi pré-carregado (1x por episódio).
     var prefetchedEp by run { mutableIntStateOf(-1) }
     // Auto-fallback de FONTE (filme): fonte direta com erro OU que não inicia → tenta a próxima.
@@ -1119,9 +1205,14 @@ internal class PlayerSession(
     // Faixas de áudio/legenda do vídeo atual
     var audioGroups by run { mutableStateOf<List<androidx.media3.common.Tracks.Group>>(emptyList()) }
     var textGroups by run { mutableStateOf<List<androidx.media3.common.Tracks.Group>>(emptyList()) }
-    // Nasce com o que o perfil deixou ligado da última vez (lembra entre episódios e sessões).
-    var subtitleOn by run { mutableStateOf(progressVm.subtitleOn) }
-    // Legendas EXTERNAS (OpenSubtitles) — desativadas por padrão (selectedSubUrl = null).
+    // Faixa de legenda do vídeo ligada agora. Quem decide se a legenda abre ligada é subWanted.
+    var subtitleOn by run { mutableStateOf(false) }
+    // Preferência do perfil (Ajustes, Legenda ao abrir), lembrada entre episódios e sessões, e o
+    // idioma em que a legenda liga sozinha. subPicked marca escolha à mão no vídeo atual.
+    var subWanted by run { mutableStateOf(progressVm.subtitleOn) }
+    val subLang = progressVm.subLang
+    var subPicked by run { mutableStateOf(false) }
+    // Legendas externas (OpenSubtitles e addons). Ligam sozinhas quando são a melhor no idioma.
     var externalSubs by run { mutableStateOf<List<com.joabtv.app.data.remote.ExternalSub>>(emptyList()) }
     var selectedSubUrl by run { mutableStateOf<String?>(null) }
     // Falas da legenda externa escolhida. O player desenha a fala por cima do vídeo, o que deixa
@@ -1148,10 +1239,9 @@ internal class PlayerSession(
     val screenModes = run {
         listOf(
             "Ajustar" to AspectRatioFrameLayout.RESIZE_MODE_FIT,
-            "Esticar" to AspectRatioFrameLayout.RESIZE_MODE_FILL,
             "Preencher" to AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
-            "Original" to AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH,
-            "16:9" to AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT,
+            "Zoom" to AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
+            "Esticar" to AspectRatioFrameLayout.RESIZE_MODE_FILL,
         )
     }
     var screenModeIdx by run { mutableIntStateOf(0) }
@@ -1173,8 +1263,8 @@ internal class PlayerSession(
                 .setHandleAudioBecomingNoisy(true)
                 .build().apply {
                     playWhenReady = true
-                    // Legenda: só começa desativada se o perfil não tinha deixado ligada da
-                    // última vez (subtitleOn já nasce com esse valor, ver propriedade abaixo).
+                    // Legenda: começa desligada e pickAutoSub liga a do idioma do perfil quando
+                    // ele deixou a legenda ligada (subWanted).
                     // Áudio: prefere português quando o arquivo trouxer mais de uma faixa.
                     trackSelectionParameters = trackSelectionParameters.buildUpon()
                         .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, !subtitleOn)
@@ -1208,28 +1298,44 @@ internal class PlayerSession(
             .setOverrideForType(androidx.media3.common.TrackSelectionOverride(g.mediaTrackGroup, 0))
             .build()
     }
-    // Liga a 1ª faixa de texto embutida sem mexer no estado subtitleOn (usado tanto pelo toque
-    // manual quanto pra restaurar sozinho a legenda que o perfil deixou ligada no episódio novo).
-    fun enableFirstTextTrack() {
-        val g = textGroups.firstOrNull() ?: return
+    fun enableTextGroup(g: androidx.media3.common.Tracks.Group) {
         exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false)
             .setOverrideForType(androidx.media3.common.TrackSelectionOverride(g.mediaTrackGroup, 0))
             .build()
     }
-    // Liga/desliga legenda (usa a 1ª faixa de texto). Escolha à mão vira a preferência do
-    // perfil, pro próximo episódio/sessão já abrir do mesmo jeito.
-    fun toggleSubtitle() {
-        if (subtitleOn) {
-            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
-                .build()
-            subtitleOn = false
-        } else if (textGroups.isNotEmpty()) {
-            enableFirstTextTrack()
+    fun disableText() {
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
+            .build()
+    }
+    // Legenda que liga sozinha quando o perfil deixou a legenda ligada. A ordem está em
+    // SubLangs.choose (faixa do vídeo e externa no idioma do perfil, depois o idioma vizinho).
+    // Escolha à mão no vídeo atual manda, e idioma que a pessoa não escolheu não liga.
+    fun pickAutoSub() {
+        if (!subWanted || subPicked) return
+        val pick = SubLangs.choose(textGroups.map { it.getTrackFormat(0).language }, externalSubs.map { it.lang }, subLang) ?: return
+        if (pick.embedded) {
+            selectedSubUrl = null
+            enableTextGroup(textGroups[pick.index])
             subtitleOn = true
+        } else {
+            if (subtitleOn) disableText()
+            subtitleOn = false
+            selectedSubUrl = externalSubs[pick.index].url
         }
-        progressVm.subtitleOn = subtitleOn
+    }
+    // Escolha à mão. Vale para o vídeo atual e vira a preferência do perfil (ligada ou não), para
+    // o próximo episódio e a próxima sessão abrirem do mesmo jeito.
+    fun pickSub(g: androidx.media3.common.Tracks.Group?, ext: com.joabtv.app.data.remote.ExternalSub?) {
+        subPicked = true
+        when {
+            g != null -> { selectedSubUrl = null; enableTextGroup(g); subtitleOn = true }
+            ext != null -> { if (subtitleOn) disableText(); subtitleOn = false; selectedSubUrl = ext.url }
+            else -> { disableText(); subtitleOn = false; selectedSubUrl = null }
+        }
+        subWanted = g != null || ext != null
+        progressVm.subtitleOn = subWanted
     }
 
     // ── Som de outra fonte ──
@@ -1251,7 +1357,7 @@ internal class PlayerSession(
                 .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
                 .setPreferredAudioLanguage("pt")
                 .build()
-            setMediaItem(mediaItemFor(src.url))
+            setMediaItem(mediaItemFor(context, src.url))
         }
         extUrl = src.url
         extSync = ExtAudioSync(
@@ -1335,8 +1441,8 @@ internal class PlayerSession(
         // switching continua true até o ExoPlayer chegar em STATE_READY (sem piscada da cena velha).
     }
 
-    fun goToEpisode(target: Int) {
-        if (type != "SERIES" || target < 1) return
+    fun goToEpisode(target: Int, targetSeason: Int = curSeason) {
+        if (type != "SERIES" || target < 1 || targetSeason < 1 || switching) return
         // Salva o progresso do episódio ATUAL antes de trocar (senão perde a posição ao avançar).
         val savePos = position.coerceAtLeast(0L)
         if (savePos > 0) {
@@ -1347,12 +1453,12 @@ internal class PlayerSession(
         controlsVisible = true
         switching = true         // feedback imediato na tela
         // 0) PRÉ-CARREGADO no meio do episódio anterior → troca sem rede nenhuma.
-        val cached = episodeVm.cachedEpisodeSources(tmdbId, curSeason, target)
+        val cached = episodeVm.cachedEpisodeSources(tmdbId, targetSeason, target)
         if (cached != null) {
-            applyEpisodeSources(cached, cached.let { pickPreferredSource(it, preferredAddon, preferredQuality) }, target, curSeason)
+            applyEpisodeSources(cached, cached.let { pickPreferredSource(it, preferredAddon, preferredQuality) }, target, targetSeason)
             return
         }
-        val season = curSeason
+        val season = targetSeason
         scope.launch {
             // 1) Streams Stremio do novo episódio, TOCANDO NO PRIMEIRO ADDON QUE RESPONDER.
             var started = false
@@ -1376,29 +1482,8 @@ internal class PlayerSession(
     // Próxima TEMPORADA: episódio 1 da temporada seguinte (mesma fonte quando existir).
     fun goToNextSeason() {
         if (type != "SERIES" || !hasNextSeason) return
-        saveNow(); showNextPrompt = false; userLockedSource = pinnedSource; controlsVisible = true
-        switching = true
-        val nextS = curSeason + 1
-        val cached = episodeVm.cachedEpisodeSources(tmdbId, nextS, 1)
-        if (cached != null) {
-            applyEpisodeSources(cached, cached.let { pickPreferredSource(it, preferredAddon, preferredQuality) }, 1, nextS)
-            return
-        }
-        scope.launch {
-            var started = false
-            episodeVm.stremioEpisodeSourcesProgressive(tmdbId, nextS, 1) { partial ->
-                if (partial.isEmpty()) return@stremioEpisodeSourcesProgressive
-                if (!started) {
-                    started = true
-                    applyEpisodeSources(partial, partial.let { pickPreferredSource(it, preferredAddon, preferredQuality) }, 1, nextS)
-                } else {
-                    val playingUrl = currentSources.getOrNull(currentSourceIdx)?.url
-                    currentSources = partial
-                    currentSourceIdx = partial.indexOfFirst { it.url == playingUrl }.coerceAtLeast(0)
-                }
-            }
-            if (!started) { switching = false; sourceFailed = true }
-        }
+        showNextPrompt = false
+        goToEpisode(1, curSeason + 1)
     }
     // Aplica a fonte no índice dado (identidade por ÍNDICE, não por label — labels se repetem,
     // e resolver por label causava troca infinita / duas fontes "ativas" ao mesmo tempo).
@@ -1438,6 +1523,7 @@ internal class PlayerSession(
         SourceFacts(
             s.url, s.addon, s.label, sourceQualityRank(s.label), p,
             wrongTitle = s.url in wrongUrls || (p != null && durationMismatch(runtimeMin, p.sec)),
+            debrid = if (episodeVm.debridCached(s.url) == true) 2 else 0,
         )
     }
 
@@ -1473,19 +1559,35 @@ internal class PlayerSession(
     fun playPrevEpisode() { if (type == "SERIES" && curEpisode > 1) goToEpisode(curEpisode - 1) }
 
     // Painel D-pad separado por tipo: "sources" (fontes+episódios), "subs" (legendas), "audio".
-    val sourceActions: List<TvPlayerAction> get() = buildList {
-        if (type == "SERIES" && hasNextEpisode) add(TvPlayerAction("▶  Próximo episódio", false, false) { playNextEpisode() })
-        if (type == "SERIES" && curEpisode > 1) add(TvPlayerAction("◀  Episódio anterior", false, false) { playPrevEpisode() })
-        currentSources.forEachIndexed { idx, src ->
-            add(TvPlayerAction(src.label, true, idx == currentSourceIdx, addon = src.addon) { applyMovieSource(idx, manual = true) })
+    val sourceActions: List<TvPlayerAction> get() {
+        val playing = currentSources.getOrNull(currentSourceIdx)?.url
+        val groups = groupReleases(currentSources.map { it.stream ?: com.joabtv.app.data.remote.StremioStream(it.label, it.url, it.addon,
+            qualityRank = com.joabtv.app.data.remote.qualityRankOf(it.label)) })
+            .sortedByDescending { g -> g.members.any { it.url == playing } }
+        return buildList {
+            groups.take(sourceLimit).forEach { group ->
+                val active = group.members.any { it.url == playing }
+                val src = group.members.firstOrNull { it.url == playing } ?: group.lead
+                add(TvPlayerAction(src.label, true, active, addon = src.addon, stream = src,
+                    providers = group.members.map { it.addon }.distinct()) {
+                    if (!active) applyMovieSource(currentSources.indexOfFirst { it.url == src.url }, manual = true)
+                })
+            }
+            if (groups.size > sourceLimit) add(TvPlayerAction("Mostrar mais", false, false,
+                sub = "${groups.size - sourceLimit} versões", keepOpen = true) { sourceLimit += 30 })
         }
     }
     val subActions: List<TvPlayerAction> get() = buildList {
         if (textGroups.isNotEmpty() || externalSubs.isNotEmpty()) {
-            add(TvPlayerAction("Desativada", false, selectedSubUrl == null && !subtitleOn) { selectedSubUrl = null; if (subtitleOn) toggleSubtitle() })
-            if (textGroups.isNotEmpty()) add(TvPlayerAction("Embutida", false, subtitleOn) { selectedSubUrl = null; if (!subtitleOn) toggleSubtitle() })
-            externalSubs.forEach { sub ->
-                add(TvPlayerAction(sub.label, false, selectedSubUrl == sub.url) { if (subtitleOn) toggleSubtitle(); selectedSubUrl = sub.url })
+            add(TvPlayerAction("Desativada", false, selectedSubUrl == null && !subtitleOn) { pickSub(null, null) })
+            // Cada faixa do vídeo com o nome do idioma, a do idioma do perfil primeiro.
+            textGroups.sortedBy { SubLangs.rank(it.getTrackFormat(0).language, subLang) }.forEachIndexed { i, g ->
+                val f = g.getTrackFormat(0)
+                val name = f.label?.takeIf { it.isNotBlank() } ?: SubLangs.label(f.language)
+                add(TvPlayerAction(name, false, subtitleOn && g.isSelected, header = if (i == 0) "No vídeo" else "") { pickSub(g, null) })
+            }
+            externalSubs.forEachIndexed { i, sub ->
+                add(TvPlayerAction(sub.label, false, selectedSubUrl == sub.url, header = if (i == 0) "Legendas externas" else "") { pickSub(null, sub) })
             }
             // Ajustes no fim da lista, sempre na mesma ordem, para nada pular de lugar ao tocar.
             add(TvPlayerAction("Tamanho", false, false, sub = subSizeLabel(subSize), header = "Ajustes", keepOpen = true) {
@@ -1522,7 +1624,7 @@ internal class PlayerSession(
             }
             add(TvPlayerAction(
                 src.label, true, ext == src.url, addon = src.addon, sub = sub, disabled = why.isNotBlank(), keepOpen = true,
-                header = if (i == 0) "Som de outra fonte (a imagem continua a atual)" else "",
+                header = if (i == 0) "Som de outra fonte (a imagem continua a atual)" else "", stream = src.stream,
             ) {
                 if (why.isNotBlank()) { toastMsg = why; return@TvPlayerAction }
                 if (ext == src.url) return@TvPlayerAction
@@ -1538,45 +1640,107 @@ internal class PlayerSession(
             sub = audioDelayLabel(audioDelay) + "  ·  o filme continua tocando",
         ) { syncBarOpen = true; controlsVisible = false })
     }
-    // Lista exibida no painel conforme o tipo aberto.
-    val panelActions get() = when (panelKind) { "subs" -> subActions; "audio" -> audioActions; else -> sourceActions }
-    val panelTitle get() = when (panelKind) { "subs" -> "Legendas"; "audio" -> "Áudio"; else -> "Fontes e episódios" }
+    val speedActions get() = speeds.mapIndexed { i, speed ->
+        TvPlayerAction(playbackSpeedText(speed), false, i == speedIdx,
+            sub = if (speed == 1f) "Velocidade normal" else if (speed < 1f) "Mais devagar" else "Mais rápido") {
+            speedIdx = i
+            runCatching { currentPlayer().setPlaybackSpeed(speed) }
+        }
+    }
+    val screenActions get() = screenModes.mapIndexed { i, mode ->
+        val descriptions = listOf("Mantém a proporção do vídeo", "Ocupa a tela cortando as bordas", "Aproxima a imagem em 33%", "Ocupa a tela alterando a proporção")
+        TvPlayerAction(mode.first, false, i == screenModeIdx, sub = descriptions[i]) { screenModeIdx = i }
+    }
 
-    // Chips da barra inferior navegáveis por D-pad (TV). Zoom/Velocidade ciclam no lugar;
-    // Legendas/Áudio/Fontes abrem o painel D-pad DO SEU TIPO (separados, não misturados).
-    fun openDpadPanel(kind: String) { panelKind = kind; chipFocused = false; sourcePanelIdx = 0; sourcePanelOpen = true }
-    val tvChips: List<PlayerChipItem> get() = buildList {
-        add(PlayerChipItem(Icons.Default.AspectRatio, "Zoom") {
-            screenModeIdx = (screenModeIdx + 1) % screenModes.size
-            gestureHud = screenModes[screenModeIdx].first to 1f
+    fun selectPanelSeason(target: Int) {
+        if (target < 1 || (numSeasons > 0 && target > numSeasons)) return
+        if (target == panelSeason && panelEpisodesLoading) return
+        episodePanelJob?.cancel()
+        panelSeason = target
+        panelEpisodes = emptyList()
+        panelEpisodesLoading = true
+        sourcePanelIdx = 0
+        episodePanelJob = scope.launch {
+            val episodes = episodeVm.seasonEpisodes(tmdbId, target)
+            coroutineContext.ensureActive()
+            if (panelSeason == target) { panelEpisodes = episodes; panelEpisodesLoading = false }
+        }
+    }
+
+    val episodeActions: List<TvPlayerAction> get() = buildList {
+        add(TvPlayerAction("Temporada $panelSeason", false, false, keepOpen = true,
+            seasonTabs = (1..numSeasons.coerceAtLeast(panelSeason)).toList(), selectedSeason = panelSeason,
+            onSeasonPick = ::selectPanelSeason) {
+            selectPanelSeason(panelSeason % numSeasons.coerceAtLeast(1) + 1)
         })
-        add(PlayerChipItem(Icons.Default.Speed, if (speeds[speedIdx] == 1f) "1x" else "${speeds[speedIdx]}x") {
-            speedIdx = (speedIdx + 1) % speeds.size
-            runCatching { exoPlayer.setPlaybackSpeed(speeds[speedIdx]) }
-        })
-        if (subActions.isNotEmpty())
-            add(PlayerChipItem(Icons.Default.ClosedCaption, "Legendas") { openDpadPanel("subs") })
-        if (audioGroups.size > 1 || currentSources.size > 1)
-            add(PlayerChipItem(Icons.Default.Audiotrack, if (extUrl != null) "Som de outra fonte" else "Áudio") { openDpadPanel("audio") })
-        if (currentSources.size > 1) {
-            add(PlayerChipItem(Icons.Default.SwapHoriz, "Fontes") { openDpadPanel("sources") })
-            add(PlayerChipItem(Icons.Default.PushPin, if (pinnedSource) "Fonte fixa" else "Fixar fonte") {
-                pinnedSource = !pinnedSource
-                userLockedSource = pinnedSource
-                toastMsg = if (pinnedSource)
-                    "Fonte fixada. O player não troca sozinho, nem se demorar pra carregar."
-                else
-                    "Fonte solta. Volta a trocar sozinha quando a atual falhar."
+        if (panelEpisodesLoading) add(TvPlayerAction("Carregando episódios…", false, false, keepOpen = true) {})
+        else if (panelEpisodes.isEmpty()) add(TvPlayerAction("Não foi possível carregar a temporada", false, false,
+            sub = "Selecione para tentar novamente", keepOpen = true) { selectPanelSeason(panelSeason) })
+        else panelEpisodes.forEach { ep ->
+            val current = panelSeason == curSeason && ep.episodeNumber == curEpisode
+            val future = ep.airDate.isNotBlank() && ep.airDate > com.joabtv.app.data.local.dayString()
+            add(TvPlayerAction(ep.name.ifBlank { "Episódio ${ep.episodeNumber}" }, false, current,
+                sub = listOf("T$panelSeason E${ep.episodeNumber}", ep.runtimeMin.takeIf { it > 0 }?.let { "$it min" },
+                    ep.rating.takeIf { it > 0 }?.let { "★ " + com.joabtv.app.ui.common.ratingText(it) },
+                    if (future) "Em breve" else if (current) "Tocando agora" else null).filterNotNull().joinToString(" · "),
+                image = ep.stillUrl.ifBlank { backdropUrl }.ifBlank { posterUrl }, detail = ep.overview,
+                episode = true, disabled = future, keepOpen = future) {
+                if (!future && !current) goToEpisode(ep.episodeNumber, panelSeason)
             })
         }
-        if (type == "SERIES" && curEpisode > 1)
-            add(PlayerChipItem(Icons.Default.SkipPrevious, "Anterior") { playPrevEpisode() })
-        if (hasNextEpisode)
-            add(PlayerChipItem(Icons.Default.SkipNext, "Próximo") { playNextEpisode() })
-        // Pular abertura pelo D-pad (na TV o botão flutuante não recebe foco).
+    }
+
+    val panelActions get() = when (panelKind) {
+        "subs" -> subActions
+        "audio" -> audioActions
+        "speed" -> speedActions
+        "screen" -> screenActions
+        "episodes" -> episodeActions
+        else -> sourceActions
+    }
+    val panelTitle get() = when (panelKind) {
+        "subs" -> "Legendas"
+        "audio" -> "Áudio"
+        "speed" -> "Velocidade"
+        "screen" -> "Tela"
+        "episodes" -> "Episódios"
+        else -> "Fontes"
+    }
+
+    fun openDpadPanel(kind: String) {
+        panelKind = kind
+        chipFocused = false
+        sourcePanelIdx = 0
+        sourcePanelOpen = true
+        if (kind == "sources") sourceLimit = 30
+        if (kind == "episodes") selectPanelSeason(curSeason.coerceAtLeast(1))
+    }
+    val tvChips: List<PlayerChipItem> get() = buildList {
+        add(PlayerChipItem(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+            if (isPlaying) "Pausar" else "Assistir", main = true) { togglePlay() })
+        if (subActions.isNotEmpty()) add(PlayerChipItem(WebPlayerIcons.Subtitles, "Legendas", active = subtitleOn || selectedSubUrl != null) { openDpadPanel("subs") })
+        if (audioGroups.size > 1 || currentSources.size > 1)
+            add(PlayerChipItem(WebPlayerIcons.Audio, if (extUrl != null) "Som de outra fonte" else "Áudio", active = extUrl != null) { openDpadPanel("audio") })
+        if (currentSources.size > 1) add(PlayerChipItem(WebPlayerIcons.Sources, "Fontes") { openDpadPanel("sources") })
+        if (type == "SERIES") {
+            add(PlayerChipItem(WebPlayerIcons.Episodes, "Episódios") { openDpadPanel("episodes") })
+            if (curEpisode > 1) add(PlayerChipItem(WebPlayerIcons.Previous, "Anterior") { playPrevEpisode() })
+            if (hasNextEpisode || hasNextSeason) add(PlayerChipItem(WebPlayerIcons.Next, "Próximo") {
+                if (hasNextEpisode) playNextEpisode() else goToNextSeason()
+            })
+        }
+        add(PlayerChipItem(WebPlayerIcons.Screen, "Tela ${screenModes[screenModeIdx].first.lowercase()}", active = screenModeIdx > 0) { openDpadPanel("screen") })
+        val speed = speeds[speedIdx]
+        add(PlayerChipItem(WebPlayerIcons.Speed, "Velocidade ${playbackSpeedText(speed)}", active = speed != 1f,
+            value = if (speed != 1f) playbackSpeedText(speed) else "") { openDpadPanel("speed") })
+        if (currentSources.size > 1) add(PlayerChipItem(WebPlayerIcons.Pin, if (pinnedSource) "Fonte fixa" else "Fixar fonte", active = pinnedSource) {
+            pinnedSource = !pinnedSource
+            userLockedSource = pinnedSource
+            toastMsg = if (pinnedSource) "Fonte fixada. O player não troca sozinho." else "Fonte solta. Volta a trocar quando a atual falhar."
+        })
         introMark?.let { (_, end) ->
             if (type == "SERIES" && introSkippedEp != curEpisode && position < end - 1_000L)
-                add(PlayerChipItem(Icons.Default.FastForward, "Abertura") {
+                add(PlayerChipItem(WebPlayerIcons.Skip, "Pular abertura") {
                     currentPlayer().seekTo(end); position = end; introSkippedEp = curEpisode
                 })
         }
@@ -1585,18 +1749,7 @@ internal class PlayerSession(
 }
 
 /** Faixa de qualidade a partir do rótulo da fonte (2160 = 4K). 0 = não dá pra saber. */
-internal fun sourceQualityRank(label: String): Int {
-    val t = label.lowercase()
-    return when {
-        "2160" in t || "4k" in t || "uhd" in t -> 2160
-        "1440" in t || "2k" in t -> 1440
-        "1080" in t || "fhd" in t -> 1080
-        "720" in t -> 720
-        "480" in t -> 480
-        "hd" in t -> 720
-        else -> 0
-    }
-}
+internal fun sourceQualityRank(label: String): Int = com.joabtv.app.data.remote.qualityRankOf(label)
 
 /**
  * Índice da fonte que melhor corresponde à preferência do usuário numa lista NOVA

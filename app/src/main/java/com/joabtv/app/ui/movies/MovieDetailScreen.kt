@@ -73,6 +73,7 @@ private fun fmtIsoDateMobile(iso: String): String {
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 fun MovieDetailScreen(
     item: MovieItem,
     // (tmdbId, season, episode, episodeTotal). O player busca as fontes do episódio nos addons.
@@ -90,6 +91,8 @@ fun MovieDetailScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val pad = com.joabtv.app.ui.common.pagePadding()
     val wide = com.joabtv.app.ui.common.isWideLayout()
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val fontScale = configuration.fontScale.coerceAtLeast(1f)
     // Trailer: 1º tenta extrair p/ o ExoPlayer (toca até com embed bloqueado); senão IFrame.
     var trailerOpen by remember { mutableStateOf(false) }  // IFrame (fallback)
     var trailerExo by remember { mutableStateOf<com.joabtv.app.data.remote.YoutubeTrailer.TrailerStream?>(null) }
@@ -169,7 +172,7 @@ fun MovieDetailScreen(
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .height(if (wide) 400.dp else 420.dp)
+                        .height(((if (wide) (configuration.screenHeightDp * .95f).coerceIn(280f, 400f) else 420f) + (fontScale - 1f) * 180f).dp)
                         // clipToBounds: a imagem com .scale() (Ken Burns) não vaza p/ baixo
                         // do hero (era a "faixa" esverdeada atrás da sinopse).
                         .clipToBounds(),
@@ -311,8 +314,8 @@ fun MovieDetailScreen(
                         }
                         Spacer(Modifier.height(11.dp))
                         // Meta row: classificação · ★rating · match% · year · duration
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                        FlowRow(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             if (certification.isNotBlank()) {
@@ -330,7 +333,7 @@ fun MovieDetailScreen(
                                         .border(1.dp, certColor.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
                                         .padding(horizontal = 8.dp, vertical = 3.dp),
                                 )
-                                MetaDot()
+                                MetaDot(Modifier.align(Alignment.CenterVertically))
                             }
                             if (rating > 0) {
                                 Text(
@@ -340,7 +343,7 @@ fun MovieDetailScreen(
                                     color = Gold,
                                     fontFamily = ManropeFontFamily,
                                 )
-                                MetaDot()
+                                MetaDot(Modifier.align(Alignment.CenterVertically))
                             }
                             if (matchPct > 0) {
                                 Text(
@@ -350,7 +353,7 @@ fun MovieDetailScreen(
                                     color = GreenMatch,
                                     fontFamily = ManropeFontFamily,
                                 )
-                                MetaDot()
+                                MetaDot(Modifier.align(Alignment.CenterVertically))
                             }
                             if (year.isNotBlank()) {
                                 Text(
@@ -362,7 +365,7 @@ fun MovieDetailScreen(
                                 )
                             }
                             if (durationLabel.isNotBlank()) {
-                                MetaDot()
+                                MetaDot(Modifier.align(Alignment.CenterVertically))
                                 Text(
                                     durationLabel,
                                     fontWeight = FontWeight.SemiBold,
@@ -374,9 +377,9 @@ fun MovieDetailScreen(
                         }
                         // Data de lançamento (minimalista) + próximo episódio (séries semanais).
                         if (releaseDateStr.isNotBlank() || nextEpDateStr.isNotBlank()) {
-                            Row(
+                            FlowRow(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
                                 modifier = Modifier.padding(top = 6.dp),
                             ) {
                                 if (releaseDateStr.isNotBlank()) Text("Lançamento · $releaseDateStr", fontSize = 13.sp, color = TextTertiary, fontFamily = ManropeFontFamily, fontWeight = FontWeight.SemiBold)
@@ -409,17 +412,17 @@ fun MovieDetailScreen(
                         )
                     }
                     // Primary action row: Assistir (CTA branco) + glass actions
-                    Row(
+                    FlowRow(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         JoabPrimaryButton(
                             text = primary.label,
                             onClick = primary.play,
                             icon = if (primary.enabled) Icons.Default.PlayArrow else null,
                             enabled = primary.enabled,
-                            modifier = Modifier.weight(1f).focusRequester(primaryFocus)
+                            modifier = Modifier.fillMaxWidth(if (fontScale > 1.3f || configuration.screenWidthDp < 420) 1f else .62f).focusRequester(primaryFocus)
                                 .onFocusChanged { if (it.isFocused) primaryGotFocus = true },
                         )
                         // Trailer (YouTube) — extrai e toca no NOSSO ExoPlayer; WebView = fallback.
@@ -575,6 +578,7 @@ fun MovieDetailScreen(
                         SourceList(
                             streams = state.stremioStreams,
                             facts = state.movieFacts(),
+                            debridTag = state.debridTag,
                             mediaTitle = state.item?.title.orEmpty(),
                             onPlay = { playStremio(it) },
                             onDownload = { dl(it.url) },
@@ -700,16 +704,7 @@ fun MovieDetailScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         items(state.related, key = { it.tmdbId }) { rel ->
-                            Column(Modifier.width(128.dp)) {
-                                com.joabtv.app.ui.common.MediaPosterCard(
-                                    title = rel.title,
-                                    imageUrl = rel.posterUrl,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    cleanPoster = true,
-                                    onClick = { onRelatedClick(rel) },
-                                )
-                                com.joabtv.app.ui.common.PosterCaption(rel.title, rel.year.ifBlank { null })
-                            }
+                            com.joabtv.app.ui.common.PosterCard(item = rel, onClick = { onRelatedClick(rel) }, modifier = Modifier.width(com.joabtv.app.ui.common.posterWidth()))
                         }
                     }
                 }
@@ -726,6 +721,7 @@ fun MovieDetailScreen(
                 episode = episode,
                 stremioStreams = state.episodeStremioStreams,
                 facts = state.episodeFacts(),
+                debridTag = state.debridTag,
                 stremioLoading = state.episodeStremioLoading,
                 onDismiss = { viewModel.clearSelectedEpisode() },
                 onPlayStremio = { s ->
@@ -733,7 +729,7 @@ fun MovieDetailScreen(
                     viewModel.clearSelectedEpisode()
                     onPlayDirect(
                         s.url, 0, "T$season:E$episode",
-                        state.episodeStremioStreams.map { MoviePlayerSource(it.label, it.url, addon = it.addon) },
+                        state.episodeStremioStreams.map { MoviePlayerSource(it.label, it.url, addon = it.addon, stream = it) },
                         season, episode, state.seasons[season]?.size ?: 0,
                     )
                 },
@@ -805,17 +801,12 @@ private fun PersonFilmographySheet(
                 }
             } else {
                 androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-                    columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(108.dp),
+                    columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(com.joabtv.app.ui.common.posterWidth()),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     gridItems(items, key = { it.tmdbId }) { m ->
-                        com.joabtv.app.ui.common.MediaPosterCard(
-                            title = m.title,
-                            imageUrl = m.posterUrl,
-                            subtitle = m.year.ifBlank { null },
-                            onClick = { onItemClick(m) },
-                        )
+                        com.joabtv.app.ui.common.PosterCard(item = m, onClick = { onItemClick(m) }, typeBadge = true)
                     }
                 }
             }
@@ -830,6 +821,7 @@ private fun EpisodeServersSheet(
     episode: Int,
     stremioStreams: List<com.joabtv.app.data.remote.StremioStream>,
     facts: List<com.joabtv.app.data.remote.SourceFacts>,
+    debridTag: String = "",
     stremioLoading: Boolean,
     onDismiss: () -> Unit,
     onPlayStremio: (com.joabtv.app.data.remote.StremioStream) -> Unit,
@@ -911,6 +903,7 @@ private fun EpisodeServersSheet(
                     mediaTitle = "",
                     onPlay = onPlayStremio,
                     onDownload = { s -> if (isDownloadable(s.url)) ({ onDownloadStremio(s) }) else null },
+                    debridTag = debridTag,
                 )
                 if (stremioLoading) {
                     Text(
@@ -938,6 +931,8 @@ private val SRC_FILTERS = listOf<Triple<String, String, (com.joabtv.app.data.rem
     // Qualidade do nome primeiro (igual ao webOS). Filme 1080p em scope tem 800 linhas reais.
     Triple("4k", "4K") { (it.labelRank.takeIf { q -> q > 0 } ?: it.rank) >= 2000 },
     Triple("1080", "1080p") { (it.labelRank.takeIf { q -> q > 0 } ?: it.rank) in 1000..1199 },
+    Triple("hdr", "HDR") { com.joabtv.app.data.remote.hasHdr(it.label) || com.joabtv.app.data.remote.hasDolbyVision(it.label) },
+    Triple("instant", "Instantâneo") { it.debrid >= 2 },
 )
 
 /**
@@ -953,73 +948,70 @@ internal fun SourceList(
     onPlay: (com.joabtv.app.data.remote.StremioStream) -> Unit,
     onDownload: (com.joabtv.app.data.remote.StremioStream) -> (() -> Unit)?,
     cols: Int = if (com.joabtv.app.ui.common.isWideLayout()) 2 else 1,
+    debridTag: String = "",
+    television: Boolean = false,
 ) {
+    if (television) {
+        com.joabtv.app.ui.tv.TvScaled { SourceList(streams, facts, mediaTitle, onPlay, onDownload, cols, debridTag) }
+        return
+    }
     var filter by remember { mutableStateOf("all") }
     var showWrong by remember { mutableStateOf(false) }
-    val wrongCount = facts.count { it.wrongTitle }
-    val visible = facts.filter { showWrong || !it.wrongTitle }
-    val counts = SRC_FILTERS.associate { (k, _, fn) -> k to visible.count(fn) }
-    val showFilters = streams.size > 4
-    if (showFilters || wrongCount > 0) {
-        Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (showFilters) SRC_FILTERS.forEach { (k, name, _) ->
-                val n = counts[k] ?: 0
-                if (k == "all" || n > 0) SeasonChip("$name $n", filter == k) { filter = k }
-            }
-            if (wrongCount > 0) SeasonChip(
-                if (showWrong) "Ocultar outro filme ($wrongCount)" else "Mostrar todas ($wrongCount de outro filme)",
-                showWrong,
-            ) { showWrong = !showWrong }
+    var limit by remember(filter, showWrong) { mutableIntStateOf(24) }
+    val groups = remember(streams) { groupReleases(streams) }
+    val byUrl = facts.associateBy { it.url }
+    fun fact(s: com.joabtv.app.data.remote.StremioStream) = byUrl[s.url]
+        ?: com.joabtv.app.data.remote.SourceFacts(s.url, s.addon, s.releaseText.ifBlank { s.label }, s.qualityRank)
+    val wrongCount = groups.count { g -> g.members.all { fact(it).wrongTitle } }
+    val visible = groups.filter { g -> showWrong || g.members.any { !fact(it).wrongTitle } }
+    val counts = SRC_FILTERS.associate { (k, _, fn) -> k to visible.count { g -> g.members.any { fn(fact(it)) } } }
+    val predicate = SRC_FILTERS.firstOrNull { it.first == filter }?.third ?: { true }
+    val filtered = visible.filter { g -> g.members.any { predicate(fact(it)) } }
+    if (groups.isNotEmpty()) Text("${groups.size} versões em ${streams.size} fontes", color = TextTertiary, fontSize = 13.sp)
+    if (groups.size > 4 || wrongCount > 0) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (groups.size > 4) SRC_FILTERS.forEach { (key, name, _) ->
+            val n = counts[key] ?: 0
+            if (key == "all" || n > 0) SeasonChip("$name $n", filter == key) { filter = key }
         }
+        if (wrongCount > 0) SeasonChip(if (showWrong) "Ocultar outro filme ($wrongCount)" else "Mostrar todas ($wrongCount de outro filme)", showWrong) { showWrong = !showWrong }
     }
-    val fn = SRC_FILTERS.firstOrNull { it.first == filter }?.third ?: { true }
-    val cards = mutableListOf<@Composable () -> Unit>()
-    streams.forEachIndexed { i, s ->
-        val f = facts.getOrNull(i) ?: return@forEachIndexed
-        if (!fn(f) || (f.wrongTitle && !showWrong)) return@forEachIndexed
-        var info = parseSourceLabel(s.label, s.addon, s.qualityRank, mediaTitle)
-        val h = f.probe?.height ?: 0
-        if (h > 0 && s.qualityRank == 0) info = info.copy(quality = com.joabtv.app.data.remote.heightLabel(h))
-        val note = when {
-            f.wrongTitle -> "Parece ser outro filme com nome parecido (${((f.probe?.sec ?: 0.0) / 60).roundToInt()} min)"
-            f.dead -> "Não respondeu no teste agora"
-            else -> null
-        }
-        val (tag, color) = when {
-            f.wrongTitle -> "OUTRO" to LiveRed
-            f.lang == "dub" -> "DUB" to Accent
-            f.lang == "leg" -> "LEG" to Gold
-            else -> "HTTP" to TextTertiary
-        }
-        val download = onDownload(s)
-        cards += { SourceCard(info = info, tag = tag, tagColor = color, note = note, onClick = { onPlay(s) }, onDownload = download) }
-    }
-    val shown = cards.size
-    cards.chunked(cols).forEach { row ->
+    val best = facts.getOrNull(com.joabtv.app.data.remote.bestIndex(facts))?.url
+    filtered.take(limit).chunked(cols.coerceAtLeast(1)).forEach { row ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            row.forEach { card -> Box(Modifier.weight(1f)) { card() } }
-            repeat(cols - row.size) { Spacer(Modifier.weight(1f)) }
+            row.forEach { group ->
+                val source = group.members.firstOrNull { !fact(it).dead && !fact(it).wrongTitle } ?: group.lead
+                val f = fact(source)
+                var info = releaseInfo(source, mediaTitle, group.members.map { it.addon }.distinct())
+                if (source.qualityRank == 0 && (f.probe?.height ?: 0) > 0) info = info.copy(quality = com.joabtv.app.data.remote.heightLabel(f.probe!!.height))
+                val note = when { f.wrongTitle -> "Parece ser outro filme com nome parecido"; f.dead -> "Não respondeu no teste agora"; else -> null }
+                val (tag, color) = when {
+                    f.wrongTitle -> "OUTRO" to LiveRed
+                    f.debrid >= 2 -> debridTag.ifBlank { "DEBRID" } to Ok
+                    f.p2p -> "P2P" to TextSecondary
+                    else -> "" to TextTertiary
+                }
+                Box(Modifier.weight(1f)) {
+                    androidx.compose.runtime.key(source.url) {
+                        SourceCard(info, tag, color, onClick = { onPlay(source) }, onDownload = onDownload(source), note = note,
+                            suggested = group.members.any { it.url == best })
+                    }
+                }
+            }
+            repeat(cols.coerceAtLeast(1) - row.size) { Spacer(Modifier.weight(1f)) }
         }
     }
-    if (shown == 0 && wrongCount > 0 && !showWrong) {
-        Text(
-            (if (wrongCount == 1) "A fonte encontrada parece" else "As $wrongCount fontes encontradas parecem") +
-                " ser de outro filme com nome parecido (a duração não bate). Use Mostrar todas para tentar mesmo assim.",
-            color = TextSecondary, fontSize = 13.sp, lineHeight = 19.sp, fontFamily = ManropeFontFamily,
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(BackgroundCard)
-                .border(1.dp, Border, RoundedCornerShape(14.dp)).padding(14.dp),
-        )
-    }
+    if (filtered.size > limit) com.joabtv.app.ui.common.JoabButton("Mostrar mais (${filtered.size - limit})", { limit += 24 })
+    if (filtered.isEmpty() && streams.isNotEmpty()) Text(
+        if (wrongCount > 0 && !showWrong) "As fontes encontradas parecem ser de outro filme. Use Mostrar todas para conferir."
+        else "Nenhuma versão neste filtro.", color = TextSecondary, fontSize = 13.sp,
+    )
 }
 
 // ── Meta dot separator ──────────────────────────────────────────────────────
 @Composable
-private fun MetaDot() {
+private fun MetaDot(modifier: Modifier = Modifier) {
     Box(
-        Modifier
+        modifier
             .size(3.dp)
             .clip(CircleShape)
             .background(TextTertiary),
@@ -1141,7 +1133,8 @@ private fun stremioQuality(s: com.joabtv.app.data.remote.StremioStream): String 
             Regex("\\bdub\\b", RegexOption.IGNORE_CASE).containsMatchIn(s.label) -> "Dublado"
         else -> ""
     }
-    return listOf(res, audio).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "HTTP" }
+    return listOf(res, audio).filter { it.isNotBlank() }.joinToString(" · ")
+        .ifBlank { if (com.joabtv.app.data.torrent.TorrentMagnet.isMagnet(s.url)) "P2P" else "HTTP" }
 }
 
 // ── Cartão de ator (elenco) ───────────────────────────────────────────────────
@@ -1233,6 +1226,7 @@ private fun SourceEmptyState() {
 }
 
 // ── Episode row card ────────────────────────────────────────────────────────
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EpisodeRowCard(
     episode: EpisodeItem,
@@ -1243,6 +1237,9 @@ private fun EpisodeRowCard(
     onSelect: () -> Unit,
 ) {
     val rowSrc = remember { MutableInteractionSource() }
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val fontScale = androidx.compose.ui.platform.LocalDensity.current.fontScale
+    val stacked = config.screenHeightDp >= 480 && (config.screenWidthDp < 360 || config.screenWidthDp < 600 && fontScale > 1.3f)
     val watchingColor = Color(0xFFF5A623) // âmbar = "vendo"
     // Visto -> leve dim; vendo -> destaque âmbar sem dim.
     val cardAlpha = if (watched) 0.62f else 1f
@@ -1251,7 +1248,7 @@ private fun EpisodeRowCard(
         watching -> watchingColor.copy(alpha = 0.55f)
         else -> Border
     }
-    Row(
+    FlowRow(
         modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
@@ -1261,13 +1258,13 @@ private fun EpisodeRowCard(
             .clickable(interactionSource = rowSrc, indication = androidx.compose.foundation.LocalIndication.current, onClick = onSelect)
             .padding(10.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // Thumbnail 16:9 com overlay + play glass
         Box(
             Modifier
-                .width(120.dp)
-                .height(68.dp)
+                .then(if (stacked) Modifier.fillMaxWidth().aspectRatio(16f / 9f) else Modifier.width(120.dp).height(68.dp))
+                .align(Alignment.CenterVertically)
                 .clip(RoundedCornerShape(12.dp))
                 .background(BackgroundCard2)
                 .border(1.dp, Border, RoundedCornerShape(12.dp))
@@ -1325,6 +1322,7 @@ private fun EpisodeRowCard(
                     "EP ${episode.episodeNumber}",
                     color = Color.White,
                     fontSize = 9.sp,
+                    lineHeight = 12.sp,
                     fontWeight = FontWeight.ExtraBold,
                     fontFamily = ManropeFontFamily,
                     letterSpacing = 0.5.sp,
@@ -1334,18 +1332,20 @@ private fun EpisodeRowCard(
 
         // Title + overview
         Column(
-            Modifier.weight(1f).alpha(cardAlpha),
+            Modifier.then(if (stacked) Modifier.fillMaxWidth() else Modifier.weight(1f))
+                .align(Alignment.CenterVertically).alpha(cardAlpha),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     "${episode.episodeNumber}. ${episode.name}",
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 13.5.sp,
                     color = TextPrimary,
-                    maxLines = 1,
+                    maxLines = 2,
+                    lineHeight = 18.sp,
                     overflow = TextOverflow.Ellipsis,
                     fontFamily = SoraFontFamily,
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = if (stacked) Modifier.fillMaxWidth() else Modifier.weight(1f, fill = false),
                 )
                 // Badge: VISTO (≥90%) ou VENDO (em andamento)
                 if (watched || watching) {
@@ -1354,6 +1354,7 @@ private fun EpisodeRowCard(
                         if (watched) "VISTO" else "VENDO",
                         color = badgeColor,
                         fontSize = 8.5.sp,
+                        lineHeight = 12.sp,
                         fontWeight = FontWeight.ExtraBold,
                         fontFamily = ManropeFontFamily,
                         letterSpacing = 0.5.sp,
@@ -1377,11 +1378,12 @@ private fun EpisodeRowCard(
                 Text(
                     epMeta.joinToString("  ·  "),
                     fontSize = 10.5.sp,
+                    lineHeight = 14.sp,
                     color = TextSecondary,
                     fontWeight = FontWeight.SemiBold,
                     fontFamily = ManropeFontFamily,
                     modifier = Modifier.padding(top = 3.dp),
-                    maxLines = 1,
+                    maxLines = if (stacked) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -1399,17 +1401,17 @@ private fun EpisodeRowCard(
             }
         }
 
-        SmallPlayBtn("PLAY", Accent, onPlay)
+        SmallPlayBtn("PLAY", Accent, onPlay, Modifier.align(Alignment.CenterVertically))
     }
 }
 
 // ── Small play button (tag pill clicável) ─────────────────────────────────────
 @Composable
-private fun SmallPlayBtn(label: String, accentColor: Color, onClick: () -> Unit) {
+private fun SmallPlayBtn(label: String, accentColor: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val src = remember { MutableInteractionSource() }
     var focused by remember { mutableStateOf(false) }
     Row(
-        Modifier
+        modifier.heightIn(min = 48.dp)
             .pressScale(src)
             .clip(RoundedCornerShape(7.dp))
             .background(if (focused) accentColor else accentColor.copy(alpha = 0.16f))

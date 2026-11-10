@@ -11,6 +11,7 @@ import androidx.room.withTransaction
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -138,6 +139,38 @@ class LibraryRepository @Inject constructor(
                 lastAddon = lastAddon.ifBlank { prev?.lastAddon ?: "" },
             )
         )
+    }
+
+    /**
+     * Progresso vindo de outra conta (Stremio, Nuvio). Só grava quando é mais novo que o do
+     * aparelho, para a importação nunca apagar o que a pessoa assistiu aqui. Devolve se gravou.
+     */
+    suspend fun importPlayback(
+        tmdbId: Int, type: String, title: String, posterUrl: String,
+        positionMs: Long, durationMs: Long, lastEpisode: String, watchedAt: Long, profileId: String? = null,
+    ): Boolean {
+        val target = profileId ?: pid
+        val prev = movieHistoryDao.get(target, tmdbId, type)
+        if (prev != null && prev.lastWatchedAt >= watchedAt) return false
+        movieHistoryDao.upsert(
+            MovieHistoryEntity(
+                profileId = target, tmdbId = tmdbId, type = type,
+                title = title.ifBlank { prev?.title.orEmpty() }, posterUrl = posterUrl.ifBlank { prev?.posterUrl.orEmpty() },
+                lastWatchedAt = watchedAt, positionMs = positionMs, durationMs = durationMs,
+                lastEpisode = lastEpisode, lastSourceUrl = prev?.lastSourceUrl.orEmpty(), lastAddon = prev?.lastAddon.orEmpty(),
+            )
+        )
+        return true
+    }
+
+    /** Item de outra conta na Minha Lista. Não mexe no que já estava salvo. Devolve se entrou. */
+    suspend fun importToList(
+        tmdbId: Int, type: String, title: String, posterUrl: String, year: String, addedAt: Long, profileId: String? = null,
+    ): Boolean {
+        val target = profileId ?: pid
+        if (watchlistDao.isSaved(target, tmdbId, type).first()) return false
+        watchlistDao.add(WatchlistEntity(target, tmdbId, type, title, posterUrl, year, addedAt.takeIf { it > 0 } ?: System.currentTimeMillis()))
+        return true
     }
 
     /** Remove UM item do "continuar assistindo". */

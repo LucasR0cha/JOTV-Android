@@ -1,5 +1,6 @@
 package com.joabtv.app.data.remote
 
+import com.joabtv.app.data.torrent.TorrentMagnet
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -106,10 +107,57 @@ private val LEG = Regex("legendad|\\bleg\\b|\\bsub(s|bed)?\\b", RegexOption.IGNO
 
 /** Idioma da fonte pelo rótulo. "dub", "leg" ou "" quando não dá pra saber. */
 fun langOf(label: String): String = when {
-    DUB.containsMatchIn(label) -> "dub"
+    ptAudio(label) -> "dub"
     LEG.containsMatchIn(label) -> "leg"
+    DUB.containsMatchIn(label) -> "dub"
     else -> ""
 }
+
+// ── Texto do addon lido para os selos do pôster (iguais ao webOS) ─────────────────────────────
+
+// Seeds e tamanho saem antes da leitura, senão "👤 1080" virava resolução. Repetições com teto
+// porque o texto vem do addon.
+private val COUNTS = Regex(
+    "(?:👤|👥|🌱|⬆️?|↑)\\s{0,3}\\d[\\d.,]{0,12}|\\bseed(?:er)?s?:?\\s{0,3}\\d[\\d.,]{0,12}" +
+        "|\\b\\d[\\d.,]{0,12}\\s{0,3}seed(?:er)?s?\\b|\\b\\d{1,6}(?:[.,]\\d{1,3})?\\s?(?:TB|TiB|GB|GiB|MB|MiB)\\b",
+    RegexOption.IGNORE_CASE,
+)
+private val RANKS = listOf(
+    Regex("\\b(2160[pi]?|4k|uhd)\\b", RegexOption.IGNORE_CASE) to 2160,
+    Regex("\\b(1440[pi]?|2k|qhd)\\b", RegexOption.IGNORE_CASE) to 1440,
+    Regex("\\b(1080[pi]?|fhd)\\b", RegexOption.IGNORE_CASE) to 1080,
+    Regex("\\b720[pi]?\\b", RegexOption.IGNORE_CASE) to 720,
+    Regex("\\b(576[pi]?|480[pi]?|360p|sd)\\b", RegexOption.IGNORE_CASE) to 480,
+    Regex("\\bhd\\b", RegexOption.IGNORE_CASE) to 720,
+)
+
+/** Resolução citada no texto. Só palavra inteira, então 4KHDHub, HDR e HDTV não contam. */
+fun qualityRankOf(text: String): Int {
+    val t = COUNTS.replace(text, " ")
+    return RANKS.firstOrNull { it.first.containsMatchIn(t) }?.second ?: 0
+}
+
+private val DOLBY_VISION = Regex("\\b(dv|dovi|dolby[ .-]?vision)\\b", RegexOption.IGNORE_CASE)
+// HDRip é só a origem do arquivo, então HDR precisa ser palavra inteira (ou HDR10, HDR10+).
+private val HDR = Regex("\\b(hdr|hlg)\\b|\\bhdr10", RegexOption.IGNORE_CASE)
+private val ATMOS = Regex("\\batmos\\b", RegexOption.IGNORE_CASE)
+// IGNORE_CASE do Java só junta maiúscula e minúscula no ASCII, então o acento vai nas duas formas.
+private val DUBBED = Regex("dublad|dual[\\s.-]?[aáÁ]udio", RegexOption.IGNORE_CASE)
+private val SUBBED = Regex("legendad", RegexOption.IGNORE_CASE)
+private val SUBS = Regex("legendad|legendas?\\b", RegexOption.IGNORE_CASE)
+private val PT_WORD = Regex("\\b(portugu[eêÊ]s|portuguese|pt-?br)\\b", RegexOption.IGNORE_CASE)
+
+fun hasDolbyVision(text: String) = DOLBY_VISION.containsMatchIn(text)
+fun hasHdr(text: String) = HDR.containsMatchIn(text)
+fun hasAtmos(text: String) = ATMOS.containsMatchIn(text)
+
+/**
+ * Áudio em português. Dublado ou dual áudio, ou a bandeira e o nome do idioma quando o texto não
+ * fala de legenda. "Legendado PT-BR" não conta.
+ */
+fun ptAudio(text: String): Boolean =
+    (DUBBED.containsMatchIn(text) && !SUBBED.containsMatchIn(text)) ||
+        (!SUBS.containsMatchIn(text) && ("🇧🇷" in text || PT_WORD.containsMatchIn(text)))
 
 /**
  * Ordena as fontes pela preferência do perfil sem perder a ordem dos addons dentro de cada grupo
@@ -140,11 +188,15 @@ data class SourceFacts(
     val labelRank: Int,
     val probe: ProbeResult? = null,
     val wrongTitle: Boolean = false,
+    /** Torrent no debrid. 2 = o serviço tem pronto (toca por link direto), 0 = não se sabe ou não tem. */
+    val debrid: Int = 0,
 ) {
     val dead get() = probe?.ok == false
     /** Resolução real quando o teste achou, senão a do nome. */
     val rank get() = probe?.height?.takeIf { it > 0 } ?: labelRank
     val lang get() = langOf(label)
+    /** Torrent que vai tocar pelo motor do aparelho (com cache no debrid ele vira link direto). */
+    val p2p get() = TorrentMagnet.isMagnet(url) && debrid < 2
 }
 
 /**
@@ -157,9 +209,12 @@ fun bestIndex(list: List<SourceFacts>, maxQuality: Int = 0): Int {
     if (cands.isEmpty()) return list.indexOfFirst { !it.wrongTitle }.coerceAtLeast(0)
     val lang = list[cands[0]].lang
     val cap = if (maxQuality > 0) maxQuality else Int.MAX_VALUE
+    // P2P acima de 1080p é arquivo enorme que engasga em TV box, fica atrás e desempata por seeders.
+    // Torrent pronto no debrid conta como fonte rápida (o serviço entrega na hora).
     val byKey = compareBy<SourceFacts>(
-        { if (it.probe != null && it.probe.ms <= 2500) 1 else 0 },
-        { if (it.rank > cap) -1 else it.rank },
+        { if (it.debrid >= 2 || (it.probe != null && it.probe.ms <= 2500)) 1 else 0 },
+        { if (it.rank > cap) -1 else if (it.p2p && it.rank > 1080) 1 else it.rank },
+        { if (TorrentMagnet.isMagnet(it.url)) TorrentMagnet.seeders(it.label) else 0 },
         { -(it.probe?.ms ?: 99_999L) },
     )
     var best = cands[0]

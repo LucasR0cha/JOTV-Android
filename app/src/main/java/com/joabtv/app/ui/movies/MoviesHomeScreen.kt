@@ -58,6 +58,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.rememberCoroutineScope
 import com.joabtv.app.ui.theme.*
+import com.joabtv.app.data.local.SystemRow
 
 @Composable
 fun MoviesHomeScreen(
@@ -65,6 +66,8 @@ fun MoviesHomeScreen(
     onSearchClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onLibraryClick: () -> Unit = {},
+    onCustomize: () -> Unit = {},
+    onFolderClick: (collectionId: String, folderId: String) -> Unit = { _, _ -> },
     viewModel: MoviesHomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -96,7 +99,8 @@ fun MoviesHomeScreen(
         when {
             // Esqueleto no formato da Início (destaque + fileiras) no lugar do spinner.
             state.isLoading -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-                com.joabtv.app.ui.common.SkeletonBox(Modifier.fillMaxWidth().height(if (com.joabtv.app.ui.common.isWideLayout()) 360.dp else 520.dp), radius = 0.dp)
+                val config = androidx.compose.ui.platform.LocalConfiguration.current
+                com.joabtv.app.ui.common.SkeletonBox(Modifier.fillMaxWidth().height(com.joabtv.app.ui.common.homeHeroHeight(config.screenWidthDp, config.screenHeightDp, config.fontScale).dp), radius = 0.dp)
                 repeat(3) { com.joabtv.app.ui.common.SkeletonRail() }
             }
             gridMode != null -> {
@@ -109,6 +113,8 @@ fun MoviesHomeScreen(
                 onSearchClick = onSearchClick, onSettingsClick = onSettingsClick,
                 onSeeMore = { query -> viewModel.openCatalog(query) },
                 onPlayTrailer = { card -> playTrailer(card) },
+                onCustomize = onCustomize,
+                onFolderClick = onFolderClick,
             )
         }
         // Overlay do trailer (ExoPlayer) por cima de tudo, num Dialog em tela cheia.
@@ -338,7 +344,7 @@ private fun CatalogTab(
         // Grid com scroll infinito
         LazyVerticalGrid(
             state = gridState,
-            columns = GridCells.Adaptive(112.dp),
+            columns = GridCells.Adaptive(com.joabtv.app.ui.common.posterWidth()),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -367,16 +373,7 @@ private fun CatalogTab(
 // ── Media card (poster) ────────────────────────────────────────────────────
 @Composable
 fun MediaCard(item: MovieItem, onClick: () -> Unit) {
-    MediaPosterCard(
-        title = item.title,
-        imageUrl = item.posterUrl.ifBlank { null },
-        onClick = onClick,
-        subtitle = item.year.ifBlank { null },
-        aspectRatio = 2f / 3f,
-        badge = if (item.rating > 0) {
-            { Badge(label = "★ %.1f".format(item.rating), color = Gold) }
-        } else null,
-    )
+    com.joabtv.app.ui.common.PosterCard(item = item, onClick = onClick)
 }
 
 // ── Aba "Início": catálogo estilo Netflix (fileiras por gênero, cresce ao rolar) ──
@@ -389,8 +386,11 @@ private fun HomeSectionsTab(
     onSettingsClick: () -> Unit,
     onSeeMore: (MoviesHomeViewModel.CatalogQuery) -> Unit,
     onPlayTrailer: (MoviesHomeViewModel.TrailerCard) -> Unit,
+    onCustomize: () -> Unit,
+    onFolderClick: (String, String) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    val collections by viewModel.collectionsFlow.collectAsStateWithLifecycle()
     val loadMore by remember {
         derivedStateOf {
             val li = listState.layoutInfo
@@ -399,12 +399,22 @@ private fun HomeSectionsTab(
             total > 0 && last >= total - 2
         }
     }
-    LaunchedEffect(loadMore) { if (loadMore) viewModel.loadMoreSections() }
+    val genresOn = state.layout.any { it.system == SystemRow.GENRES }
+    LaunchedEffect(loadMore, genresOn) { if (loadMore && genresOn) viewModel.loadMoreSections() }
 
-    // Carrossel do hero: top filmes + séries com backdrop (swipe + dots)
-    val heroItems = remember(state.trendingMovies, state.trendingTv) {
-        (state.trendingMovies + state.trendingTv).filter { it.backdropUrl.isNotBlank() }.take(8)
+    // Destaque vem da fileira escolhida no Personalizar Início (ou do automático).
+    val heroSource = heroCandidates(state)
+    LaunchedEffect(heroSource.map { it.tmdbId }) {
+        heroSource.take(10).forEach {
+            val series = it.type == MediaType.SERIES
+            if (it.backdropUrl.isBlank()) viewModel.ensureHeroBackdrop(it.tmdbId, series)
+            viewModel.ensureHeroLogo(it.tmdbId, series)
+        }
     }
+    val heroItems = heroSource.mapNotNull { item ->
+        val bd = item.backdropUrl.ifBlank { state.heroBackdrops[item.tmdbId].orEmpty() }
+        if (bd.isBlank()) null else item.copy(backdropUrl = bd)
+    }.take(8)
 
     LazyColumn(
         state = listState,
@@ -413,7 +423,7 @@ private fun HomeSectionsTab(
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         if (heroItems.isNotEmpty()) {
-            item {
+            item(key = "hero") {
                 // Trailer só com a Início no topo. Rolou, parou o trailer.
                 val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 300 } }
                 HeroCarousel(
@@ -423,79 +433,140 @@ private fun HomeSectionsTab(
                 )
             }
         }
-        if (state.continueWatching.isNotEmpty()) {
-            item { SectionRow("Continuar assistindo", state.continueWatching, onItemClick, progressMap = state.continueProgress, remainingMap = state.continueRemaining) }
-        }
-        if (state.newEpisodes.isNotEmpty()) {
-            item {
-                SectionRow(
-                    "Novos episódios", state.newEpisodes.map { it.item }, onItemClick,
-                    eyebrow = "Das suas séries",
-                    badges = state.newEpisodes.associate { it.item.tmdbId to it.badge },
-                    subs = state.newEpisodes.associate { it.item.tmdbId to it.sub },
-                )
+        // Cada fileira na ordem e com o nome que o perfil escolheu. Sem item, a fileira some.
+        state.layout.forEach { row ->
+            val custom = row.title
+            when (row.system) {
+                SystemRow.CONTINUE -> if (state.continueWatching.isNotEmpty()) item(key = row.key) {
+                    ContinueRow(row.displayTitle, state, onItemClick)
+                }
+                SystemRow.NEW_EPISODES -> if (state.newEpisodes.isNotEmpty()) item(key = row.key) {
+                    SectionRow(
+                        row.displayTitle, state.newEpisodes.map { it.item }, onItemClick,
+                        badges = state.newEpisodes.associate { it.item.tmdbId to it.badge },
+                        subs = state.newEpisodes.associate { it.item.tmdbId to it.sub },
+                    )
+                }
+                SystemRow.RECOMMENDED -> if (state.recommended.isNotEmpty()) item(key = row.key) {
+                    SectionRow(custom.ifBlank { "Porque você assistiu ${state.recommendedBecause}" }, state.recommended, onItemClick)
+                }
+                SystemRow.TRAILERS -> if (state.trailersLoading || state.latestTrailers.isNotEmpty()) item(key = row.key) {
+                    LatestTrailersRow(state, viewModel, onPlay = onPlayTrailer, title = row.displayTitle)
+                }
+                SystemRow.TRENDING_MOVIES -> if (state.trendingMovies.isNotEmpty()) item(key = row.key) {
+                    SectionRow(row.displayTitle, state.trendingMovies, onItemClick) {
+                        onSeeMore(MoviesHomeViewModel.CatalogQuery(row.displayTitle, MoviesHomeViewModel.CatalogType.MOVIE, MoviesHomeViewModel.CatalogEndpoint.TRENDING))
+                    }
+                }
+                SystemRow.TRENDING_TV -> if (state.trendingTv.isNotEmpty()) item(key = row.key) {
+                    SectionRow(row.displayTitle, state.trendingTv, onItemClick) {
+                        onSeeMore(MoviesHomeViewModel.CatalogQuery(row.displayTitle, MoviesHomeViewModel.CatalogType.SERIES, MoviesHomeViewModel.CatalogEndpoint.TRENDING))
+                    }
+                }
+                SystemRow.NOW_PLAYING -> if (state.nowPlaying.isNotEmpty()) item(key = row.key) {
+                    SectionRow(row.displayTitle, state.nowPlaying, onItemClick) {
+                        onSeeMore(MoviesHomeViewModel.CatalogQuery(row.displayTitle, MoviesHomeViewModel.CatalogType.MOVIE, MoviesHomeViewModel.CatalogEndpoint.NOW_PLAYING))
+                    }
+                }
+                SystemRow.RELEASES -> if (state.releases2026.isNotEmpty()) item(key = row.key) {
+                    val t = custom.ifBlank { "Lançamentos ${state.releasesYear}" }
+                    SectionRow(t, state.releases2026, onItemClick) {
+                        onSeeMore(MoviesHomeViewModel.CatalogQuery(t, MoviesHomeViewModel.CatalogType.MOVIE, genreId = null, sort = MoviesHomeViewModel.SORT_RELEASE_MOVIE, year = state.releasesYear))
+                    }
+                }
+                SystemRow.GENRES -> {
+                    items(state.homeSections, key = { it.id }) { sec ->
+                        SectionRow(sec.title, sec.items, onItemClick) { onSeeMore(sec.query) }
+                    }
+                    if (state.isLoadingSections) items(2, key = { "genres_skel_$it" }) { com.joabtv.app.ui.common.SkeletonRail() }
+                }
+                // Coleção sem pasta não aparece, como no Nuvio.
+                null -> if (row.collectionId != null) collections.firstOrNull { it.id == row.collectionId }?.takeIf { it.folders.isNotEmpty() }?.let { col ->
+                    item(key = row.key) {
+                        com.joabtv.app.ui.collections.CollectionFolderRow(col, row.displayTitle, eyebrow = null) { f -> onFolderClick(col.id, f.id) }
+                    }
+                } else state.addonRows.firstOrNull { it.ref.key == row.key }?.takeIf { it.loading || it.items.isNotEmpty() }?.let { ar ->
+                    item(key = "addon:" + ar.ref.key) {
+                        if (ar.items.isEmpty()) com.joabtv.app.ui.common.SkeletonRail()
+                        else SectionRow(
+                            ar.title, ar.items, onItemClick,
+                            onNearEnd = if (ar.more) ({ viewModel.loadAddonRow(ar.ref.key) }) else null,
+                        )
+                    }
+                }
             }
         }
-        // Catálogos de addon marcados em Addons > Na Início, na ordem em que foram marcados.
-        items(state.addonRows.filter { it.loading || it.items.isNotEmpty() }, key = { "addon:" + it.ref.key }) { row ->
-            if (row.items.isEmpty()) {
-                com.joabtv.app.ui.common.SkeletonRail()
-            } else {
-                SectionRow(
-                    row.ref.name, row.items, onItemClick,
-                    eyebrow = row.ref.addon,
-                    onNearEnd = if (row.more) ({ viewModel.loadAddonRow(row.ref.key) }) else null,
-                )
-            }
-        }
-        // Recomendação vem logo depois do "Continuar assistindo": é sobre o que ele acabou de ver.
-        if (state.recommended.isNotEmpty()) {
-            item {
-                SectionRow(
-                    "Porque você assistiu ${state.recommendedBecause}",
-                    state.recommended,
-                    onItemClick,
-                )
-            }
-        }
-        if (state.trailersLoading || state.latestTrailers.isNotEmpty()) {
-            item { LatestTrailersRow(state, viewModel, onPlay = onPlayTrailer) }
-        }
-        if (state.trendingMovies.isNotEmpty()) {
-            item { SectionRow("Tops do Momento Filmes", state.trendingMovies, onItemClick) { onSeeMore(MoviesHomeViewModel.CatalogQuery("Tops do Momento Filmes", MoviesHomeViewModel.CatalogType.MOVIE, MoviesHomeViewModel.CatalogEndpoint.TRENDING)) } }
-        }
-        if (state.trendingTv.isNotEmpty()) {
-            item { SectionRow("Tops do Momento Séries de TV", state.trendingTv, onItemClick) { onSeeMore(MoviesHomeViewModel.CatalogQuery("Tops do Momento Séries de TV", MoviesHomeViewModel.CatalogType.SERIES, MoviesHomeViewModel.CatalogEndpoint.TRENDING)) } }
-        }
-        if (state.nowPlaying.isNotEmpty()) {
-            item { SectionRow("Filmes nos cinemas", state.nowPlaying, onItemClick) { onSeeMore(MoviesHomeViewModel.CatalogQuery("Filmes nos cinemas", MoviesHomeViewModel.CatalogType.MOVIE, MoviesHomeViewModel.CatalogEndpoint.NOW_PLAYING)) } }
-        }
-        if (state.releases2026.isNotEmpty()) {
-            item { SectionRow("Lançamentos 2026", state.releases2026, onItemClick) { onSeeMore(MoviesHomeViewModel.CatalogQuery("Lançamentos 2026", MoviesHomeViewModel.CatalogType.MOVIE, genreId = null, sort = MoviesHomeViewModel.SORT_RELEASE_MOVIE, year = 2026)) } }
-        }
-        items(state.homeSections, key = { it.id }) { sec ->
-            SectionRow(sec.title, sec.items, onItemClick) { onSeeMore(sec.query) }
-        }
-        if (state.isLoadingSections) {
-            items(2) { com.joabtv.app.ui.common.SkeletonRail() }
+        if (heroItems.isEmpty() && state.layout.isEmpty()) item(key = "empty") {
+            com.joabtv.app.ui.common.JoabEmptyState(
+                Icons.Default.MovieFilter, "Sua Início está vazia",
+                "Ligue o catálogo JOTV ou as fileiras de um addon em Personalizar Início.",
+                action = { com.joabtv.app.ui.common.JoabButton("Personalizar Início", onCustomize) },
+            )
         }
     }
 }
 
+/** Selo do destaque. Em alta do JOTV usa o selo de sempre, outra fonte mostra o nome da fileira. */
+internal fun heroLabel(s: MoviesHomeViewModel.UiState): String {
+    val chosen = s.layout.firstOrNull { it.key == s.heroSource && s.heroSource.isNotBlank() }
+    if (chosen != null) return if (chosen.system == SystemRow.RECOMMENDED && chosen.title.isBlank()) "Para você" else chosen.displayTitle
+    if (s.catalogOn && (s.trendingMovies.isNotEmpty() || s.trendingTv.isNotEmpty())) return ""
+    return s.addonRows.firstOrNull { it.items.isNotEmpty() }?.title
+        ?: s.layout.firstOrNull { it.system == SystemRow.CONTINUE }?.displayTitle ?: ""
+}
+
+/**
+ * De onde vêm os títulos do destaque. Fileira escolhida no Personalizar Início, ou no
+ * automático o que está em alta no JOTV, senão a primeira fileira de addon, senão o progresso.
+ */
+internal fun heroCandidates(s: MoviesHomeViewModel.UiState): List<MovieItem> {
+    fun itemsOf(key: String): List<MovieItem> = when (SystemRow.of(key)) {
+        SystemRow.CONTINUE -> s.continueWatching
+        SystemRow.RECOMMENDED -> s.recommended
+        SystemRow.TRENDING_MOVIES -> s.trendingMovies
+        SystemRow.TRENDING_TV -> s.trendingTv
+        SystemRow.NOW_PLAYING -> s.nowPlaying
+        SystemRow.RELEASES -> s.releases2026
+        else -> s.addonRows.firstOrNull { it.ref.key == key }?.items.orEmpty()
+    }
+    val chosen = s.heroSource.takeIf { k -> k.isNotBlank() && s.layout.any { it.key == k } }
+    return when {
+        chosen != null -> itemsOf(chosen)
+        s.catalogOn && (s.trendingMovies.isNotEmpty() || s.trendingTv.isNotEmpty()) -> s.trendingMovies + s.trendingTv
+        else -> s.addonRows.firstOrNull { it.items.isNotEmpty() }?.items ?: s.continueWatching
+    }.take(12)
+}
+
 @Composable
-private fun HeroTitle(title: String) {
+private fun HeroTitle(title: String, compact: Boolean = false) {
     Text(
-        title, color = TextPrimary, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold,
-        fontFamily = SoraFontFamily, maxLines = 2, lineHeight = 37.sp, letterSpacing = (-0.7).sp,
+        title, color = TextPrimary, fontSize = if (compact) 28.sp else 34.sp, fontWeight = FontWeight.ExtraBold,
+        fontFamily = SoraFontFamily, maxLines = 2, lineHeight = if (compact) 32.sp else 37.sp, letterSpacing = (-0.7).sp,
         overflow = TextOverflow.Ellipsis,
     )
+}
+
+@Composable
+private fun ContinueRow(title: String, state: MoviesHomeViewModel.UiState, onItemClick: (MovieItem) -> Unit) {
+    Column {
+        com.joabtv.app.ui.common.SectionHeader(title)
+        LazyRow(contentPadding = PaddingValues(horizontal = com.joabtv.app.ui.common.pagePadding()),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            items(state.continueWatching, key = { com.joabtv.app.data.local.posterKey(it) }) { item ->
+                com.joabtv.app.ui.common.ContinueCard(item, { onItemClick(item) },
+                    artwork = state.continueArtwork[com.joabtv.app.data.local.posterKey(item)],
+                    progress = state.continueProgress[item.tmdbId], remaining = state.continueRemaining[item.tmdbId],
+                    episode = state.continueEpisode[item.tmdbId].orEmpty())
+            }
+        }
+    }
 }
 
 /**
  * Destaque da Início no padrão do webOS. Em pé a arte ocupa a largura toda e o texto fica
  * embaixo à esquerda. Deitado a arte fica nos 80% da direita com degradê vindo da esquerda.
  */
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun HeroCarousel(
     items: List<MovieItem>,
@@ -529,9 +600,13 @@ private fun HeroCarousel(
         }
         advance(page)
     }
-    val wide = com.joabtv.app.ui.common.isWideLayout()
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val wide = config.screenWidthDp >= 600 && config.screenWidthDp > config.screenHeightDp
+    val compactHero = config.screenWidthDp > config.screenHeightDp && config.screenHeightDp < 500
+    val fallbackHeight = with(androidx.compose.ui.platform.LocalDensity.current) { (if (compactHero) 32.sp else 37.sp).toDp() * 2 }
+    val logoHeight = maxOf(if (compactHero) 64.dp else if (wide) 84.dp else 100.dp, fallbackHeight)
     val pad = com.joabtv.app.ui.common.pagePadding()
-    Box(Modifier.fillMaxWidth().height(if (wide) 380.dp else 560.dp)) {
+    Box(Modifier.fillMaxWidth().height(com.joabtv.app.ui.common.homeHeroHeight(config.screenWidthDp, config.screenHeightDp, config.fontScale).dp)) {
         androidx.compose.foundation.pager.HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
             val item = items[page]
             Box(Modifier.fillMaxSize()) {
@@ -574,10 +649,9 @@ private fun HeroCarousel(
                 Column(
                     Modifier.align(Alignment.BottomStart)
                         .then(if (wide) Modifier.fillMaxWidth(0.5f) else Modifier.fillMaxWidth())
-                        .padding(start = pad, end = pad, bottom = 22.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(start = pad, end = pad, bottom = if (compactHero) 16.dp else 22.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (compactHero) 8.dp else 10.dp),
                 ) {
-                    com.joabtv.app.ui.common.Eyebrow(if (item.type == MediaType.SERIES) "Série em alta" else "Filme em alta")
                     // Logo do título. Texto entra quando não há logo.
                     val logo = logos[item.tmdbId].orEmpty()
                     if (logo.isNotBlank()) {
@@ -586,15 +660,15 @@ private fun HeroCarousel(
                             contentDescription = item.title,
                             contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                             alignment = Alignment.BottomStart,
-                            modifier = Modifier.fillMaxWidth(if (wide) 0.8f else 0.72f).heightIn(max = if (wide) 84.dp else 100.dp),
-                            error = { HeroTitle(item.title) },
-                            loading = { HeroTitle(item.title) },
+                            modifier = Modifier.fillMaxWidth(if (wide) 0.8f else 0.72f).heightIn(max = logoHeight),
+                            error = { HeroTitle(item.title, compactHero) },
+                            loading = { HeroTitle(item.title, compactHero) },
                         )
                     } else {
-                        HeroTitle(item.title)
+                        HeroTitle(item.title, compactHero)
                     }
                     // Metadados (.meta-row). Nota em dourado.
-                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (item.rating > 0) Text(
                             "★ ${"%.1f".format(item.rating)}", color = Gold, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold,
                         )
@@ -603,12 +677,12 @@ private fun HeroCarousel(
                     }
                     if (item.overview.isNotBlank()) Text(
                         item.overview, color = TextSecondary, fontSize = 14.sp, lineHeight = 21.sp,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        maxLines = if (compactHero) 1 else 2, overflow = TextOverflow.Ellipsis,
                     )
-                    Row(
+                    FlowRow(
                         Modifier.padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         com.joabtv.app.ui.common.JoabPrimaryButton(text = "Assistir", onClick = { onItemClick(item) })
                         // Indicador da página atual.
@@ -636,7 +710,6 @@ private fun SectionRow(
     onItemClick: (MovieItem) -> Unit,
     progressMap: Map<Int, Float>? = null,   // Continuar assistindo: fração assistida por tmdbId
     remainingMap: Map<Int, Int>? = null,    // Continuar assistindo: minutos restantes por tmdbId
-    eyebrow: String? = null,                // nome do addon acima do título da fileira
     onNearEnd: (() -> Unit)? = null,        // paginação da fileira (catálogo de addon)
     badges: Map<Int, String>? = null,       // selo no canto do pôster (Novos episódios)
     subs: Map<Int, String>? = null,         // linha embaixo do pôster
@@ -655,10 +728,10 @@ private fun SectionRow(
         LaunchedEffect(nearEnd, items.size) { if (nearEnd) onNearEnd() }
     }
     val pad = com.joabtv.app.ui.common.pagePadding()
+    val cardWidth = com.joabtv.app.ui.common.posterWidth()
     Column {
         com.joabtv.app.ui.common.SectionHeader(
             title = title,
-            eyebrow = eyebrow,
             action = onSeeMore?.let { f -> { com.joabtv.app.ui.common.SeeAllLink("Ver tudo", f) } },
         )
         LazyRow(
@@ -667,23 +740,16 @@ private fun SectionRow(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             items(items, key = { it.tmdbId }) { item ->
-                val prog = progressMap?.get(item.tmdbId)
                 val remain = remainingMap?.get(item.tmdbId)
-                Column(Modifier.width(128.dp)) {
-                    MediaPosterCard(
-                        title = item.title,
-                        imageUrl = item.posterUrl,
-                        onClick = { onItemClick(item) },
-                        modifier = Modifier.fillMaxWidth(),
-                        cleanPoster = true,
-                        progress = prog,
-                        badge = badges?.get(item.tmdbId)?.let { b -> { com.joabtv.app.ui.common.Badge(label = b) } },
-                    )
-                    com.joabtv.app.ui.common.PosterCaption(
-                        if (remain != null) "$remain min restantes" else item.title,
-                        subs?.get(item.tmdbId),
-                    )
-                }
+                com.joabtv.app.ui.common.PosterCard(
+                    item = item,
+                    onClick = { onItemClick(item) },
+                    modifier = Modifier.width(cardWidth),
+                    caption = if (remain != null) "$remain min restantes" else item.title,
+                    sub = subs?.get(item.tmdbId),
+                    badge = badges?.get(item.tmdbId),
+                    progress = progressMap?.get(item.tmdbId),
+                )
             }
         }
     }
@@ -732,7 +798,7 @@ private fun CatalogGridView(
                 }
             else -> LazyVerticalGrid(
                 state = gridState,
-                columns = GridCells.Adaptive(112.dp),
+                columns = GridCells.Adaptive(com.joabtv.app.ui.common.posterWidth()),
                 contentPadding = PaddingValues(horizontal = com.joabtv.app.ui.common.pagePadding(), vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -763,10 +829,11 @@ private fun LatestTrailersRow(
     state: MoviesHomeViewModel.UiState,
     viewModel: MoviesHomeViewModel,
     onPlay: (MoviesHomeViewModel.TrailerCard) -> Unit,
+    title: String = "Últimos trailers",
 ) {
     val pad = com.joabtv.app.ui.common.pagePadding()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        com.joabtv.app.ui.common.SectionHeader("Últimos trailers", eyebrow = "Trailers")
+        com.joabtv.app.ui.common.SectionHeader(title)
         // Abas roláveis (cabem 5 sem espremer em tela pequena).
         androidx.compose.foundation.lazy.LazyRow(
             contentPadding = PaddingValues(horizontal = pad),

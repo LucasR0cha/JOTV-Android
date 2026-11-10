@@ -50,6 +50,7 @@ class PlayerProgressViewModel @Inject constructor(
     var subtitleOn: Boolean
         get() = prefs.subtitleOn
         set(v) { prefs.subtitleOn = v }
+    val subLang: String get() = prefs.subLang
 
     /** Som de outra fonte salvo para o título, ou null. */
     fun extAudio(key: String): com.joabtv.app.data.local.ExtAudioPick? = prefs.extAudioPicks[key]

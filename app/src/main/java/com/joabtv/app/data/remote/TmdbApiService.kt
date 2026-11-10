@@ -16,6 +16,21 @@ interface TmdbApiService {
         @Query("api_key")  apiKey: String,
     ): TmdbListResponse<TmdbMovieDto>
 
+    // Ranking de hoje (#N Hoje nos pôsteres). Duas páginas dão os 40 primeiros.
+    @GET("trending/movie/day")
+    suspend fun getTrendingMoviesDay(
+        @Query("page")     page: Int = 1,
+        @Query("language") lang: String = "pt-BR",
+        @Query("api_key")  apiKey: String,
+    ): TmdbListResponse<TmdbMovieDto>
+
+    @GET("trending/tv/day")
+    suspend fun getTrendingTvDay(
+        @Query("page")     page: Int = 1,
+        @Query("language") lang: String = "pt-BR",
+        @Query("api_key")  apiKey: String,
+    ): TmdbListResponse<TmdbMovieDto>
+
     @GET("genre/movie/list")
     suspend fun getMovieGenres(
         @Query("language") lang: String = "pt-BR",
@@ -168,6 +183,62 @@ interface TmdbApiService {
         @Query("language") lang: String = "pt-BR",
         @Query("api_key")  apiKey: String,
     ): com.joabtv.app.data.remote.dto.TmdbCollectionDto
+
+    // ── Fontes do TMDB das coleções (formato do Nuvio) ──
+    @GET("list/{id}")
+    suspend fun getList(
+        @Path("id")        id: Int,
+        @Query("page")     page: Int = 1,
+        @Query("language") lang: String = "pt-BR",
+        @Query("api_key")  apiKey: String,
+    ): TmdbListDetailsDto
+
+    @GET("company/{id}")
+    suspend fun getCompany(@Path("id") id: Int, @Query("api_key") apiKey: String): TmdbCompanyDto
+
+    @GET("network/{id}")
+    suspend fun getNetwork(@Path("id") id: Int, @Query("api_key") apiKey: String): TmdbCompanyDto
+
+    @GET("person/{id}")
+    suspend fun getPerson(@Path("id") id: Int, @Query("language") lang: String = "pt-BR", @Query("api_key") apiKey: String): TmdbPersonDto
+
+    @GET("search/company")
+    suspend fun searchCompanies(@Query("query") query: String, @Query("api_key") apiKey: String): TmdbListResponse<TmdbCompanyDto>
+
+    @GET("search/collection")
+    suspend fun searchCollections(
+        @Query("query")    query: String,
+        @Query("language") lang: String = "pt-BR",
+        @Query("api_key")  apiKey: String,
+    ): TmdbListResponse<TmdbCollectionRefDto>
+
+    @GET("search/person")
+    suspend fun searchPeople(
+        @Query("query")    query: String,
+        @Query("language") lang: String = "pt-BR",
+        @Query("api_key")  apiKey: String,
+    ): TmdbListResponse<TmdbPersonDto>
+
+    @GET("search/keyword")
+    suspend fun searchKeywords(@Query("query") query: String, @Query("api_key") apiKey: String): TmdbListResponse<TmdbNamedDto>
+
+    @GET("watch/providers/{type}")
+    suspend fun getWatchProviders(
+        @Path("type")          type: String,
+        @Query("watch_region") region: String,
+        @Query("language")     lang: String = "pt-BR",
+        @Query("api_key")      apiKey: String,
+    ): TmdbProvidersDto
+
+    /** Discover com os filtros montados em TmdbCollectionRules.discoverQuery. [type] é movie ou tv. */
+    @GET("discover/{type}")
+    suspend fun discoverRaw(
+        @Path("type")           type: String,
+        @QueryMap               query: Map<String, String>,
+        @Query("language")      lang: String = "pt-BR",
+        @Query("include_adult") includeAdult: Boolean = false,
+        @Query("api_key")       apiKey: String,
+    ): TmdbListResponse<TmdbMovieDto>
 
     // ── Página "Descobrir" (filtros livres + ordenação) ──────────────────────
     // Endpoints separados dos discover* da home de propósito: aqui with_genres é STRING

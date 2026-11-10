@@ -86,7 +86,7 @@ fun DiscoverScreen(
 
         LazyVerticalGrid(
             // Celular em pé 3 colunas, tela larga cabe mais (pôster de 112dp ou mais).
-            columns = if (columns > 3) GridCells.Fixed(columns) else GridCells.Adaptive(112.dp),
+            columns = GridCells.Adaptive(com.joabtv.app.ui.common.posterWidth()),
             state = gridState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = com.joabtv.app.ui.common.pagePadding(), end = com.joabtv.app.ui.common.pagePadding(), bottom = 28.dp),
@@ -153,23 +153,10 @@ private fun ActiveFiltersBar(state: DiscoverViewModel.UiState, vm: DiscoverViewM
     }
 }
 
-/** Pôster com o título ABAIXO da arte (mesma decisão da Minha Lista, nada escrito sobre a imagem). */
+/** Pôster com o título ABAIXO da arte. Ano e nota ficam na faixa do próprio pôster. */
 @Composable
 private fun DiscoverPoster(item: MovieItem, onClick: () -> Unit) {
-    Column {
-        MediaPosterCard(
-            title = item.title,
-            imageUrl = item.posterUrl,
-            onClick = onClick,
-            modifier = Modifier.fillMaxWidth(),
-            cleanPoster = true,
-        )
-        val sub = listOfNotNull(
-            item.year.takeIf { it.isNotBlank() },
-            item.rating.takeIf { it > 0 }?.let { "★ " + String.format("%.1f", it) },
-        ).joinToString("  ·  ")
-        com.joabtv.app.ui.common.PosterCaption(item.title, sub.ifBlank { null })
-    }
+    com.joabtv.app.ui.common.PosterCard(item = item, onClick = onClick)
 }
 
 @Composable

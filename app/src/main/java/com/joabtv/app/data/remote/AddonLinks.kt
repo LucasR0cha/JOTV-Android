@@ -10,6 +10,17 @@ import com.google.gson.JsonParser
 /** Catálogo de um addon que pode virar fileira na Início (só filme e série sem filtro obrigatório). */
 data class AddonCatalog(val type: String, val id: String, val name: String)
 
+/** Catálogo que pode ser fonte de coleção. [genres] vem do extra "genre" do manifest. */
+data class AddonCatalogOption(
+    val addonId: String,
+    val addonName: String,
+    val type: String,
+    val id: String,
+    val name: String,
+    val genres: List<String> = emptyList(),
+    val genreRequired: Boolean = false,
+)
+
 /** Campo do formulário de configuração que o manifest declara em `config`. */
 data class AddonConfigField(
     val key: String,
@@ -127,6 +138,31 @@ object AddonLinks {
             val extraReq = c.arr("extra")?.any { e -> e.obj()?.get("isRequired")?.let { it.isJsonPrimitive && it.asBoolean } == true } == true
             if (extraReq) return@mapNotNull null
             AddonCatalog(type, id, c.str("name").ifBlank { id })
+        }
+    }
+
+    /**
+     * Catálogos de filme e série que podem ser fonte de coleção. Diferente de [homeCatalogs],
+     * aceita catálogo que exige gênero (a pasta guarda o gênero escolhido). Catálogo que exige
+     * outro filtro, como busca, fica de fora.
+     */
+    fun collectionCatalogs(manifest: JsonObject): List<AddonCatalogOption> {
+        val addonId = manifest.str("id")
+        if (addonId.isBlank()) return emptyList()
+        val addonName = manifest.str("name").ifBlank { addonId }
+        val arr = manifest.arr("catalogs") ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val c = el.obj() ?: return@mapNotNull null
+            val type = c.str("type")
+            val id = c.str("id")
+            if (id.isBlank() || (type != "movie" && type != "series")) return@mapNotNull null
+            val extras = c.arr("extra")?.mapNotNull { it.obj() }.orEmpty()
+            val required = extras.filter { e -> e.get("isRequired")?.let { it.isJsonPrimitive && it.asBoolean } == true }.map { it.str("name") } +
+                c.arr("extraRequired")?.mapNotNull { e -> e.takeIf { it.isJsonPrimitive }?.asString }.orEmpty()
+            if (required.any { it != "genre" }) return@mapNotNull null
+            val genres = extras.firstOrNull { it.str("name") == "genre" }?.arr("options")
+                ?.mapNotNull { o -> o.takeIf { it.isJsonPrimitive }?.asString?.takeIf { s -> s.isNotBlank() } }.orEmpty()
+            AddonCatalogOption(addonId, addonName, type, id, c.str("name").ifBlank { id }, genres, "genre" in required)
         }
     }
 

@@ -320,7 +320,7 @@ fun AddonSiteConfig(
 
 /** QR code preto no branco, um ponto por módulo e sem suavizar. */
 @Composable
-private fun QrCode(text: String, modifier: Modifier) {
+internal fun QrCode(text: String, modifier: Modifier, description: String = "Código QR da página de configuração") {
     val img = remember(text) {
         val m = com.google.zxing.qrcode.QRCodeWriter().encode(
             text, com.google.zxing.BarcodeFormat.QR_CODE, 0, 0, mapOf(com.google.zxing.EncodeHintType.MARGIN to 1),
@@ -328,7 +328,7 @@ private fun QrCode(text: String, modifier: Modifier) {
         val px = IntArray(m.width * m.height) { i -> if (m.get(i % m.width, i / m.width)) android.graphics.Color.BLACK else android.graphics.Color.WHITE }
         android.graphics.Bitmap.createBitmap(px, m.width, m.height, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
     }
-    androidx.compose.foundation.Image(img, "Código QR da página de configuração", modifier, filterQuality = androidx.compose.ui.graphics.FilterQuality.None)
+    androidx.compose.foundation.Image(img, description, modifier, filterQuality = androidx.compose.ui.graphics.FilterQuality.None)
 }
 
 /**

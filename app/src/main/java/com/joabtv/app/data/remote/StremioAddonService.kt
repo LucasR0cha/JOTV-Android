@@ -2,6 +2,7 @@ package com.joabtv.app.data.remote
 
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
+import com.joabtv.app.data.torrent.TorrentMagnet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -45,6 +46,14 @@ data class StremioStream(
     val url: String,
     val addon: String = "",
     val qualityRank: Int = 0, // 2160=4K, 1080, 720… p/ ordenar (maior primeiro)
+    // Selos do pôster, lidos do texto inteiro do addon (o rótulo de 80 caracteres cortava o fim).
+    val hdr: Boolean = false,
+    val dolbyVision: Boolean = false,
+    val atmos: Boolean = false,
+    val ptAudio: Boolean = false,
+    val releaseText: String = "",
+    val fileName: String = "",
+    val fileSize: Long = 0,
 )
 
 private data class StremioStreamDto(
@@ -55,6 +64,8 @@ private data class StremioStreamDto(
     @SerializedName("infoHash") val infoHash: String? = null,
     @SerializedName("fileIdx") val fileIdx: Int? = null,
     @SerializedName("sources") val sources: List<String>? = null,
+    // JsonElement de propósito, um formato inesperado de um addon não derruba as outras fontes dele.
+    @SerializedName("behaviorHints") val behaviorHints: com.google.gson.JsonElement? = null,
 )
 
 private data class StremioStreamResponse(
@@ -66,7 +77,9 @@ private data class StremioStreamResponse(
  * Filme: id = imdbId. Série: id = "imdbId:temporada:episodio".
  */
 @Singleton
-class StremioAddonService @Inject constructor() {
+class StremioAddonService @Inject constructor(
+    private val prefs: com.joabtv.app.data.local.PlatformPrefs,
+) {
 
     private val gson = Gson()
     private val client = OkHttpClient.Builder()
@@ -129,7 +142,11 @@ class StremioAddonService @Inject constructor() {
                 types = types,
                 resources = res,
                 catalogs = AddonLinks.homeCatalogs(json),
-            ).also { m -> if (m.name.isNotBlank()) addonNames[baseOf(url)] = m.name }
+            ).also { m ->
+                if (m.name.isNotBlank()) addonNames[baseOf(url)] = m.name
+                // A Início monta as fileiras de addon a partir disso, sem esperar a rede.
+                prefs.cacheManifest(url, m.name, m.catalogs, m.id)
+            }
         }.getOrNull()
     }
 
@@ -175,21 +192,45 @@ class StremioAddonService @Inject constructor() {
         if (streams.isEmpty()) return@coroutineScope emptyList()
 
         val addonName = nomeD.await() ?: hostOf(base)
+        val ep = if (type == "series") episode else null
+        val sn = if (type == "series") season else null
         streams.mapNotNull { s ->
             val raw = (s.title ?: s.name ?: "Stream")
-            val label = raw.replace("\n", " · ").take(80)
-            // Resolução costuma vir no "name" ("FrostStream 1080p") e o resto no "title" —
-            // rankeia pelos DOIS, senão qualityRank fica 0.
-            val rank = qualityRank("${s.name.orEmpty()} $raw")
-            // Só URL HTTP direta (debrid já resolvido / hoster http). Magnet/torrent
-            // foi removido — exigia debrid (pago) ou P2P instável em TV box.
-            if (!s.url.isNullOrBlank() && s.url.startsWith("http"))
-                StremioStream(label, s.url, addon = addonName, qualityRank = rank)
-            else null
+            val file = hint(s.behaviorHints, "filename").orEmpty()
+            // Texto inteiro com teto de tamanho, porque vem do addon.
+            val full = "${s.name.orEmpty()}\n${s.title.orEmpty()}\n${s.description.orEmpty()}\n$file".take(3000)
+            // Resolução costuma vir no "name" ("FrostStream 1080p"). Sem ela, o nome do arquivo e
+            // depois o texto todo (igual ao webOS).
+            val rank = qualityRankOf(s.name.orEmpty()).takeIf { it > 0 }
+                ?: qualityRankOf(file).takeIf { it > 0 }
+                ?: qualityRankOf(full)
+            val url = when {
+                !s.url.isNullOrBlank() && s.url.startsWith("http") -> s.url
+                // Torrent toca pelo motor P2P embutido. Vira magnet estável com as dicas de qual arquivo tocar.
+                TorrentMagnet.isMagnet(s.url) -> TorrentMagnet.parse(s.url)?.let {
+                    if (it.fileIdx == null && it.mustInclude == null && sn != null && ep != null)
+                        it.copy(mustInclude = TorrentMagnet.episodePattern(sn, ep)) else it
+                }?.let(TorrentMagnet::build)
+                !s.infoHash.isNullOrBlank() -> TorrentMagnet.fromStremio(
+                    s.infoHash, s.sources, s.fileIdx, hint(s.behaviorHints, "filename"), hint(s.behaviorHints, "fileMustInclude"), sn, ep,
+                )?.let(TorrentMagnet::build)
+                else -> null
+            } ?: return@mapNotNull null
+            // Addon de torrent costuma pôr a resolução só no name, que então entra no rótulo pra aparecer na lista.
+            val text = if (TorrentMagnet.isMagnet(url) && qualityRankOf(raw) == 0 && !s.name.isNullOrBlank() && s.name != raw) "${s.name} · $raw" else raw
+            StremioStream(
+                text.replace("\n", " · ").take(80), url, addon = addonName, qualityRank = rank,
+                hdr = hasHdr(full), dolbyVision = hasDolbyVision(full), atmos = hasAtmos(full), ptAudio = ptAudio(full),
+                releaseText = full, fileName = file.take(512),
+                fileSize = hint(s.behaviorHints, "videoSize")?.toLongOrNull()?.coerceAtLeast(0) ?: 0,
+            )
         }.sortedByDescending { it.qualityRank } // 4K primeiro, depois 1080p, 720p…
     } }
 
     private fun hostOf(url: String): String = AddonLinks.hostOf(url)
+
+    private fun hint(hints: com.google.gson.JsonElement?, key: String): String? =
+        hints?.takeIf { it.isJsonObject }?.asJsonObject?.get(key)?.takeIf { it.isJsonPrimitive }?.asString
 
     /**
      * GET do endpoint de stream. UMA repetição quando o host devolve 502/503/504, que é o
@@ -210,19 +251,6 @@ class StremioAddonService @Inject constructor() {
             Thread.sleep(2_500)
         }
         return null
-    }
-
-    /** Extrai um rank numérico de qualidade do label (4K=2160 > 1080 > 720 > 0). */
-    private fun qualityRank(text: String): Int {
-        val t = text.lowercase()
-        return when {
-            "2160" in t || "4k" in t || "uhd" in t -> 2160
-            "1440" in t || "2k" in t -> 1440
-            "1080" in t || "fhd" in t -> 1080
-            "720" in t || "hd" in t -> 720
-            "480" in t -> 480
-            else -> 0
-        }
     }
 
     /** Busca em vários addons EM PARALELO — um addon morto/lento não bloqueia os outros. */
@@ -294,12 +322,16 @@ class StremioAddonService @Inject constructor() {
     }
 
     /**
-     * Uma página de um catálogo do addon. Lê {base}/catalog/{type}/{id}[/skip=N].json.
+     * Uma página de um catálogo do addon. Lê {base}/catalog/{type}/{id}[/genre=G&skip=N].json.
      * Devolve null quando o addon não respondeu.
      */
-    suspend fun catalogMetas(base: String, type: String, id: String, skip: Int): List<AddonMeta>? = withContext(Dispatchers.IO) {
+    suspend fun catalogMetas(base: String, type: String, id: String, skip: Int, genre: String? = null): List<AddonMeta>? = withContext(Dispatchers.IO) {
+        val extras = listOfNotNull(
+            genre?.takeIf { it.isNotBlank() }?.let { "genre=" + AddonLinks.encodeURIComponent(it) },
+            if (skip > 0) "skip=$skip" else null,
+        )
         val path = "${AddonLinks.baseOf(base)}/catalog/$type/${AddonLinks.encodeURIComponent(id)}" +
-            (if (skip > 0) "/skip=$skip" else "") + ".json"
+            (if (extras.isEmpty()) "" else "/" + extras.joinToString("&")) + ".json"
         val body = runCatching {
             client.newCall(Request.Builder().url(encodePath(path)).build()).execute()
                 .use { if (it.isSuccessful) it.body?.string() else null }
@@ -320,6 +352,16 @@ class StremioAddonService @Inject constructor() {
                 )
             }
         }.getOrNull()
+    }
+
+    /** Catálogos do addon que servem de fonte de coleção, com os gêneros do manifest. */
+    suspend fun collectionCatalogs(manifestUrl: String): List<AddonCatalogOption> = withContext(Dispatchers.IO) {
+        val url = normalizeManifestUrl(manifestUrl)
+        if (url.isBlank()) return@withContext emptyList()
+        val body = runCatching {
+            client.newCall(Request.Builder().url(url).build()).execute().use { if (it.isSuccessful) it.body?.string() else null }
+        }.getOrNull() ?: return@withContext emptyList()
+        runCatching { AddonLinks.collectionCatalogs(com.google.gson.JsonParser.parseString(body).asJsonObject) }.getOrDefault(emptyList())
     }
 
     private companion object {

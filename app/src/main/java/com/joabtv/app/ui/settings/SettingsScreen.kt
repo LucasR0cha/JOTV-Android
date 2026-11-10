@@ -1,6 +1,17 @@
 package com.joabtv.app.ui.settings
 
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.ViewModule
+import com.joabtv.app.data.local.SubLangs
 import androidx.compose.foundation.background
 import com.joabtv.app.ui.common.topInsetsPadding
 import androidx.compose.foundation.border
@@ -12,6 +23,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
@@ -51,6 +66,11 @@ import com.joabtv.app.ui.theme.*
 fun SettingsScreen(
     onOpenAddons: () -> Unit = {},
     onOpenProfiles: () -> Unit = {},
+    onOpenHomeCustomize: () -> Unit = {},
+    onOpenDebrid: () -> Unit = {},
+    onOpenAccounts: () -> Unit = {},
+    onOpenLive: () -> Unit = {},
+    onOpenCollections: () -> Unit = {},
     onBack: () -> Unit,
     onPlatformChanged: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -147,6 +167,24 @@ fun SettingsScreen(
                     trailing = { Switch(checked = heroTrailer, onCheckedChange = { viewModel.setHeroTrailer(it) }, modifier = Modifier.focusProperties { canFocus = false }) },
                     onClick = { viewModel.setHeroTrailer(!heroTrailer) },
                 )
+                // Legenda do perfil. Ligada ao abrir e o idioma em que ela liga sozinha no player.
+                val subOn by viewModel.subOn.collectAsStateWithLifecycle()
+                val subLang by viewModel.subLang.collectAsStateWithLifecycle()
+                var pickLang by remember { mutableStateOf(false) }
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.ClosedCaption,
+                    title = "Legenda ao abrir",
+                    sub = if (subOn) "Liga sozinha em ${SubLangs.label(subLang)} quando o título tiver" else "Desligada. Dá para ligar no player, em Legendas",
+                    trailing = { Switch(checked = subOn, onCheckedChange = { viewModel.setSubOn(it) }, modifier = Modifier.focusProperties { canFocus = false }) },
+                    onClick = { viewModel.setSubOn(!subOn) },
+                )
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Translate,
+                    title = "Idioma da legenda",
+                    sub = SubLangs.label(subLang) + ". Também aparece primeiro na lista do player",
+                    onClick = { pickLang = true },
+                )
+                if (pickLang) SubLangDialog(subLang, onPick = { viewModel.setSubLang(it); pickLang = false }, onDismiss = { pickLang = false })
 
                 if (viewModel.traktConfigured) {
                     SettingsSection("Trakt")
@@ -156,6 +194,38 @@ fun SettingsScreen(
                 // Addons, Aparelho e TMDB somem no perfil infantil — só quem já passou pelo PIN
                 // pra sair do infantil mexe nisso (ver ProfilesScreen).
                 if (!me.kids) {
+                SettingsSection("Contas")
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.AccountCircle,
+                    iconTint = Accent,
+                    title = "Stremio e Nuvio",
+                    sub = "Entre na sua conta e traga addons, Minha Lista, progresso e debrid.",
+                    onClick = onOpenAccounts,
+                )
+                SettingsSection("TV ao vivo")
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.LiveTv,
+                    iconTint = Accent,
+                    title = "Canais ao vivo",
+                    sub = "Listas M3U e contas Xtream, com guia de programação.",
+                    onClick = onOpenLive,
+                )
+                SettingsSection("Início")
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Dashboard,
+                    iconTint = Accent,
+                    title = "Personalizar Início",
+                    sub = "Liga, desliga, ordena e renomeia as fileiras. Escolhe o destaque e o catálogo JOTV.",
+                    onClick = onOpenHomeCustomize,
+                )
+                // Coleções saem primeiro no celular. A TV ganha a tela dela na etapa seguinte.
+                if (!com.joabtv.app.ui.common.LocalIsTv.current) com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.ViewModule,
+                    iconTint = Accent,
+                    title = "Coleções",
+                    sub = "Pastas de estúdios, streamings, franquias e catálogos na Início. Importa e exporta no formato do Nuvio.",
+                    onClick = onOpenCollections,
+                )
                 SettingsSection("Addons")
                 com.joabtv.app.ui.common.SettingsRow(
                     icon = Icons.Default.Extension,
@@ -164,6 +234,13 @@ fun SettingsScreen(
                     sub = (if (addonCount == 0) "Nenhum instalado" else "$addonCount instalado(s)") +
                         ". As fontes vêm dos addons. Instale, ordene e ative cada um.",
                     onClick = onOpenAddons,
+                )
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Bolt,
+                    iconTint = Accent,
+                    title = "Debrid",
+                    sub = "Real-Debrid, TorBox ou Premiumize. Torrent toca na hora por link direto.",
+                    onClick = onOpenDebrid,
                 )
                 }
 
@@ -396,6 +473,52 @@ private fun BusyButton(label: String, busyLabel: String?, onClick: () -> Unit) {
         label, onClick, icon = Icons.Default.Sync, tone = com.joabtv.app.ui.common.ButtonTone.PRIMARY,
         busy = busyLabel != null, busyLabel = busyLabel ?: "", compact = true,
     )
+}
+
+/** Lista dos idiomas de legenda. Na TV o foco já começa no idioma atual. */
+@Composable
+private fun SubLangDialog(current: String, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    val langs = SubLangs.all
+    val start = langs.indexOfFirst { it.key == current }.coerceAtLeast(0)
+    val list = rememberLazyListState(initialFirstVisibleItemIndex = (start - 2).coerceAtLeast(0))
+    val isTv = com.joabtv.app.ui.common.LocalIsTv.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = BackgroundCard,
+        title = { Text("Idioma da legenda", color = TextPrimary, fontWeight = FontWeight.ExtraBold) },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 420.dp), state = list, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                itemsIndexed(langs, key = { _, l -> l.key }) { i, l ->
+                    val fr = remember { FocusRequester() }
+                    LangOption(l.label, l.key == current, Modifier.focusRequester(fr)) { onPick(l.key) }
+                    // No celular o toque basta. Foco puxado ali acenderia a borda sem ninguém pedir.
+                    if (isTv && i == start) LaunchedEffect(Unit) { runCatching { fr.requestFocus() } }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Fechar", color = TextSecondary) } },
+    )
+}
+
+@Composable
+private fun LangOption(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(shape)
+            .background(if (focused || selected) AccentSoft else Color.Transparent)
+            .then(if (focused) Modifier.border(2.dp, Color.White, shape) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = TextPrimary, fontSize = 16.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
+        if (selected) Icon(Icons.Default.Check, "Selecionado", tint = Accent)
+    }
 }
 
 /** Uma preferência de escolha única em pílulas. Salva na hora (é local, sem rede). */

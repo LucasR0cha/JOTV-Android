@@ -9,7 +9,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -23,10 +25,13 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.*
@@ -61,6 +66,22 @@ private sealed class MoviesRoute(val route: String) {
     object Descobrir : MoviesRoute("movies_descobrir")
     object Downloads : MoviesRoute("movies_downloads")
     object Profiles : MoviesRoute("movies_profiles")
+    object HomeCustomize : MoviesRoute("movies_home_customize")
+    object Debrid : MoviesRoute("movies_debrid")
+    object Accounts : MoviesRoute("movies_accounts")
+    object Live : MoviesRoute("movies_live")
+    object LiveSources : MoviesRoute("movies_live_sources")
+    object LivePlayer : MoviesRoute("movies_live_player/{id}") {
+        fun create(id: String) = "movies_live_player/" + android.net.Uri.encode(id)
+    }
+    object Collections : MoviesRoute("movies_collections")
+    object CollectionEdit : MoviesRoute("movies_collection_edit/{collectionId}") {
+        fun create(id: String?) = "movies_collection_edit/" + android.net.Uri.encode(id ?: "new")
+    }
+    object CollectionFolder : MoviesRoute("movies_collection_folder/{collectionId}/{folderId}") {
+        fun create(collectionId: String, folderId: String) =
+            "movies_collection_folder/" + android.net.Uri.encode(collectionId) + "/" + android.net.Uri.encode(folderId)
+    }
 }
 
 /** Na TV a tela entra na escala do webOS ([com.joabtv.app.ui.tv.TvScaled]). No celular fica igual. */
@@ -87,12 +108,14 @@ private data class PlayerData(
 private val playerCache = mutableMapOf<Int, PlayerData>()
 private var playerIdCounter = 0
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun MoviesNavigation(
     deviceLayout: DeviceLayout = DeviceLayout.PHONE,
     onRestartApp: () -> Unit,
 ) {
     val isTV = deviceLayout == DeviceLayout.TV
+    val inputModeManager = androidx.compose.ui.platform.LocalInputModeManager.current
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -102,7 +125,12 @@ fun MoviesNavigation(
         currentRoute == MoviesRoute.Search.route ||
         currentRoute == MoviesRoute.Settings.route ||
         currentRoute == MoviesRoute.Profiles.route ||
-        currentRoute == MoviesRoute.AddonStore.route
+        currentRoute == MoviesRoute.AddonStore.route ||
+        currentRoute == MoviesRoute.HomeCustomize.route ||
+        currentRoute == MoviesRoute.Debrid.route ||
+        currentRoute == MoviesRoute.Accounts.route ||
+        currentRoute == MoviesRoute.LiveSources.route ||
+        currentRoute?.startsWith("movies_live_player") == true
     val showTabletRail = deviceLayout == DeviceLayout.TABLET && !isFullscreen
 
     fun navigateToPlayer(
@@ -149,13 +177,49 @@ fun MoviesNavigation(
                     navController.navigate(MoviesRoute.Detail.create(item.embedId, item.tmdbId, item.type))
                 }
                 // TV tem Início própria no desenho do webOS. Celular segue com a dele.
-                if (isTV) com.joabtv.app.ui.tv.TvHomeScreen(onItemClick = openDetail, navigationOpen = menuOpen)
+                if (isTV) com.joabtv.app.ui.tv.TvHomeScreen(
+                    onItemClick = openDetail, navigationOpen = menuOpen,
+                    onFolderClick = { c, f -> navController.navigate(MoviesRoute.CollectionFolder.create(c, f)) },
+                )
                 else MoviesHomeScreen(
                     onItemClick     = openDetail,
                     onSearchClick   = { navController.navigate(MoviesRoute.Search.route) },
                     onSettingsClick = { navController.navigate(MoviesRoute.Settings.route) },
                     onLibraryClick  = { navController.navigate(MoviesRoute.MinhaLista.route) },
+                    onCustomize     = { navController.navigate(MoviesRoute.HomeCustomize.route) },
+                    onFolderClick   = { c, f -> navController.navigate(MoviesRoute.CollectionFolder.create(c, f)) },
                 )
+            }
+
+            // Coleções no formato do Nuvio (celular primeiro).
+            composable(MoviesRoute.Collections.route) {
+                tvScale(isTV) {
+                    com.joabtv.app.ui.collections.CollectionsScreen(
+                        onBack = { navController.popBackStack() },
+                        onEdit = { id -> navController.navigate(MoviesRoute.CollectionEdit.create(id)) },
+                    )
+                }
+            }
+            composable(
+                MoviesRoute.CollectionEdit.route,
+                arguments = listOf(navArgument("collectionId") { type = NavType.StringType }),
+            ) {
+                tvScale(isTV) { com.joabtv.app.ui.collections.CollectionEditorScreen(onBack = { navController.popBackStack() }) }
+            }
+            composable(
+                MoviesRoute.CollectionFolder.route,
+                arguments = listOf(
+                    navArgument("collectionId") { type = NavType.StringType },
+                    navArgument("folderId") { type = NavType.StringType },
+                ),
+            ) {
+                tvScale(isTV) { com.joabtv.app.ui.collections.FolderScreen(
+                    onBack = { navController.popBackStack() },
+                    onItemClick = { item ->
+                        movieCache[cacheKey(item.tmdbId, item.type)] = item
+                        navController.navigate(MoviesRoute.Detail.create(item.embedId, item.tmdbId, item.type))
+                    },
+                ) }
             }
 
             composable(
@@ -249,6 +313,7 @@ fun MoviesNavigation(
                     episode     = data.episode,
                     episodeTotal = data.episodeTotal,
                     sources     = data.sources,
+                    television = isTV,
                     onBack      = { navController.popBackStack() },
                 )
                 }
@@ -296,6 +361,11 @@ fun MoviesNavigation(
                         onPlatformChanged = onRestartApp,
                         onOpenAddons      = { navController.navigate(MoviesRoute.Addons.route) },
                         onOpenProfiles    = { navController.navigate(MoviesRoute.Profiles.route) },
+                        onOpenHomeCustomize = { navController.navigate(MoviesRoute.HomeCustomize.route) },
+                        onOpenDebrid = { navController.navigate(MoviesRoute.Debrid.route) },
+                        onOpenAccounts = { navController.navigate(MoviesRoute.Accounts.route) },
+                        onOpenLive = { navController.navigate(MoviesRoute.LiveSources.route) },
+                        onOpenCollections = { navController.navigate(MoviesRoute.Collections.route) },
                     )
                 }
             }
@@ -311,6 +381,47 @@ fun MoviesNavigation(
                     com.joabtv.app.ui.settings.AddonManagerScreen(
                         onBack = { navController.popBackStack() },
                         onExplore = { navController.navigate(MoviesRoute.AddonStore.route) },
+                        onCustomizeHome = { navController.navigate(MoviesRoute.HomeCustomize.route) },
+                    )
+                }
+            }
+
+            // TV ao vivo (listas M3U e contas Xtream, com guia).
+            composable(MoviesRoute.Live.route) {
+                com.joabtv.app.ui.live.LiveTvScreen(
+                    onPlay = { id -> navController.navigate(MoviesRoute.LivePlayer.create(id)) },
+                    onSources = { navController.navigate(MoviesRoute.LiveSources.route) },
+                )
+            }
+            composable(MoviesRoute.LiveSources.route) {
+                tvScale(isTV) { com.joabtv.app.ui.live.LiveSourcesScreen(onBack = { navController.popBackStack() }) }
+            }
+            composable(
+                MoviesRoute.LivePlayer.route,
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                com.joabtv.app.ui.live.LivePlayerScreen(
+                    channelId = entry.arguments?.getString("id").orEmpty(),
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            // Contas Stremio e Nuvio (login, importar addons, lista, progresso e debrid).
+            composable(MoviesRoute.Accounts.route) {
+                tvScale(isTV) { com.joabtv.app.ui.settings.AccountsScreen(onBack = { navController.popBackStack() }) }
+            }
+
+            // Debrid (Real-Debrid, TorBox e Premiumize). Torrent vira link direto.
+            composable(MoviesRoute.Debrid.route) {
+                tvScale(isTV) { com.joabtv.app.ui.settings.DebridScreen(onBack = { navController.popBackStack() }) }
+            }
+
+            // Personalizar Início (fileiras, ordem, nomes, destaque e catálogo JOTV).
+            composable(MoviesRoute.HomeCustomize.route) {
+                tvScale(isTV) {
+                    com.joabtv.app.ui.settings.HomeCustomizeScreen(
+                        onBack = { navController.popBackStack() },
+                        onOpenAddons = { navController.navigate(MoviesRoute.Addons.route) },
                     )
                 }
             }
@@ -344,7 +455,9 @@ fun MoviesNavigation(
 
     // Barra inferior do celular (Início, Descobrir, Minha Lista, Downloads, Busca e Configurações).
     // "Cinema" foi removido: apontava para a mesma rota de "Início" (destaque duplo + aba morta).
-    val vodItems = vodNavItems(
+    val liveBar: com.joabtv.app.ui.live.LiveBarViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+    val liveOn by liveBar.show.collectAsStateWithLifecycle()
+    val baseItems = vodNavItems(
         onInicio     = { navTab(MoviesRoute.Home.route) },
         onMinhaLista = { navTab(MoviesRoute.MinhaLista.route) },
         onBusca      = { navTab(MoviesRoute.Search.route) },
@@ -356,6 +469,10 @@ fun MoviesNavigation(
         downloadsRoute  = MoviesRoute.Downloads.route,
         descobrirRoute  = MoviesRoute.Descobrir.route,
     )
+    // Aba Ao vivo só existe com fonte de canais, logo depois da Início.
+    val vodItems = if (!liveOn) baseItems else baseItems.take(1) +
+        com.joabtv.app.ui.common.PhoneNavItem(MoviesRoute.Live.route, "Ao vivo", androidx.compose.material.icons.Icons.Default.LiveTv) { navTab(MoviesRoute.Live.route) } +
+        baseItems.drop(1)
 
     // IMPORTANTE: o NavHost precisa ficar SEMPRE no mesmo slot de composição. Se ele
     // trocar de pai (ex.: dentro do Scaffold vs. direto) quando isFullscreen muda, o
@@ -367,6 +484,7 @@ fun MoviesNavigation(
         MoviesRoute.Home.route, MoviesRoute.Search.route, MoviesRoute.Descobrir.route,
         MoviesRoute.MinhaLista.route, MoviesRoute.Addons.route, MoviesRoute.Profiles.route,
         MoviesRoute.Settings.route,
+        MoviesRoute.Live.route,
     )
     val showTvMenu = isTV && currentRoute in tvMenuRoutes
     val profVm: com.joabtv.app.ui.settings.ProfilesViewModel = androidx.hilt.navigation.compose.hiltViewModel()
@@ -404,8 +522,13 @@ fun MoviesNavigation(
         // do navHost()). Não dá pra juntar com o handler de "fora da Início" lá embaixo sem
         // quebrar essa ordem.
         androidx.activity.compose.BackHandler(enabled = currentRoute == MoviesRoute.Home.route) {
+            lastKeyAt = android.os.SystemClock.uptimeMillis()
+            lastMenuKeyAt = lastKeyAt
             if (menuOpen) askExit = true
-            else runCatching { menuRequester(MoviesRoute.Home.route).requestFocus() }
+            else {
+                inputModeManager.requestInputMode(androidx.compose.ui.input.InputMode.Keyboard)
+                runCatching { menuRequester(MoviesRoute.Home.route).requestFocus() }
+            }
         }
         if (askExit) {
             val activity = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
@@ -416,18 +539,23 @@ fun MoviesNavigation(
     com.joabtv.app.ui.common.ProvideTvMode(isTV) {
     Box(
         Modifier.fillMaxSize().background(Background)
+            .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
             .then(if (isTV) Modifier.onPreviewKeyEvent {
                 if (it.type == androidx.compose.ui.input.key.KeyEventType.KeyDown) {
                     lastKeyAt = android.os.SystemClock.uptimeMillis()
                     val kc = it.nativeKeyEvent.keyCode
                     if (kc == android.view.KeyEvent.KEYCODE_DPAD_LEFT || kc == android.view.KeyEvent.KEYCODE_BACK) lastMenuKeyAt = lastKeyAt
+                    if (menuOpen && kc == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) {
+                        runCatching { contentFocus.requestFocus() }
+                        return@onPreviewKeyEvent true
+                    }
                 }
                 false
             } else Modifier),
     ) {
         // Reserva p/ a barra: altura do conteúdo (~62dp) + inset da navigation bar do
         // sistema, para a última linha do grid não ficar escondida atrás da barra.
-        val barReserve = 64.dp + WindowInsets.navigationBars.asPaddingValues()
+        val barReserve = 88.dp + WindowInsets.navigationBars.asPaddingValues()
             .calculateBottomPadding()
         // Na TV a barra vira o menu lateral próprio (TvSideMenu).
         val hideBar = isFullscreen || isTV || showTabletRail
@@ -437,7 +565,7 @@ fun MoviesNavigation(
                 .then(
                     when {
                         showTvMenu && currentRoute != MoviesRoute.Home.route -> Modifier.padding(start = TvMenuClosed)
-                        showTabletRail -> Modifier.padding(start = 80.dp)
+                        showTabletRail -> Modifier.padding(start = tabletRailWidth())
                         hideBar -> Modifier
                         else -> Modifier.padding(bottom = barReserve)
                     }
@@ -466,12 +594,12 @@ fun MoviesNavigation(
         if (showTvMenu) {
             val reduced = com.joabtv.app.ui.common.rememberReducedMotion()
             val scrim by androidx.compose.animation.core.animateFloatAsState(
-                if (menuOpen) .62f else 0f,
+                if (menuOpen) .4f else 0f,
                 com.joabtv.app.ui.common.joabTween(220, reduced), label = "menuScrim",
             )
             Box(
                 Modifier.fillMaxSize().graphicsLayer { alpha = scrim }
-                    .background(androidx.compose.ui.graphics.Color(0xFF02060E))
+                    .background(androidx.compose.ui.graphics.Color.Black)
                     .focusProperties { canFocus = false }
                     .then(if (menuOpen) Modifier.clickable(
                         interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
@@ -484,13 +612,14 @@ fun MoviesNavigation(
                 if (r == currentRoute) runCatching { contentFocus.requestFocus() } else navTab(r)
             } }
             TvSideMenu(
-                main = listOf(
-                    TvMenuItem(MoviesRoute.Home.route, "Início", androidx.compose.material.icons.Icons.Default.Home, go(MoviesRoute.Home.route)),
-                    TvMenuItem(MoviesRoute.Search.route, "Buscar", androidx.compose.material.icons.Icons.Default.Search, go(MoviesRoute.Search.route)),
-                    TvMenuItem(MoviesRoute.Descobrir.route, "Descobrir", androidx.compose.material.icons.Icons.Default.Explore, go(MoviesRoute.Descobrir.route)),
-                    TvMenuItem(MoviesRoute.MinhaLista.route, "Minha Lista", androidx.compose.material.icons.Icons.Default.BookmarkBorder, go(MoviesRoute.MinhaLista.route)),
-                    TvMenuItem(MoviesRoute.Addons.route, "Addons", androidx.compose.material.icons.Icons.Default.Extension, go(MoviesRoute.Addons.route)),
-                ),
+                main = buildList {
+                    add(TvMenuItem(MoviesRoute.Home.route, "Início", Icons.Default.Home, go(MoviesRoute.Home.route)))
+                    if (liveOn) add(TvMenuItem(MoviesRoute.Live.route, "Ao vivo", Icons.Default.LiveTv, go(MoviesRoute.Live.route)))
+                    add(TvMenuItem(MoviesRoute.Search.route, "Buscar", Icons.Default.Search, go(MoviesRoute.Search.route)))
+                    add(TvMenuItem(MoviesRoute.Descobrir.route, "Descobrir", Icons.Default.Explore, go(MoviesRoute.Descobrir.route)))
+                    add(TvMenuItem(MoviesRoute.MinhaLista.route, "Minha Lista", Icons.Default.Bookmark, go(MoviesRoute.MinhaLista.route)))
+                    add(TvMenuItem(MoviesRoute.Addons.route, "Addons", Icons.Default.Extension, go(MoviesRoute.Addons.route)))
+                },
                 bottom = listOf(
                     TvMenuItem(MoviesRoute.Profiles.route, profile.name, null, go(MoviesRoute.Profiles.route), avatar = profile),
                     TvMenuItem(MoviesRoute.Settings.route, "Configurações", androidx.compose.material.icons.Icons.Default.Settings, go(MoviesRoute.Settings.route)),
@@ -534,6 +663,9 @@ fun MoviesNavigation(
 }
 
 @Composable
+private fun tabletRailWidth() = (80 + 24 * (androidx.compose.ui.platform.LocalDensity.current.fontScale - 1f).coerceIn(0f, 1f)).dp
+
+@Composable
 private fun MoviesTabletRail(
     currentRoute: String?,
     items: List<com.joabtv.app.ui.common.PhoneNavItem>,
@@ -542,48 +674,39 @@ private fun MoviesTabletRail(
     profile: com.joabtv.app.data.local.Profile,
     onProfile: () -> Unit,
 ) {
-    val colors = NavigationRailItemDefaults.colors(
-        selectedIconColor = com.joabtv.app.ui.theme.Accent,
-        selectedTextColor = com.joabtv.app.ui.theme.TextPrimary,
-        unselectedIconColor = com.joabtv.app.ui.theme.TextSecondary,
-        unselectedTextColor = com.joabtv.app.ui.theme.TextSecondary,
-        indicatorColor = com.joabtv.app.ui.theme.AccentSoft,
-    )
-    NavigationRail(
-        modifier = Modifier.fillMaxHeight().width(80.dp),
-        containerColor = com.joabtv.app.ui.theme.BackgroundElevated,
-    ) {
-        Column(
-            Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).navigationBarsPadding(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            items.forEach { item ->
-                NavigationRailItem(
-                    selected = currentRoute == item.route, onClick = item.onClick,
-                    icon = { Icon(item.icon, null, Modifier.size(26.dp)) },
-                    label = { Text(item.label, fontSize = 11.sp, maxLines = 2) },
-                    colors = colors,
-                )
-            }
-            NavigationRailItem(
-                selected = currentRoute == settingsRoute, onClick = onSettings,
-                icon = { Icon(Icons.Default.Settings, null, Modifier.size(26.dp)) },
-                label = { Text("Configurações", fontSize = 11.sp, maxLines = 2) },
-                colors = colors,
-            )
-            NavigationRailItem(
-                selected = false, onClick = onProfile,
-                icon = { com.joabtv.app.ui.settings.ProfileAvatar(profile, 28.dp) },
-                label = { Text("Perfil", fontSize = 11.sp) }, colors = colors,
-            )
+    Column(Modifier.fillMaxHeight().width(tabletRailWidth()).background(com.joabtv.app.ui.theme.BackgroundElevated)
+        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical))
+        .verticalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        items.forEach { item ->
+            TouchRailItem(item.icon, item.label, currentRoute == item.route, item.onClick)
         }
+        TouchRailItem(Icons.Default.Settings, "Configurações", currentRoute == settingsRoute, onSettings)
+        TouchRailItem(Icons.Default.Bookmark, "Perfil", false, onProfile, profile)
     }
 }
 
-/**
- * A barra compacta divide a largura entre as ações e mantém os ícones dentro da tela.
- */
+@Composable
+private fun TouchRailItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, selected: Boolean, onClick: () -> Unit,
+    profile: com.joabtv.app.data.local.Profile? = null,
+) {
+    Column(Modifier.fillMaxWidth().heightIn(min = 64.dp)
+        .clip(androidx.compose.foundation.shape.RoundedCornerShape(22.dp))
+        .background(if (selected) androidx.compose.ui.graphics.Color.White else androidx.compose.ui.graphics.Color.Transparent)
+        .semantics { this.selected = selected }
+        .clickable(role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick).padding(horizontal = 5.dp, vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (profile != null) com.joabtv.app.ui.settings.ProfileAvatar(profile, 28.dp)
+        else Icon(icon, null, tint = if (selected) com.joabtv.app.ui.theme.TextOnLight else com.joabtv.app.ui.theme.TextSecondary,
+            modifier = Modifier.size(26.dp))
+        Text(label, color = if (selected) com.joabtv.app.ui.theme.TextOnLight else com.joabtv.app.ui.theme.TextSecondary,
+            fontSize = 11.sp, lineHeight = 15.sp, maxLines = 3, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+    }
+}
+
+/** Cápsula inferior por toque. As ações extras ficam na lista rolável de Mais. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MoviesBottomBar(
     currentRoute: String?,
@@ -593,27 +716,46 @@ private fun MoviesBottomBar(
     profile: com.joabtv.app.data.local.Profile,
     onProfile: () -> Unit,
 ) {
-    val entries: @Composable RowScope.() -> Unit = {
-        items.forEach { item ->
+    var more by remember { mutableStateOf(false) }
+    val primaryRoutes = setOf(MoviesRoute.Home.route, MoviesRoute.Descobrir.route, MoviesRoute.MinhaLista.route, MoviesRoute.Search.route)
+    val primaryCount = if (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp < 300) 3 else 4
+    val primary = items.filter { it.route in primaryRoutes }.take(primaryCount)
+    val extra = items.filter { it !in primary }
+    val moreSelected = currentRoute == settingsRoute || extra.any { it.route == currentRoute }
+    Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)
+        .clip(androidx.compose.foundation.shape.RoundedCornerShape(32.dp)).background(com.joabtv.app.ui.theme.BackgroundElevated)
+        .border(1.dp, com.joabtv.app.ui.theme.BorderSubtle, androidx.compose.foundation.shape.RoundedCornerShape(32.dp))
+        .padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        primary.forEach { item ->
             MoviesBottomBarItem(item.icon, item.label, currentRoute == item.route, item.onClick, Modifier.weight(1f))
         }
-        MoviesBottomBarItem(Icons.Default.Settings, "Configurações", currentRoute == settingsRoute, onSettings, Modifier.weight(1f))
-        Box(
-            Modifier.weight(1f).height(56.dp)
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                .clickable(onClickLabel = "Trocar perfil", role = androidx.compose.ui.semantics.Role.Button, onClick = onProfile),
-            contentAlignment = Alignment.Center,
-        ) { com.joabtv.app.ui.settings.ProfileAvatar(profile, 32.dp) }
+        MoviesBottomBarItem(Icons.Default.MoreHoriz, "Mais opções", moreSelected || more, { more = true }, Modifier.weight(1f))
     }
-    val bg = androidx.compose.ui.graphics.Color(0xF5080808)
-        androidx.compose.foundation.layout.Column(Modifier.fillMaxWidth().background(bg)) {
-            Box(Modifier.fillMaxWidth().height(1.dp).background(com.joabtv.app.ui.theme.Border.copy(alpha = 0.6f)))
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp).navigationBarsPadding(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
-            ) { entries() }
+    if (more) ModalBottomSheet(onDismissRequest = { more = false }, containerColor = com.joabtv.app.ui.theme.BackgroundElevated,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Text("Navegação", color = com.joabtv.app.ui.theme.TextPrimary, fontSize = 22.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            extra.forEach { item ->
+                TouchMenuRow(item.icon, item.label, currentRoute == item.route) { more = false; item.onClick() }
+            }
+            TouchMenuRow(Icons.Default.Settings, "Configurações", currentRoute == settingsRoute) { more = false; onSettings() }
+            TouchMenuRow(Icons.Default.Bookmark, "Perfil · "+profile.name, false) { more = false; onProfile() }
         }
+    }
+}
+
+@Composable
+private fun TouchMenuRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+        .background(if (selected) com.joabtv.app.ui.theme.AccentSoft else com.joabtv.app.ui.theme.BackgroundCard)
+        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Icon(icon, null, tint = com.joabtv.app.ui.theme.TextPrimary, modifier = Modifier.size(24.dp))
+        Text(label, color = com.joabtv.app.ui.theme.TextPrimary, fontSize = 16.sp, lineHeight = 22.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+    }
 }
 
 @Composable
@@ -624,25 +766,13 @@ private fun MoviesBottomBarItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val accent = com.joabtv.app.ui.theme.Accent
-    Box(
-        modifier
-            .height(56.dp)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-            .background(if (selected) com.joabtv.app.ui.theme.AccentSoft else androidx.compose.ui.graphics.Color.Transparent)
-            .clickable(role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            icon, contentDescription = label,
-            tint = if (selected) accent else com.joabtv.app.ui.theme.TextTertiary,
-            modifier = Modifier.size(26.dp),
-        )
-        // Traço do item ativo, como o .side-item.is-active do webOS.
-        if (selected) Box(
-            Modifier.align(Alignment.BottomCenter).size(22.dp, 3.dp)
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(2.dp)).background(accent),
-        )
+    Box(modifier.heightIn(min = 52.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(26.dp))
+        .background(if (selected) androidx.compose.ui.graphics.Color.White else androidx.compose.ui.graphics.Color.Transparent)
+        .semantics { this.selected = selected }
+        .clickable(role = androidx.compose.ui.semantics.Role.Tab, onClick = onClick), contentAlignment = Alignment.Center) {
+        Icon(icon, contentDescription = label,
+            tint = if (selected) com.joabtv.app.ui.theme.TextOnLight else com.joabtv.app.ui.theme.TextSecondary,
+            modifier = Modifier.size(26.dp))
     }
 }
 
@@ -665,6 +795,7 @@ private fun MinhaListaScreen(
         androidx.hilt.navigation.compose.hiltViewModel()
     val watchlist by vm.watchlist.collectAsStateWithLifecycle()
     val recent by vm.recentlyPlayed.collectAsStateWithLifecycle()
+    val recentArtwork by vm.recentArtwork.collectAsStateWithLifecycle()
 
     // Itens pendentes de remoção (segurar → confirma), um por seção.
     var pendingRemove by remember { mutableStateOf<com.joabtv.app.data.local.entity.MovieHistoryEntity?>(null) }
@@ -724,7 +855,9 @@ private fun MinhaListaScreen(
             sub = if (watchlist.isEmpty() && recent.isEmpty()) null else "${watchlist.size} salvos  ·  ${recent.size} em andamento",
         )
         val pad = com.joabtv.app.ui.common.pagePadding()
-        val perRow = ((androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp - 84) / 140).coerceIn(3, 8)
+        val config = androidx.compose.ui.platform.LocalConfiguration.current
+        val availableWidth = config.screenWidthDp - if (config.screenWidthDp >= 600 && config.screenHeightDp >= 480) tabletRailWidth().value.toInt() else 0
+        val perRow = com.joabtv.app.ui.common.posterColumns(availableWidth, config.fontScale)
 
         if (watchlist.isEmpty() && recent.isEmpty()) {
             // Estado vazio premium centralizado.
@@ -747,7 +880,6 @@ private fun MinhaListaScreen(
                 item {
                     com.joabtv.app.ui.common.SectionHeader(
                         title = "Continuar assistindo",
-                        eyebrow = "Recentes",
                         action = { CountPill(recent.size) },
                     )
                 }
@@ -762,17 +894,14 @@ private fun MinhaListaScreen(
                         ) { h ->
                             val pct = if (h.durationMs > 0L)
                                 (h.positionMs.toFloat() / h.durationMs).coerceIn(0f, 1f) else null
-                            LibraryPoster(
-                                title = h.title,
-                                posterUrl = h.posterUrl,
-                                subtitle = remainingLabel(h.positionMs, h.durationMs)
-                                    ?: h.lastEpisode.ifBlank { null },
-                                badge = h.lastEpisode.ifBlank { null },
+                            val item = rebuild(h.tmdbId, typeOf(h.type), h.title, h.posterUrl, "")
+                            com.joabtv.app.ui.common.ContinueCard(
+                                item = item,
+                                onClick = { onItemClick(item) },
+                                artwork = recentArtwork[com.joabtv.app.data.local.posterKey(item)],
+                                remaining = if (h.durationMs > h.positionMs) ((h.durationMs - h.positionMs + 59_999) / 60_000).toInt() else null,
+                                episode = h.lastEpisode,
                                 progress = pct,
-                                modifier = Modifier.width(128.dp),
-                                onClick = {
-                                    onItemClick(rebuild(h.tmdbId, typeOf(h.type), h.title, h.posterUrl, ""))
-                                },
                                 onLongClick = { pendingRemove = h }, // segurar → remover
                             )
                         }
@@ -823,16 +952,11 @@ private fun MinhaListaScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     row.forEach { w ->
-                        LibraryPoster(
-                            title = w.title,
-                            posterUrl = w.posterUrl,
-                            subtitle = w.year.ifBlank { null },
-                            badge = null,
-                            progress = null,
+                        val item = rebuild(w.tmdbId, typeOf(w.type), w.title, w.posterUrl, w.year)
+                        com.joabtv.app.ui.common.PosterCard(
+                            item = item,
+                            onClick = { onItemClick(item) },
                             modifier = Modifier.weight(1f),
-                            onClick = {
-                                onItemClick(rebuild(w.tmdbId, typeOf(w.type), w.title, w.posterUrl, w.year))
-                            },
                             onLongClick = { pendingUnsave = w }, // segurar → tirar da lista
                         )
                     }
@@ -843,37 +967,6 @@ private fun MinhaListaScreen(
 
             item { Spacer(Modifier.height(24.dp)) }
         }
-    }
-}
-
-/**
- * Card da biblioteca: pôster limpo (arte sem texto por cima) + título e subtítulo ABAIXO.
- * Resolve o problema antigo de nome ilegível sobre pôster claro. [progress] desenha a barra
- * no rodapé da arte e [badge] o selo do episódio no canto superior direito.
- */
-@Composable
-private fun LibraryPoster(
-    title: String,
-    posterUrl: String,
-    subtitle: String?,
-    badge: String?,
-    progress: Float?,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    onLongClick: (() -> Unit)? = null,
-) {
-    androidx.compose.foundation.layout.Column(modifier) {
-        com.joabtv.app.ui.common.MediaPosterCard(
-            title = title,
-            imageUrl = posterUrl,
-            onClick = onClick,
-            onLongClick = onLongClick,
-            modifier = Modifier.fillMaxWidth(),
-            cleanPoster = true,
-            progress = progress,
-            badge = badge?.let { { com.joabtv.app.ui.common.Badge(label = it) } },
-        )
-        com.joabtv.app.ui.common.PosterCaption(title, subtitle)
     }
 }
 

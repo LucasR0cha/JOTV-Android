@@ -15,31 +15,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.joabtv.app.R
 
-// Inter, a mesma fonte do webOS. Arquivo variável, cada peso pede o eixo wght (Android 8 ou mais).
+// Mesma fonte local do webOS. Cada peso usa o eixo wght do arquivo variável.
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
-private fun inter(w: FontWeight) = Font(
-    R.font.inter_variable, w,
+private fun jakarta(w: FontWeight) = Font(
+    R.font.plus_jakarta_sans, w,
     variationSettings = androidx.compose.ui.text.font.FontVariation.Settings(androidx.compose.ui.text.font.FontVariation.weight(w.weight)),
 )
-val Inter = FontFamily(
-    inter(FontWeight.Normal), inter(FontWeight.Medium), inter(FontWeight.SemiBold),
-    inter(FontWeight.Bold), inter(FontWeight.ExtraBold),
+val PlusJakartaSans = FontFamily(
+    jakarta(FontWeight.Normal), jakarta(FontWeight.Medium), jakarta(FontWeight.SemiBold),
+    jakarta(FontWeight.Bold), jakarta(FontWeight.ExtraBold),
 )
+val Inter = PlusJakartaSans
 val JetBrainsSans = Inter
 
-@OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
-private fun displayFont(w: FontWeight) = Font(
-    R.font.dm_sans_variable, w,
-    variationSettings = androidx.compose.ui.text.font.FontVariation.Settings(
-        androidx.compose.ui.text.font.FontVariation.weight(w.weight),
-        androidx.compose.ui.text.font.FontVariation.opticalSizing(40.sp),
-    ),
-)
-val DisplayFont = FontFamily(
-    displayFont(FontWeight.SemiBold), displayFont(FontWeight.Bold), displayFont(FontWeight.ExtraBold),
-)
+val DisplayFont = PlusJakartaSans
 
-// Nomes antigos. Todas as telas passam a desenhar em Inter.
+// Nomes mantidos para os componentes existentes.
 val SoraFontFamily    = Inter
 val ManropeFontFamily = Inter
 val InterFontFamily   = Inter
@@ -66,7 +57,7 @@ private val JoabColorScheme = darkColorScheme(
     outlineVariant     = BorderSubtle,
 )
 
-// Escala tipográfica em Inter. Títulos em ExtraBold com letra mais junta, como no webOS.
+// Títulos em ExtraBold com letra mais junta, como no webOS.
 private val JoabTypography = Typography(
     displayLarge   = TextStyle(fontFamily = Inter, fontWeight = FontWeight.ExtraBold,     fontSize = 38.sp, lineHeight = 42.sp, letterSpacing = (-1.2).sp),
     displayMedium  = TextStyle(fontFamily = Inter, fontWeight = FontWeight.ExtraBold,     fontSize = 32.sp, lineHeight = 36.sp, letterSpacing = (-0.8).sp),

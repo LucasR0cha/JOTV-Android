@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,6 +44,10 @@ data class SourceInfo(
     val language: String,
     /** Pills técnicas extras (tamanho, MP4, HTTP, verificado…). */
     val tags: List<String>,
+    val fileName: String = "",
+    val size: String = "",
+    val seeds: Int = 0,
+    val providers: List<String> = emptyList(),
 )
 
 private val EMOJI = Regex(
@@ -60,6 +65,9 @@ private fun clean(s: String): String = s
 private val SIZE = Regex("""\b\d+([.,]\d+)?\s?(GB|MB)\b""", RegexOption.IGNORE_CASE)
 private val SEEDS = Regex("""\b(\d+)\s*(seeds?|seeders?)\b""", RegexOption.IGNORE_CASE)
 private val QUALITY_WORDS = Regex("""\b(4K|2160p?|1440p|1080p|720p|480p|360p|FHD|UHD|HDR|HD)\b""", RegexOption.IGNORE_CASE)
+private val CODEC = Regex("""\b(x\.?264|h\.?264|avc|x\.?265|h\.?265|hevc|av1)\b""", RegexOption.IGNORE_CASE)
+private val RELEASE = Regex("""\b(blu-?ray|remux|web-?dl|web-?rip|br-?rip|bd-?rip|hdtv|dvd-?rip)\b""", RegexOption.IGNORE_CASE)
+private val ONLY_NUMBERS = Regex("""^[\d\s/.,%]+$""")
 
 /**
  * Traduz o label cru de uma fonte em [SourceInfo].
@@ -102,19 +110,23 @@ fun parseSourceLabel(
     }
 
     val language = parts.firstOrNull { p ->
-        p.contains("dubl", true) || p.contains("legend", true) ||
+        p.contains("dubl", true) || p.contains("legend", true) || p.contains("dual", true) ||
             p.equals("dub", true) || p.equals("leg", true) || p.contains("nacional", true)
     }?.let {
         when {
             it.contains("dubl", true) || it.equals("dub", true) || it.contains("nacional", true) -> "Dublado"
+            it.contains("dual", true) -> "Dual áudio"
             else -> "Legendado"
         }
     } ?: ""
 
     // Servidor: pedaço que fala de servidor, senão o primeiro que sobrar sem ser qualidade/idioma.
+    // Torrent não tem servidor, a origem (Bluray, WEB-DL) é o que diferencia uma da outra.
     val server = parts.firstOrNull { it.contains("servidor", true) || it.contains("sevidor", true) || it.contains("server", true) }
+        ?: parts.firstOrNull { RELEASE.containsMatchIn(it) && it.length <= 28 }
         ?: parts.firstOrNull { p ->
             !QUALITY_WORDS.matches(p) && !p.contains("dubl", true) && !p.contains("legend", true) &&
+                !ONLY_NUMBERS.matches(p) && !p.contains("dual", true) &&
                 !p.contains("filme", true) && !p.contains("série", true) && !p.contains("serie", true) &&
                 !SIZE.containsMatchIn(p) && p.length in 3..28 &&
                 // Pedaço que começa igual ao título é o nome do filme, não servidor.
@@ -123,8 +135,13 @@ fun parseSourceLabel(
         ?: ""
 
     val tags = buildList {
+        // Addon de torrent marca quem compartilha com 👤 (some na limpeza de emoji, então lê do rótulo cru).
+        (SEEDS.find(label)?.groupValues?.get(1) ?: com.joabtv.app.data.torrent.TorrentMagnet.seeders(rawLabel).takeIf { it > 0 }?.toString())
+            ?.let { add("$it seeds") }
         SIZE.find(label)?.value?.let { add(it.uppercase()) }
-        SEEDS.find(label)?.let { add("${it.groupValues[1]} seeds") }
+        CODEC.find(label)?.value?.lowercase()?.let { c ->
+            add(when { "av1" in c -> "AV1"; "265" in c || "hevc" in c -> "HEVC"; else -> "H.264" })
+        }
         if (label.contains("HDR", true)) add("HDR")
         if (label.contains("verificad", true)) add("Verificado")
         if (label.contains("mp4", true)) add("MP4")
@@ -151,93 +168,91 @@ private fun qualityColor(q: String): Color = when {
  * Linha de fonte do detalhe. Faixa de qualidade à esquerda, addon em destaque, servidor e
  * idioma embaixo, pills técnicas e os botões de tocar e baixar à direita.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SourceCard(
     info: SourceInfo,
-    /** Rótulo do transporte ("HTTP", "DUB", "LEG"). */
     tag: String,
     tagColor: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onDownload: (() -> Unit)? = null,
-    /** Aviso no lugar da linha de servidor e idioma (fonte morta, outro filme). */
     note: String? = null,
+    selected: Boolean = false,
+    suggested: Boolean = false,
+    focusedByDpad: Boolean = false,
+    manualFocus: Boolean = false,
 ) {
-    val src = remember { MutableInteractionSource() }
-    val pressed by src.collectIsPressedAsState()
+    val interaction = remember { MutableInteractionSource() }
     var focused by remember { mutableStateOf(false) }
-    val borderColor = if (focused) Color.White else Border
-
-    Row(
-        modifier
-            .fillMaxWidth()
-            .pressScale(src)
-            .shadow(if (focused) 16.dp else 0.dp, RoundedCornerShape(16.dp))
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (focused) AccentSoft else BackgroundCard2)
-            .border(if (focused) 2.dp else 1.dp, borderColor, RoundedCornerShape(16.dp))
+    val focus = focused || focusedByDpad
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier.fillMaxWidth().pressScale(interaction).clip(shape)
+            .background(if (focus || selected) AccentSoft else BackgroundCard2)
+            .border(if (focus) 2.dp else 1.dp, if (focus) Color.White else if (selected) Accent else Border, shape)
             .onFocusChanged { focused = it.isFocused }
-            .clickable(interactionSource = src, indication = null, onClick = onClick)
-            .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .then(if (manualFocus) Modifier.focusProperties { canFocus = false } else Modifier)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Caixa de qualidade (.sc-quality). É o que decide a escolha, então vem primeiro.
-        com.joabtv.app.ui.common.QualityBox(
-            info.quality.ifBlank { "HD" },
-            com.joabtv.app.ui.common.qualityTier(com.joabtv.app.ui.movies.sourceQualityRank(info.quality)),
-            width = 58.dp, height = 48.dp,
-        )
-
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            // Linha 1: de qual addon veio.
-            Text(
-                info.addon,
-                color = TextPrimary,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.ExtraBold,
-                fontFamily = SoraFontFamily,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            // Linha 2: servidor e idioma.
-            val sub = note ?: listOf(info.server, info.language).filter { it.isNotBlank() }.joinToString("  ·  ")
-            if (sub.isNotBlank()) {
-                Text(
-                    sub,
-                    color = if (note != null) Gold else TextSecondary,
-                    fontSize = 13.sp,
-                    fontFamily = ManropeFontFamily,
-                    maxLines = if (note != null) 2 else 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            // Linha 3: pills técnicas.
-            if (info.tags.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    info.tags.forEach { t -> SourcePill(t) }
-                }
+        if (selected || suggested) Text(if (selected) "Tocando agora" else "Melhor opção", color = Accent,
+            fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val font = androidx.compose.ui.platform.LocalDensity.current.fontScale
+            if (maxWidth < (280f * font.coerceAtLeast(1f)).dp) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SourceIdentity(info, Modifier.fillMaxWidth())
+                SourceStats(info)
+            } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+                SourceIdentity(info, Modifier.weight(1f))
+                SourceStats(info)
             }
         }
 
-        // Transporte + ações.
-        com.joabtv.app.ui.common.Badge(tag, tagColor)
-        if (onDownload != null) {
-            Box(
-                Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onDownload),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    Modifier.size(40.dp).clip(CircleShape).background(Surface2),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Default.Download, "Baixar", tint = TextPrimary, modifier = Modifier.size(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    if (info.quality.isNotBlank()) com.joabtv.app.ui.common.Badge(info.quality,
+                        if (info.quality in listOf("4K", "2K")) Gold else Accent)
+                    info.tags.take(10).forEach { SourcePill(it) }
+                    if (info.language.isNotBlank()) SourcePill(info.language)
+                    if (tag.isNotBlank()) com.joabtv.app.ui.common.Badge(tag, tagColor)
+                }
+                if (info.providers.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    info.providers.distinct().take(3).forEach { SourcePill(it) }
+                    if (info.providers.distinct().size > 3) SourcePill("+${info.providers.distinct().size - 3}")
                 }
             }
+            if (onDownload != null) Box(Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onDownload), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Download, "Baixar", tint = TextPrimary, modifier = Modifier.size(20.dp))
+            }
+            Box(Modifier.size(48.dp).clip(CircleShape).background(if (focus) Color.White else Color.White.copy(alpha = .1f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.PlayArrow, null, tint = if (focus) TextOnLight else TextPrimary, modifier = Modifier.size(24.dp))
+            }
         }
+        if (note != null) Text(note, color = Gold, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (info.fileName.isNotBlank()) Text(info.fileName, color = TextTertiary, fontSize = 11.sp,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun SourceIdentity(info: SourceInfo, modifier: Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(info.addon.ifBlank { "Fonte" }, color = TextPrimary, fontSize = 16.sp, lineHeight = 21.sp,
+            fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (info.server.isNotBlank()) Text(info.server, color = TextSecondary, fontSize = 13.sp, lineHeight = 18.sp,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun SourceStats(info: SourceInfo) {
+    if (info.size.isBlank() && info.seeds <= 0) return
+    Column(horizontalAlignment = Alignment.End) {
+        if (info.size.isNotBlank()) Text(info.size, color = TextPrimary, fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold)
+        if (info.seeds > 0) Text("${info.seeds} seeds", color = TextTertiary, fontSize = 11.sp, lineHeight = 15.sp)
     }
 }
 
@@ -247,6 +262,7 @@ private fun SourcePill(text: String) {
         text,
         color = TextSecondary,
         fontSize = 11.sp,
+        lineHeight = 15.sp,
         fontWeight = FontWeight.Bold,
         fontFamily = ManropeFontFamily,
         maxLines = 1,
@@ -268,34 +284,29 @@ fun CollectionPoster(
     isCurrent: Boolean,
     onClick: () -> Unit,
 ) {
-    Column(Modifier.width(128.dp)) {
-        Box {
-            com.joabtv.app.ui.common.MediaPosterCard(
-                title = movie.title,
-                imageUrl = movie.posterUrl,
-                onClick = onClick,
-                modifier = Modifier.fillMaxWidth(),
-                cleanPoster = true,
+    // O número da ordem ocupa o canto, então o pôster sai sem etiqueta (igual ao webOS).
+    Box(Modifier.width(128.dp)) {
+        com.joabtv.app.ui.common.PosterCard(
+            item = movie, onClick = onClick, modifier = Modifier.fillMaxWidth(), showTag = false,
+            caption = movie.title, sub = if (isCurrent) "Assistindo" else movie.year.ifBlank { "Sem data" }, highlight = isCurrent,
+        )
+        // Selo da ordem. Accent no filme atual, escuro nos outros.
+        Box(
+            Modifier
+                .padding(8.dp)
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(if (isCurrent) Accent else Color.Black.copy(alpha = 0.72f))
+                .border(1.dp, if (isCurrent) Accent else Color.White.copy(alpha = 0.25f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                order.toString(),
+                color = if (isCurrent) Color(0xFF06070A) else Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.ExtraBold,
+                fontFamily = SoraFontFamily,
             )
-            // Selo da ordem. Accent no filme atual, escuro nos outros.
-            Box(
-                Modifier
-                    .padding(8.dp)
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .background(if (isCurrent) Accent else Color.Black.copy(alpha = 0.72f))
-                    .border(1.dp, if (isCurrent) Accent else Color.White.copy(alpha = 0.25f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    order.toString(),
-                    color = if (isCurrent) Color(0xFF06070A) else Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontFamily = SoraFontFamily,
-                )
-            }
         }
-        com.joabtv.app.ui.common.PosterCaption(movie.title, if (isCurrent) "Assistindo" else movie.year.ifBlank { "Sem data" }, highlight = isCurrent)
     }
 }

@@ -37,13 +37,9 @@ class SubtitleService @Inject constructor(
         .build()
     private val gson = Gson()
 
-    private val langLabel = mapOf(
-        "pob" to "Português (BR)", "por" to "Português", "eng" to "Inglês",
-        "spa" to "Espanhol", "spl" to "Espanhol (LA)", "fre" to "Francês",
-        "ita" to "Italiano", "ger" to "Alemão", "jpn" to "Japonês",
-    )
-    // Ordem de preferência (PT no topo).
-    private val langRank = mapOf("pob" to 0, "por" to 1, "eng" to 2, "spa" to 3, "spl" to 4)
+    // Nome e ordem vêm de SubLangs, com o idioma de legenda do perfil no topo.
+    private fun rank(lang: String) = com.joabtv.app.data.local.SubLangs.rank(lang, prefs.subLang)
+    private fun label(lang: String) = com.joabtv.app.data.local.SubLangs.label(lang)
 
     /** Texto do arquivo de legenda, ou null se não baixou. */
     suspend fun download(url: String): String? = withContext(Dispatchers.IO) {
@@ -57,7 +53,8 @@ class SubtitleService @Inject constructor(
         kotlinx.coroutines.coroutineScope {
             val os = async { openSubtitles(imdb, type, season, episode) }
             val addons = async { addonSubtitles(imdb, type, season, episode) }
-            (os.await() + addons.await()).distinctBy { it.url }
+            // Ordenação estável, então no mesmo idioma o OpenSubtitles continua antes dos addons.
+            (os.await() + addons.await()).distinctBy { it.url }.sortedBy { rank(it.lang) }
         }
 
     // Addon -> nome, ou null quando o manifest não tem o recurso subtitles. Lido uma vez só.
@@ -83,10 +80,10 @@ class SubtitleService @Inject constructor(
                     resp?.subtitles.orEmpty().mapNotNull { s ->
                         val url = s.url?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
                         val lang = s.lang.orEmpty().lowercase()
-                        ExternalSub(url, lang, (langLabel[lang] ?: lang.uppercase().ifBlank { "Legenda" }) + " · " + name)
+                        ExternalSub(url, lang, label(lang) + " · " + name)
                     }
                 }
-            }.awaitAll().flatten().sortedBy { langRank[it.lang] ?: 99 }.take(12)
+            }.awaitAll().flatten().sortedBy { rank(it.lang) }.take(30)
         }
 
     private suspend fun openSubtitles(imdb: String, type: String, season: Int, episode: Int): List<ExternalSub> =
@@ -107,12 +104,13 @@ class SubtitleService @Inject constructor(
             resp.subtitles
                 .mapNotNull { s ->
                     val u = s.url?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
-                    val lang = s.lang ?: return@mapNotNull null
-                    ExternalSub(u, lang, langLabel[lang] ?: lang.uppercase())
+                    val lang = s.lang?.lowercase() ?: return@mapNotNull null
+                    ExternalSub(u, lang, label(lang))
                 }
-                // 1 por idioma (a 1ª costuma ser a melhor), PT primeiro.
+                // 1 por idioma (a 1ª costuma ser a melhor), o idioma do perfil primeiro. Sem corte
+                // curto, para quem escolheu outro idioma achar a legenda dele.
                 .distinctBy { it.lang }
-                .sortedBy { langRank[it.lang] ?: 99 }
-                .take(8)
+                .sortedBy { rank(it.lang) }
+                .take(40)
         }
 }

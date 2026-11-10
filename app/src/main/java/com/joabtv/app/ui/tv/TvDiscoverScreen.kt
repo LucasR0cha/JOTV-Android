@@ -166,7 +166,7 @@ fun TvDiscoverScreen(
                             modifier = Modifier.fillMaxSize(),
                         ) {
                             items(state.items, key = { "${it.type}:${it.tmdbId}" }) { item ->
-                                TvPoster(item.title, item.posterUrl, { onItemClick(item) }, width = Dp.Unspecified, subtitle = item.year.ifBlank { null })
+                                TvPoster(item, { onItemClick(item) }, width = Dp.Unspecified)
                             }
                         }
                     }

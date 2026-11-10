@@ -20,6 +20,10 @@ data class TmdbMovieDto(
     @SerializedName("vote_average")   val voteAverage: Double = 0.0,
     @SerializedName("media_type")     val mediaType: String? = null,
     @SerializedName("genre_ids")      val genreIds: List<Int> = emptyList(),
+    // Etiqueta do pôster (idioma original e Imperdível precisam de votos).
+    @SerializedName("original_language") val originalLanguage: String? = null,
+    @SerializedName("vote_count")     val voteCount: Int = 0,
+    @SerializedName("origin_country") val originCountry: List<String>? = null,
     // Gêneros do detalhe (/movie/{id}). A lista traz genre_ids, o detalhe traz este.
     val genres: List<TmdbGenreDto> = emptyList(),
     val adult: Boolean = false,
@@ -37,6 +41,8 @@ data class TmdbMovieDto(
     @SerializedName("videos")           val videos: TmdbVideosDto? = null,
     // Coleção/franquia do filme (Harry Potter, Velozes…). Só vem em /movie/{id}.
     @SerializedName("belongs_to_collection") val collection: TmdbCollectionRefDto? = null,
+    // Função na equipe (combined_credits.crew). "Director" alimenta a fonte de diretor das coleções.
+    val job: String? = null,
 )
 
 // ── Coleções (franquias) ──
@@ -152,7 +158,22 @@ fun TmdbMovieDto.toMovieItem(embedId: String = id.toString()) = MovieItem(
     type     = if (name != null || mediaType == "tv") MediaType.SERIES else MediaType.MOVIE,
     certification = releaseDates.certBR(),
     releaseDate = (releaseDate ?: firstAirDate ?: ""),
+    genreIds = genreIdsOf(this),
+    originalLanguage = originalLanguage ?: "",
+    voteCount = voteCount,
+    originCountry = originCountry ?: emptyList(),
 )
+
+/**
+ * Gêneros da lista (genre_ids) ou do detalhe (genres). O Gson monta o DTO sem passar pelo
+ * construtor, então a lista ausente no JSON chega nula mesmo com tipo não nulo.
+ */
+private fun genreIdsOf(d: TmdbMovieDto): List<Int> {
+    val ids: List<Int>? = d.genreIds
+    if (!ids.isNullOrEmpty()) return ids
+    val full: List<TmdbGenreDto>? = d.genres
+    return full.orEmpty().map { it.id }
+}
 
 fun TmdbMovieDto.toSeriesItem(embedId: String = id.toString()) = SeriesItem(
     tmdbId       = id,
@@ -178,8 +199,8 @@ data class TmdbListResponse<T>(
     @SerializedName("total_results") val totalResults: Int = 0,
 )
 
-// Filmografia do ator (combined_credits): cast = títulos em que atuou.
-data class TmdbCreditsListDto(val cast: List<TmdbMovieDto> = emptyList())
+// Filmografia (combined_credits). cast = títulos em que atuou, crew = em que trabalhou na equipe.
+data class TmdbCreditsListDto(val cast: List<TmdbMovieDto> = emptyList(), val crew: List<TmdbMovieDto> = emptyList())
 
 // ── Logos (imagens) — TMDB tem logo em PT-BR (melhor que metahub) ──
 data class TmdbImagesDto(val logos: List<TmdbLogoDto> = emptyList())
