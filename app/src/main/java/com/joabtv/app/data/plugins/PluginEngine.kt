@@ -27,7 +27,7 @@ import org.json.JSONObject
 @Singleton
 class PluginEngine @Inject constructor(@ApplicationContext private val context: Context, private val network: PluginNetwork) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val gate = Semaphore(2)
+    private val gate = Semaphore(32)
     private var view: WebView? = null
     private var ready = CompletableDeferred<Unit>()
     private var idle: kotlinx.coroutines.Job? = null
@@ -52,7 +52,7 @@ class PluginEngine @Inject constructor(@ApplicationContext private val context: 
                 override fun shouldInterceptRequest(v: WebView?, request: WebResourceRequest): WebResourceResponse {
                     val uri = request.url
                     val name = uri.path.orEmpty().removePrefix("/")
-                    val allowed = setOf("runtime-host.html", "native-host.js", "worker.js", "runtime.js", "contract.js")
+                    val allowed = setOf("runtime-host.html", "native-host.js", "worker.js", "runtime.js", "contract.js", "pool.js")
                     if (uri.scheme != "https" || uri.host != "plugins.jotv.invalid" || name !in allowed) {
                         return WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(byteArrayOf()))
                     }
@@ -98,7 +98,7 @@ class PluginEngine @Inject constructor(@ApplicationContext private val context: 
         }
     }
 
-    fun cancel() { scope.launch { tasks.values.forEach { it.network.cancel(); it.result.cancel() } } }
+    fun cancel(dropWorkers: Boolean = false) { scope.launch { tasks.values.toList().forEach { it.network.cancel(); it.result.cancel() }; if (dropWorkers) view?.evaluateJavascript("JotvPluginHost.clear()", null) } }
 
     private inner class Bridge {
         @JavascriptInterface

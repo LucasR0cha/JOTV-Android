@@ -195,7 +195,7 @@ fun PluginsScreen(onBack: () -> Unit, onAddons: () -> Unit, onLive: () -> Unit, 
             "states" -> listOf("all" to "Todos", "enabled" to "Ativados", "disabled" to "Desativados", "error" to "Com erro").map { (key, title) -> PluginMenuItem(title, selected = filter == key) { filter = key } }
             "types" -> listOf("" to "Todos", "movie" to "Filmes", "tv" to "Séries").map { (key, title) -> PluginMenuItem(title, selected = selectedType == key) { selectedType = key } }
             "timeout" -> listOf(15, 30, 45, 60, 90, 120).map { n -> PluginMenuItem("$n segundos", selected = state.timeout == n * 1000L) { repository.configure(timeout = n * 1000L) } }
-            "concurrency" -> listOf(1, 2).map { n -> PluginMenuItem(if (n == 1) "Um de cada vez" else "Até dois ao mesmo tempo", selected = state.concurrency == n) { repository.configure(concurrency = n) } }
+            "concurrency" -> listOf(32, 2, 1).map { n -> PluginMenuItem(if (n == 32) "Buscar em paralelo" else if (n == 1) "Um de cada vez" else "Até dois ao mesmo tempo", if (n == 32) "As fontes aparecem conforme cada provedor responde." else "", selected = state.concurrency == n) { repository.configure(concurrency = n) } }
             else -> listOf(
                 PluginMenuItem(if (state.enabled) "Pausar todos os plugins" else "Ativar plugins") { repository.configure(enabled = !state.enabled) },
                 PluginMenuItem(if (state.autoUpdate) "Desativar atualização automática" else "Ativar atualização automática", "Conferir a lista uma vez por dia.") { repository.configure(autoUpdate = !state.autoUpdate) },

@@ -114,6 +114,8 @@ class StremioAddonService @Inject constructor(
     private val addonNames = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     fun playbackSources(addons: List<String>, type: String): List<String> = addons + plugins.sourceKeys(type)
+    fun beginPluginSearch(type: String, tmdbId: Int, season: Int? = null, episode: Int? = null): Long = plugins.beginSearch(type, tmdbId, season, episode)
+    fun pluginSearchSnapshot(): Long = plugins.searchSnapshot()
 
     private fun baseOf(manifestOrBase: String) = manifestOrBase.trim()
         .removeSuffix("/manifest.json").removeSuffix("/")
@@ -166,8 +168,9 @@ class StremioAddonService @Inject constructor(
         episode: Int? = null,
         /** TMDB id do título. Usado como 2ª tentativa quando o addon não indexa por IMDB. */
         tmdbId: Int = 0,
+        pluginSearch: Long? = null,
     ): List<StremioStream> = withContext(Dispatchers.IO) { coroutineScope {
-        if (baseOrManifest.startsWith("plugin:")) return@coroutineScope plugins.streams(baseOrManifest, type, tmdbId, season, episode)
+        if (baseOrManifest.startsWith("plugin:")) return@coroutineScope plugins.streams(baseOrManifest, type, tmdbId, season, episode, pluginSearch)
         // Aceita "tt..." (IMDB) e "tmdb:{id}" (TMDB).
         if (imdbId.isBlank() && tmdbId <= 0) return@coroutineScope emptyList()
         val base = baseOrManifest.trim()
@@ -269,11 +272,12 @@ class StremioAddonService @Inject constructor(
         season: Int? = null,
         episode: Int? = null,
         tmdbId: Int = 0,
+        pluginSearch: Long? = null,
     ): List<StremioStream> = coroutineScope {
         addons.map { it.trim() }.filter { it.isNotBlank() }
             .map { a ->
                 async {
-                    runCatching { getStreams(a, type, imdbId, season, episode, tmdbId) }.getOrDefault(emptyList())
+                    runCatching { getStreams(a, type, imdbId, season, episode, tmdbId, pluginSearch) }.getOrDefault(emptyList())
                 }
             }
             .awaitAll()
@@ -295,6 +299,7 @@ class StremioAddonService @Inject constructor(
         season: Int? = null,
         episode: Int? = null,
         tmdbId: Int = 0,
+        pluginSearch: Long? = null,
         onPartial: (List<StremioStream>) -> Unit,
     ) = coroutineScope {
         val list = addons.map { it.trim() }.filter { it.isNotBlank() }
@@ -302,7 +307,7 @@ class StremioAddonService @Inject constructor(
         val slots = arrayOfNulls<List<StremioStream>>(list.size)
         list.mapIndexed { i, a ->
             launch {
-                slots[i] = runCatching { getStreams(a, type, imdbId, season, episode, tmdbId) }.getOrDefault(emptyList())
+                slots[i] = runCatching { getStreams(a, type, imdbId, season, episode, tmdbId, pluginSearch) }.getOrDefault(emptyList())
                 // Ordem = a do GERENCIADOR DE ADDONS (slots seguem a lista do usuário) e, dentro
                 // de cada addon, a maior qualidade primeiro. Antes ordenava só por qualidade e
                 // a prioridade que a pessoa montou não valia de nada.

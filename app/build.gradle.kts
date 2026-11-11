@@ -16,8 +16,8 @@ android {
         minSdk         = 23
         targetSdk      = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode    = 16
-        versionName    = "1.0.15"
+        versionCode    = 17
+        versionName    = "1.0.16"
         // Chave TMDB lida de gradle property (local.properties / ~/.gradle/gradle.properties),
         // fora do VCS. Sem ela, fica vazia e o usuário informa a própria chave em Configurações.
         val tmdbKey = (project.findProperty("TMDB_API_KEY") as String?) ?: ""

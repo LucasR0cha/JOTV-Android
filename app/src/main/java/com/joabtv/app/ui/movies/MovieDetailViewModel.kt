@@ -285,6 +285,10 @@ class MovieDetailViewModel @Inject constructor(
 
             if (type == MediaType.MOVIE) {
                 val addons = stremio.playbackSources(prefs.stremioAddonList(), "movie")
+                val pluginSearch = stremio.beginPluginSearch("movie", tmdbId)
+                val pluginJobs = addons.filter { it.startsWith("plugin:") }.associateWith { addon ->
+                    async { runCatching { stremio.getStreams(addon, "movie", "", tmdbId = tmdbId, pluginSearch = pluginSearch) }.getOrDefault(emptyList()) }
+                }
 
                 // Busca o detalhe PRIMEIRO — /movie/{id} inclui imdb_id (rápido, ~500ms).
                 val detailDto = if (apiKey.isNotBlank() && tmdbId > 0) {
@@ -314,7 +318,7 @@ class MovieDetailViewModel @Inject constructor(
                     _uiState.update { it.copy(stremioLoading = true) }
                     addons.forEachIndexed { idx, addon ->
                         srcJobs += launch {
-                            val s = runCatching { stremio.getStreams(addon, "movie", stremioId, tmdbId = tmdbId) }.getOrDefault(emptyList())
+                            val s = pluginJobs[addon]?.await() ?: runCatching { stremio.getStreams(addon, "movie", stremioId, tmdbId = tmdbId, pluginSearch = pluginSearch) }.getOrDefault(emptyList())
                             slots[idx] = s
                             _uiState.update { st ->
                                 st.copy(
@@ -511,6 +515,7 @@ class MovieDetailViewModel @Inject constructor(
         // Série não preenche state.item, então o tmdbId vem do stub que abriu a tela.
         val seriesTmdb = stubItem?.tmdbId ?: 0
         val addons = stremio.playbackSources(prefs.stremioAddonList(), "series")
+        val pluginSearch = stremio.beginPluginSearch("series", seriesTmdb, season, episode)
         val canSearch = (imdb.isNotBlank() || seriesTmdb > 0) && addons.isNotEmpty()
         _uiState.update {
             it.copy(
@@ -523,7 +528,7 @@ class MovieDetailViewModel @Inject constructor(
             val slots = arrayOfNulls<List<com.joabtv.app.data.remote.StremioStream>>(addons.size)
             addons.forEachIndexed { idx, addon ->
                 viewModelScope.launch {
-                    val s = runCatching { stremio.getStreams(addon, "series", imdb, season, episode, seriesTmdb) }
+                    val s = runCatching { stremio.getStreams(addon, "series", imdb, season, episode, seriesTmdb, pluginSearch) }
                         .getOrDefault(emptyList())
                     slots[idx] = s
                     // Todos os addons responderam. O episódio também vale para o pôster da série.

@@ -10,10 +10,14 @@ import com.joabtv.app.data.remote.StremioStream
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,28 +38,37 @@ class PluginRepository @Inject constructor(@ApplicationContext private val conte
     private val gson = Gson()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val serial = Semaphore(1)
-    private val parallel = Semaphore(2)
+    private val pair = Semaphore(2)
+    private val parallel = Semaphore(32)
+    private val downloads = Semaphore(8)
+    private val codeFlights = ConcurrentHashMap<String, Deferred<String>>()
+    private val sourceCache = PluginSourceCache(scope)
     private val lock = Any()
     private val codeLock = Mutex()
     private var loadedProfile = prefs.profileId.value
     private var lastUpdateCheck = 0L
     @Volatile private var generation = 0
-    private fun read(): PluginState = runCatching { gson.fromJson(storage.getString("state.${prefs.profileId.value}", ""), PluginState::class.java) }.getOrNull()?.takeIf { it.repos.size <= 40 } ?: PluginState()
+    private fun read(): PluginState = runCatching {
+        val name = "state.${prefs.profileId.value}"
+        val text = storage.getString(name, "").orEmpty()
+        val state = gson.fromJson(text, PluginState::class.java)?.takeIf { it.repos.size <= 40 } ?: return@runCatching PluginState()
+        if (!JSONObject(text).has("performanceVersion")) state.copy(concurrency = 32, performanceVersion = 1).also { storage.edit().putString(name, gson.toJson(it)).apply() } else state
+    }.getOrDefault(PluginState())
     private val _state = MutableStateFlow(read())
     val state: StateFlow<PluginState> = _state
     init {
-        scope.launch { prefs.profileId.drop(1).collect { synchronized(lock) { generation++; engine.cancel(); loadedProfile = it; _state.value = read(); lastUpdateCheck = 0 } } }
+        scope.launch { prefs.profileId.drop(1).collect { synchronized(lock) { cancel(true); loadedProfile = it; _state.value = read(); lastUpdateCheck = 0 } } }
         scope.launch { prefs.profiles.collect { profiles ->
             val allowed = profiles.map { "state.${it.id}" }.toSet()
             storage.all.keys.filter { it.startsWith("state.") && it !in allowed }.forEach { storage.edit().remove(it).apply() }
         } }
     }
     private fun update(change: (PluginState) -> PluginState) = synchronized(lock) {
-        if (loadedProfile != prefs.profileId.value) { loadedProfile = prefs.profileId.value; _state.value = read() }
+        if (loadedProfile != prefs.profileId.value) { cancel(true); loadedProfile = prefs.profileId.value; _state.value = read() }
         val value = change(_state.value); storage.edit().putString("state.$loadedProfile", gson.toJson(value)).apply(); _state.value = value
     }
     fun key(repo: PluginRepo, provider: PluginProvider) = "plugin:" + java.net.URLEncoder.encode(repo.url, "UTF-8") + "|" + java.net.URLEncoder.encode(provider.id, "UTF-8")
-    fun find(id: String): Pair<PluginRepo, PluginProvider>? = _state.value.repos.firstNotNullOfOrNull { r -> r.providers.firstOrNull { key(r, it) == id }?.let { r to it } }
+    fun find(id: String): Pair<PluginRepo, PluginProvider>? { if (loadedProfile != prefs.profileId.value) update { it }; return _state.value.repos.firstNotNullOfOrNull { r -> r.providers.firstOrNull { key(r, it) == id }?.let { r to it } } }
     fun sourceKeys(type: String): List<String> {
         if (loadedProfile != prefs.profileId.value) update { it }
         refreshDue()
@@ -65,12 +78,14 @@ class PluginRepository @Inject constructor(@ApplicationContext private val conte
         return s.repos.filter { it.enabled }.flatMap { r -> r.providers.filter { it.enabled && it.available && (target in it.types || type in it.types) }.map { key(r, it) } }
     }
     private fun changeProvider(id: String, fn: (PluginProvider) -> PluginProvider) = update { s -> s.copy(repos = s.repos.map { r -> r.copy(providers = r.providers.map { if (key(r, it) == id) fn(it) else it }) }) }
-    private fun cancel() { generation++; engine.cancel() }
+    private fun cancel(dropWorkers: Boolean = false) { generation++; sourceCache.clear(); codeFlights.values.forEach { it.cancel() }; codeFlights.clear(); engine.cancel(dropWorkers) }
+    fun beginSearch(type: String, tmdbId: Int, season: Int? = null, episode: Int? = null): Long = sourceCache.begin("$type|$tmdbId|$season|$episode")
+    fun searchSnapshot(): Long = sourceCache.snapshot()
     fun toggle(id: String, enabled: Boolean) { cancel(); changeProvider(id) { it.copy(enabled = enabled && it.available) } }
     fun toggleRepo(url: String, enabled: Boolean) { cancel(); update { it.copy(repos = it.repos.map { r -> if (r.url == url) r.copy(enabled = enabled) else r }) } }
     fun toggleAll(url: String, enabled: Boolean) { cancel(); update { it.copy(repos = it.repos.map { r -> if (r.url == url) r.copy(providers = r.providers.map { p -> p.copy(enabled = enabled && p.available) }) else r }) } }
     fun remove(url: String) { cancel(); update { it.copy(repos = it.repos.filterNot { r -> r.url == url }) } }
-    fun configure(enabled: Boolean? = null, autoUpdate: Boolean? = null, timeout: Long? = null, concurrency: Int? = null) { cancel(); update { it.copy(enabled = enabled ?: it.enabled, autoUpdate = autoUpdate ?: it.autoUpdate, timeout = timeout?.coerceIn(10_000, 120_000) ?: it.timeout, concurrency = concurrency?.coerceIn(1, 2) ?: it.concurrency) } }
+    fun configure(enabled: Boolean? = null, autoUpdate: Boolean? = null, timeout: Long? = null, concurrency: Int? = null) { cancel(); update { it.copy(enabled = enabled ?: it.enabled, autoUpdate = autoUpdate ?: it.autoUpdate, timeout = timeout?.coerceIn(10_000, 120_000) ?: it.timeout, concurrency = concurrency?.coerceIn(1, 32) ?: it.concurrency) } }
     fun move(url: String, providerId: String?, direction: Int) {
         cancel()
         update { s ->
@@ -117,6 +132,7 @@ class PluginRepository @Inject constructor(@ApplicationContext private val conte
         update { s -> s.copy(repos = s.repos.map { old ->
             if (old.url != url) old else next.copy(enabled = old.enabled, checkedAt = System.currentTimeMillis(), providers = (next.providers.map { p -> old.providers.firstOrNull { it.id == p.id }?.let { p.copy(enabled = it.enabled, settings = it.settings, fields = it.fields, status = it.status) } ?: p } + old.providers.filter { p -> next.providers.none { it.id == p.id } }.map { it.copy(available = false) }).sortedBy { p -> old.providers.indexOfFirst { it.id == p.id }.takeIf { it >= 0 } ?: Int.MAX_VALUE })
         }) }
+        sourceCache.invalidate()
     }
     fun refreshDue() {
         val s = _state.value
@@ -124,21 +140,31 @@ class PluginRepository @Inject constructor(@ApplicationContext private val conte
         if (s.autoUpdate && !prefs.profile.kids) scope.launch { s.repos.filter { System.currentTimeMillis() - it.checkedAt > 24 * 60 * 60_000L }.forEach { r -> runCatching { refresh(r.url) } } }
     }
     private fun digest(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-    private suspend fun code(provider: PluginProvider): String = codeLock.withLock { withContext(Dispatchers.IO) {
+    private suspend fun code(provider: PluginProvider): String {
+        val key = digest(provider.url + "\n" + provider.version + "\n" + provider.integrity)
+        val candidate = scope.async(start = CoroutineStart.LAZY) { downloads.withPermit { readCode(provider) } }
+        val task = codeFlights.putIfAbsent(key, candidate) ?: candidate
+        if (task !== candidate) candidate.cancel()
+        else task.invokeOnCompletion { codeFlights.remove(key, task) }
+        try { task.start(); return task.await() } finally { if (task.isCompleted) codeFlights.remove(key, task) }
+    }
+    private suspend fun readCode(provider: PluginProvider): String = withContext(Dispatchers.IO) {
         val directory = File(context.cacheDir, "plugin-code").apply { mkdirs() }
         val file = File(directory, digest(provider.url + "\n" + provider.version) + ".js")
         if (file.isFile) {
-            val old = file.readText(Charsets.UTF_8)
-            if (old.length <= 1024 * 1024 && (provider.integrity.isBlank() || digest(old) == provider.integrity)) { file.setLastModified(System.currentTimeMillis()); return@withContext old }
+            val old = runCatching { file.readText(Charsets.UTF_8) }.getOrDefault("")
+            if (old.isNotBlank() && old.length <= 1024 * 1024 && (provider.integrity.isBlank() || digest(old) == provider.integrity)) { file.setLastModified(System.currentTimeMillis()); return@withContext old }
         }
         val text = download(provider.url)
         require(provider.integrity.isBlank() || digest(text) == provider.integrity) { "O arquivo não corresponde ao checksum do repositório." }
-        android.util.AtomicFile(file).apply { val output = startWrite(); try { output.write(text.toByteArray(Charsets.UTF_8)); finishWrite(output) } catch (e: Exception) { failWrite(output); throw e } }
-        var size = 0L
-        directory.listFiles().orEmpty().sortedByDescending { it.lastModified() }.forEach { cached -> size += cached.length(); if (size > 16 * 1024 * 1024) cached.delete() }
+        codeLock.withLock {
+            android.util.AtomicFile(file).apply { val output = startWrite(); try { output.write(text.toByteArray(Charsets.UTF_8)); finishWrite(output) } catch (e: Exception) { failWrite(output); throw e } }
+            var size = 0L
+            directory.listFiles().orEmpty().sortedByDescending { it.lastModified() }.forEach { cached -> size += cached.length(); if (size > 16 * 1024 * 1024) cached.delete() }
+        }
         text
-    } }
-    suspend fun clearCache() = codeLock.withLock { withContext(Dispatchers.IO) { File(context.cacheDir, "plugin-code").listFiles().orEmpty().filter { it.isFile }.forEach { it.delete() } } }
+    }
+    suspend fun clearCache() { cancel(true); codeLock.withLock { withContext(Dispatchers.IO) { File(context.cacheDir, "plugin-code").listFiles().orEmpty().filter { it.isFile }.forEach { it.delete() } } } }
     private suspend fun execute(id: String, method: String, tmdbId: Int = 0, type: String = "movie", season: Int? = null, episode: Int? = null): JSONObject {
         val (repo, provider) = find(id) ?: error("Provedor não encontrado.")
         check(provider.available && !prefs.profile.kids) { "Provedor indisponível neste perfil." }
@@ -159,7 +185,7 @@ class PluginRepository @Inject constructor(@ApplicationContext private val conte
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { if (before == generation && owner == prefs.profileId.value) changeProvider(id) { it.copy(status = PluginStatus(e.message?.take(240) ?: "O plugin não respondeu.", false, ms = System.currentTimeMillis() - started)) }; throw e }
         }
-        return if (_state.value.concurrency == 1) serial.withPermit { work() } else parallel.withPermit { work() }
+        return when (_state.value.concurrency) { 1 -> serial.withPermit { work() }; 2 -> pair.withPermit { work() }; else -> parallel.withPermit { work() } }
     }
     suspend fun fields(id: String): List<PluginField> = PluginContract.fields((execute(id, "settings").optJSONArray("value") ?: JSONArray()).toString())
     suspend fun testSources(id: String, type: String, tmdbId: Int, season: Int?, episode: Int?): Int {
@@ -167,10 +193,12 @@ class PluginRepository @Inject constructor(@ApplicationContext private val conte
         return execute(id, "streams", tmdbId, type, season, episode).optJSONArray("value")?.length() ?: 0
     }
     fun saveSettings(id: String, values: JSONObject) { val provider = find(id)?.second ?: return; val validated = PluginContract.validate(PluginContract.fields(provider.fields), values); cancel(); changeProvider(id) { it.copy(settings = validated) } }
-    suspend fun streams(id: String, type: String, tmdbId: Int, season: Int?, episode: Int?): List<StremioStream> {
+    suspend fun streams(id: String, type: String, tmdbId: Int, season: Int?, episode: Int?, search: Long? = null): List<StremioStream> {
         if (tmdbId <= 0 || id !in sourceKeys(type)) return emptyList()
         val (repo, provider) = find(id) ?: return emptyList()
-        val result = execute(id, "streams", tmdbId, type, season, episode).optJSONArray("value") ?: JSONArray()
+        val cacheKey = "${prefs.profileId.value}|$id|${provider.version}|${provider.integrity}|$type|$tmdbId|$season|$episode"
+        val encoded = sourceCache.get(cacheKey, search ?: sourceCache.snapshot()) { (execute(id, "streams", tmdbId, type, season, episode).optJSONArray("value") ?: JSONArray()).toString() }
+        val result = JSONArray(encoded)
         return (0 until result.length()).mapNotNull { index ->
             val s = result.optJSONObject(index) ?: return@mapNotNull null
             val url = PluginContract.publicUrl(s.optString("url")); if (url.isBlank()) return@mapNotNull null

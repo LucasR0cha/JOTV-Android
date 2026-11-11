@@ -8,7 +8,7 @@ data class PluginField(val key: String, val label: String, val type: String, val
 data class PluginStatus(val message: String, val ok: Boolean, val at: Long = System.currentTimeMillis(), val ms: Long = 0, val count: Int = 0)
 data class PluginProvider(val id: String, val name: String, val url: String, val version: String = "", val description: String = "", val types: List<String> = listOf("movie", "tv"), val languages: List<String> = emptyList(), val formats: List<String> = emptyList(), val available: Boolean = true, val enabled: Boolean = false, val integrity: String = "", val settings: String = "{}", val fields: String = "[]", val status: PluginStatus? = null)
 data class PluginRepo(val url: String, val name: String, val kind: String = "nuvio", val version: String = "", val description: String = "", val author: String = "", val enabled: Boolean = true, val checkedAt: Long = 0, val providers: List<PluginProvider> = emptyList(), val addonId: String = "")
-data class PluginState(val enabled: Boolean = true, val autoUpdate: Boolean = true, val timeout: Long = 45_000, val concurrency: Int = 1, val repos: List<PluginRepo> = emptyList())
+data class PluginState(val enabled: Boolean = true, val autoUpdate: Boolean = true, val timeout: Long = 45_000, val concurrency: Int = 32, val repos: List<PluginRepo> = emptyList(), val performanceVersion: Int = 1)
 
 object PluginContract {
     private val unsafeKey = setOf("__proto__", "constructor", "prototype")

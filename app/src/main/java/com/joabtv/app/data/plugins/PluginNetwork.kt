@@ -44,6 +44,7 @@ class PluginNetwork @Inject constructor() {
                 headers.forEach { (key, value) -> builder.header(key, value) }
                 val requestBody = if (method in setOf("GET", "HEAD")) null else (body ?: "").toRequestBody(headers.entries.firstOrNull { it.key.equals("content-type", true) }?.value?.toMediaTypeOrNull())
                 val call = client.newCall(builder.method(method, requestBody).build()); calls.add(call)
+                call.timeout().timeout(data.optLong("timeout", 20000).coerceIn(100, 20000), TimeUnit.MILLISECONDS)
                 try {
                     call.execute().use { response ->
                         val location = response.header("Location")

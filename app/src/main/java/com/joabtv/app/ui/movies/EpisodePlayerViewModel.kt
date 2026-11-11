@@ -120,13 +120,14 @@ class EpisodePlayerViewModel @Inject constructor(
      * Streams Stremio (HTTP direto) do episódio, ordenados por qualidade (4K→720).
      * Vazio se não houver addon, imdb ou streams. Cada item vira um MoviePlayerSource.
      */
-    suspend fun stremioEpisodeSources(tmdbId: Int, season: Int, episode: Int): List<MoviePlayerSource> {
+    suspend fun stremioEpisodeSources(tmdbId: Int, season: Int, episode: Int, foreground: Boolean = true): List<MoviePlayerSource> {
         val addons = stremio.playbackSources(prefs.stremioAddonList(), "series")
+        val pluginSearch = if (foreground) stremio.beginPluginSearch("series", tmdbId, season, episode) else stremio.pluginSearchSnapshot()
         if (addons.isEmpty()) return emptyList()
         // Sem IMDB ainda dá pra tentar: addon que indexa por TMDB responde a "tmdb:{id}".
         val imdb = resolveImdb(tmdbId).orEmpty()
         if (imdb.isBlank() && tmdbId <= 0) return emptyList()
-        return runCatching { stremio.getStreamsFrom(addons, "series", imdb, season, episode, tmdbId) }
+        return runCatching { stremio.getStreamsFrom(addons, "series", imdb, season, episode, tmdbId, pluginSearch) }
             .getOrDefault(emptyList())
             // getStreamsFrom já devolve na ordem dos addons; só ordena por qualidade DENTRO
             // de cada addon, pra prioridade do gerenciador continuar valendo.
@@ -164,7 +165,7 @@ class EpisodePlayerViewModel @Inject constructor(
         if (k in inFlight || cachedEpisodeSources(tmdbId, season, episode) != null) return
         inFlight += k
         viewModelScope.launch {
-            val sources = runCatching { stremioEpisodeSources(tmdbId, season, episode) }.getOrDefault(emptyList())
+            val sources = runCatching { stremioEpisodeSources(tmdbId, season, episode, foreground = false) }.getOrDefault(emptyList())
             if (sources.isNotEmpty()) epCache[k] = CachedEp(System.currentTimeMillis(), sources)
             inFlight -= k
         }
@@ -182,12 +183,13 @@ class EpisodePlayerViewModel @Inject constructor(
         onPartial: (List<MoviePlayerSource>) -> Unit,
     ) {
         val addons = stremio.playbackSources(prefs.stremioAddonList(), "series")
+        val pluginSearch = stremio.beginPluginSearch("series", tmdbId, season, episode)
         if (addons.isEmpty()) { onPartial(emptyList()); return }
         val imdb = resolveImdb(tmdbId).orEmpty()
         if (imdb.isBlank() && tmdbId <= 0) { onPartial(emptyList()); return }
         var last: List<MoviePlayerSource> = emptyList()
         runCatching {
-            stremio.streamsProgressive(addons, "series", imdb, season, episode, tmdbId) { partial ->
+            stremio.streamsProgressive(addons, "series", imdb, season, episode, tmdbId, pluginSearch) { partial ->
                 last = prefs.sortStreams(partial).map { MoviePlayerSource(it.label, it.url, addon = it.addon, stream = it) }
                 onPartial(last)
             }
