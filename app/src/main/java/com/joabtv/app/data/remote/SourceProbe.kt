@@ -272,29 +272,32 @@ class SourceProber @Inject constructor() {
     private val running = ConcurrentHashMap<String, Deferred<ProbeResult>>()
 
     /** Resultado já pronto, sem esperar. null = ainda não testou. */
-    fun cached(url: String): ProbeResult? =
-        done[url]?.takeIf { System.currentTimeMillis() - it.at < TTL_MS }?.r
+    private fun cacheKey(url: String, headers: Map<String, String>): String = if (headers.isEmpty()) url else url + "\n" + java.security.MessageDigest.getInstance("SHA-256").digest(headers.entries.sortedBy { it.key.lowercase() }.joinToString("\n") { it.key.lowercase() + "=" + it.value }.toByteArray()).joinToString("") { "%02x".format(it) }
+    fun cached(url: String, headers: Map<String, String> = emptyMap()): ProbeResult? =
+        done[cacheKey(url, headers)]?.takeIf { System.currentTimeMillis() - it.at < TTL_MS }?.r
 
-    suspend fun probe(url: String): ProbeResult {
-        cached(url)?.let { return it }
-        val d = running.computeIfAbsent(url) {
+    suspend fun probe(url: String, headers: Map<String, String> = emptyMap()): ProbeResult {
+        cached(url, headers)?.let { return it }
+        val key = cacheKey(url, headers)
+        val d = running.computeIfAbsent(key) {
             scope.async {
-                val r = gate.withPermit { runCatching { measure(url) }.getOrElse { ProbeResult(false, 0, 0.0, 0) } }
-                done[url] = Done(System.currentTimeMillis(), r)
+                val r = gate.withPermit { runCatching { measure(url, headers) }.getOrElse { ProbeResult(false, 0, 0.0, 0) } }
+                done[key] = Done(System.currentTimeMillis(), r)
                 android.util.Log.d("SourceProber", "${r.ms} ms ok=${r.ok} min=${(r.sec / 60).toInt()} alt=${r.height} ${runCatching { java.net.URI(url).host }.getOrNull()}")
                 r
             }
         }
-        return d.await().also { running.remove(url, d) }
+        return d.await().also { running.remove(key, d) }
     }
 
     private class Range(val bytes: ByteArray, val total: Long, val url: String)
 
     /** GET com Range, lendo no máximo [cap] bytes. null se o servidor não deu 200 ou 206. */
-    private fun rangeGet(url: String, range: String?, timeoutSec: Long, cap: Long): Range? {
+    private fun rangeGet(url: String, range: String?, timeoutSec: Long, cap: Long, headers: Map<String, String>): Range? {
         val req = Request.Builder().url(url)
             .header("Referer", STREAM_REFERER)
             .header("User-Agent", STREAM_UA)
+            .apply { headers.forEach { (key, value) -> header(key, value) } }
             .apply { if (range != null) header("Range", range) }
             .build()
         val call = client.newBuilder().callTimeout(timeoutSec, TimeUnit.SECONDS).build().newCall(req)
@@ -310,30 +313,30 @@ class SourceProber @Inject constructor() {
         }
     }
 
-    private fun measure(url: String): ProbeResult {
+    private fun measure(url: String, headers: Map<String, String>): ProbeResult {
         val t0 = System.currentTimeMillis()
-        val r = runCatching { rangeGet(url, "bytes=0-65535", 10, 65_536) }.getOrNull()
+        val r = runCatching { rangeGet(url, "bytes=0-65535", 10, 65_536, headers) }.getOrNull()
         val ms = System.currentTimeMillis() - t0
         if (r == null || r.bytes.isEmpty()) return ProbeResult(false, ms, 0.0, 0)
         val text = String(r.bytes, Charsets.ISO_8859_1)
-        if (text.startsWith("#EXTM3U")) return ProbeResult(true, ms, hlsDuration(text, r.url), 0)
+        if (text.startsWith("#EXTM3U")) return ProbeResult(true, ms, hlsDuration(text, r.url, headers), 0)
         val sec = mvhdSeconds(r.bytes)
         val h = tkhdHeight(r.bytes)
         if (sec > 0 || r.total <= 65_536) return ProbeResult(true, ms, sec, h)
         // moov no fim do arquivo (MP4 sem faststart). Lê os últimos 3 MB.
         val tail = runCatching {
-            rangeGet(url, "bytes=${max(0, r.total - TAIL)}-", 15, TAIL)
+            rangeGet(url, "bytes=${max(0, r.total - TAIL)}-", 15, TAIL, headers)
         }.getOrNull()
         return ProbeResult(true, ms, tail?.let { mvhdSeconds(it.bytes) } ?: 0.0, tail?.let { tkhdHeight(it.bytes) } ?: 0)
     }
 
     /** Duração do HLS. Lista mestre desce um nível para a primeira variante. */
-    private fun hlsDuration(body: String, base: String, depth: Int = 0): Double {
+    private fun hlsDuration(body: String, base: String, headers: Map<String, String>, depth: Int = 0): Double {
         val variant = hlsVariant(body) ?: return hlsSeconds(body)
         if (depth > 0) return 0.0
         val next = runCatching { java.net.URI(base).resolve(variant).toString() }.getOrNull() ?: return 0.0
-        val b = runCatching { rangeGet(next, null, 10, 2_000_000) }.getOrNull() ?: return 0.0
-        return hlsDuration(String(b.bytes, Charsets.UTF_8), b.url, depth + 1)
+        val b = runCatching { rangeGet(next, null, 10, 2_000_000, headers) }.getOrNull() ?: return 0.0
+        return hlsDuration(String(b.bytes, Charsets.UTF_8), b.url, headers, depth + 1)
     }
 
     private companion object {

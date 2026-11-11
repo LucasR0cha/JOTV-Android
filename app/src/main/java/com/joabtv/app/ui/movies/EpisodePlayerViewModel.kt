@@ -39,8 +39,8 @@ class EpisodePlayerViewModel @Inject constructor(
     fun debridHideUncached(): Boolean = debrid.settings.value.hideUncached
 
     /** Teste da fonte já feito (no detalhe ou aqui), sem esperar. */
-    fun probeCached(url: String) = prober.cached(url)
-    suspend fun probe(url: String) = prober.probe(url)
+    fun probeCached(url: String, headers: Map<String, String> = emptyMap()) = prober.cached(url, headers)
+    suspend fun probe(url: String, headers: Map<String, String> = emptyMap()) = prober.probe(url, headers)
 
     /** Duração do filme no TMDB, em minutos. 0 = desconhecida. */
     suspend fun movieRuntime(tmdbId: Int): Int {
@@ -56,8 +56,8 @@ class EpisodePlayerViewModel @Inject constructor(
     }
 
     /** Falas de uma legenda externa (SRT ou VTT). Vazio se não baixou. */
-    suspend fun subtitleCues(url: String): List<SubCue> =
-        subtitleService.download(url)?.let { parseSubs(it) }.orEmpty()
+    suspend fun subtitleCues(url: String, headers: Map<String, String> = emptyMap()): List<SubCue> =
+        subtitleService.download(url, headers)?.let { parseSubs(it) }.orEmpty()
 
     // Cache do IMDB ID por tmdbId p/ não re-resolver a cada troca de episódio.
     private val imdbCache = mutableMapOf<Int, String?>()
@@ -121,7 +121,7 @@ class EpisodePlayerViewModel @Inject constructor(
      * Vazio se não houver addon, imdb ou streams. Cada item vira um MoviePlayerSource.
      */
     suspend fun stremioEpisodeSources(tmdbId: Int, season: Int, episode: Int): List<MoviePlayerSource> {
-        val addons = prefs.stremioAddonList()
+        val addons = stremio.playbackSources(prefs.stremioAddonList(), "series")
         if (addons.isEmpty()) return emptyList()
         // Sem IMDB ainda dá pra tentar: addon que indexa por TMDB responde a "tmdb:{id}".
         val imdb = resolveImdb(tmdbId).orEmpty()
@@ -181,7 +181,7 @@ class EpisodePlayerViewModel @Inject constructor(
         episode: Int,
         onPartial: (List<MoviePlayerSource>) -> Unit,
     ) {
-        val addons = prefs.stremioAddonList()
+        val addons = stremio.playbackSources(prefs.stremioAddonList(), "series")
         if (addons.isEmpty()) { onPartial(emptyList()); return }
         val imdb = resolveImdb(tmdbId).orEmpty()
         if (imdb.isBlank() && tmdbId <= 0) { onPartial(emptyList()); return }

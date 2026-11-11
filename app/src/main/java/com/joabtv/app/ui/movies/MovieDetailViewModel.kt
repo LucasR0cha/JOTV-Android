@@ -45,10 +45,10 @@ class MovieDetailViewModel @Inject constructor(
 
     /** Testa as fontes novas (64 KB cada, 4 por vez no prober) e guarda o resultado. */
     private fun verify(streams: List<com.joabtv.app.data.remote.StremioStream>) {
-        streams.map { it.url }.filter { it.startsWith("http") && probing.add(it) }.forEach { u ->
+        streams.filter { it.url.startsWith("http") && probing.add(it.url) }.forEach { stream ->
             viewModelScope.launch {
-                val r = prober.probe(u)
-                _uiState.update { it.copy(probes = it.probes + (u to r)) }
+                val r = prober.probe(stream.url, stream.headers)
+                _uiState.update { it.copy(probes = it.probes + (stream.url to r)) }
             }
         }
         scheduleDebridCheck()
@@ -284,7 +284,7 @@ class MovieDetailViewModel @Inject constructor(
             val apiKey = prefs.tmdbApiKey
 
             if (type == MediaType.MOVIE) {
-                val addons = prefs.stremioAddonList()
+                val addons = stremio.playbackSources(prefs.stremioAddonList(), "movie")
 
                 // Busca o detalhe PRIMEIRO — /movie/{id} inclui imdb_id (rápido, ~500ms).
                 val detailDto = if (apiKey.isNotBlank() && tmdbId > 0) {
@@ -510,7 +510,7 @@ class MovieDetailViewModel @Inject constructor(
         val imdb = _uiState.value.seriesImdbId.orEmpty()
         // Série não preenche state.item, então o tmdbId vem do stub que abriu a tela.
         val seriesTmdb = stubItem?.tmdbId ?: 0
-        val addons = prefs.stremioAddonList()
+        val addons = stremio.playbackSources(prefs.stremioAddonList(), "series")
         val canSearch = (imdb.isNotBlank() || seriesTmdb > 0) && addons.isNotEmpty()
         _uiState.update {
             it.copy(

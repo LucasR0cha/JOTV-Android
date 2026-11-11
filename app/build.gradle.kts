@@ -15,8 +15,9 @@ android {
         applicationId  = "com.joabtv.app"
         minSdk         = 23
         targetSdk      = 35
-        versionCode    = 15
-        versionName    = "1.0.14"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        versionCode    = 16
+        versionName    = "1.0.15"
         // Chave TMDB lida de gradle property (local.properties / ~/.gradle/gradle.properties),
         // fora do VCS. Sem ela, fica vazia e o usuário informa a própria chave em Configurações.
         val tmdbKey = (project.findProperty("TMDB_API_KEY") as String?) ?: ""
@@ -150,6 +151,8 @@ dependencies {
     implementation("org.nanohttpd:nanohttpd:2.3.1")
 
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     // org.json de verdade nos testes de JVM (o do Android é só casca e lança "not mocked").
     testImplementation("org.json:json:20240303")
     // XmlPullParser de verdade para testar o guia XMLTV fora do Android.

@@ -35,6 +35,15 @@
 -keep class com.joabtv.app.data.remote.StremioStreamDto { *; }
 -keep class com.joabtv.app.data.remote.StremioStreamResponse { *; }
 
+# Configurações de plugins persistidas pelo Gson.
+-keep class com.joabtv.app.data.plugins.PluginState { *; }
+-keep class com.joabtv.app.data.plugins.PluginRepo { *; }
+-keep class com.joabtv.app.data.plugins.PluginProvider { *; }
+-keep class com.joabtv.app.data.plugins.PluginStatus { *; }
+-keepclassmembers class com.joabtv.app.data.plugins.PluginEngine$Bridge {
+    @android.webkit.JavascriptInterface <methods>;
+}
+
 # ── Room entities ──
 -keep class com.joabtv.app.data.local.entity.** { *; }
 

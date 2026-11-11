@@ -126,14 +126,14 @@ private fun audioTrackLabel(group: androidx.media3.common.Tracks.Group, index: I
 
 /** Fonte de mídia com DNS da Cloudflare, Referer e arquivos locais (downloads). */
 @OptIn(UnstableApi::class)
-private fun mediaSourceFactory(context: android.content.Context): DefaultMediaSourceFactory {
+private fun mediaSourceFactory(context: android.content.Context, headers: Map<String, String> = emptyMap()): DefaultMediaSourceFactory {
     // OkHttpDataSource usa o DNS-over-HTTPS Cloudflare (AppDns.mediaClient). O torrent local tem cliente próprio.
     val calls = object : okhttp3.Call.Factory {
         override fun newCall(request: okhttp3.Request) =
             (if (request.url.host == "127.0.0.1") localMediaClient else com.joabtv.app.data.remote.AppDns.mediaClient).newCall(request)
     }
     val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(calls)
-        .setDefaultRequestProperties(STREAM_HEADERS)
+        .setDefaultRequestProperties(STREAM_HEADERS.filterKeys { key -> headers.keys.none { it.equals(key, true) } } + headers)
     // DefaultDataSource delega file://, content:// e asset:// para as fontes locais.
     return DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(context, http))
 }
@@ -257,18 +257,26 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
     LaunchedEffect(tmdbId, type, curSeason, curEpisode) {
         selectedSubUrl = null
         subPicked = false
-        externalSubs = runCatching { episodeVm.subtitlesFor(tmdbId, type, curSeason, curEpisode) }.getOrDefault(emptyList())
+        baseExternalSubs = runCatching { episodeVm.subtitlesFor(tmdbId, type, curSeason, curEpisode) }.getOrDefault(emptyList())
+    }
+    LaunchedEffect(baseExternalSubs, currentSources, currentSourceIdx) {
+        val selected = currentSources.getOrNull(currentSourceIdx)?.stream?.subtitles.orEmpty()
+        val wasPlugin = externalSubs.firstOrNull { it.url == selectedSubUrl }?.let { it !in baseExternalSubs } == true
+        externalSubs = (selected + baseExternalSubs).distinctBy { it.url }
+        if (wasPlugin && externalSubs.none { it.url == selectedSubUrl }) { selectedSubUrl = null; subPicked = false }
         pickAutoSub()
     }
-    LaunchedEffect(selectedSubUrl) {
+    val selectedSubtitleHeaders = externalSubs.firstOrNull { it.url == selectedSubUrl }?.headers.orEmpty()
+    LaunchedEffect(selectedSubUrl, selectedSubtitleHeaders) {
         externalCues = emptyList()
         val u = selectedSubUrl ?: return@LaunchedEffect
-        externalCues = episodeVm.subtitleCues(u)
+        externalCues = episodeVm.subtitleCues(u, selectedSubtitleHeaders)
         if (externalCues.isEmpty() && selectedSubUrl == u) toastMsg = "Não deu para carregar essa legenda"
     }
     // Legenda externa é desenhada pelo próprio player (ver externalCues), então trocar de
     // legenda não recarrega o vídeo.
-    LaunchedEffect(streamUrl) {
+    val activeStreamHeaders = (currentSources.getOrNull(currentSourceIdx)?.takeIf { it.url == streamUrl } ?: currentSources.firstOrNull { it.url == streamUrl })?.stream?.headers.orEmpty()
+    LaunchedEffect(streamUrl, activeStreamHeaders) {
         val url = streamUrl ?: return@LaunchedEffect
         playVia = ""
         var play = url
@@ -298,7 +306,7 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
             }
         }
         try {
-            exoPlayer.setMediaSource(mediaSourceFactory(context).createMediaSource(mediaItemFor(context, play)))
+            exoPlayer.setMediaSource(mediaSourceFactory(context, activeStreamHeaders).createMediaSource(mediaItemFor(context, play)))
             exoPlayer.prepare()
             if (!didSeek && pendingSeekMs > 0) { exoPlayer.seekTo(pendingSeekMs); didSeek = true }
             // Transmitindo: mantém o player local MUDO (o Cast recebe a fonte em efeito próprio).
@@ -668,11 +676,11 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
         if (consider()) return@LaunchedEffect
         val todo = currentSources.filter {
             it.url != u && it.url !in triedUrls && it.url.startsWith("http") &&
-                langOf(it.label) == lang && episodeVm.probeCached(it.url) == null
+                langOf(it.label) == lang && episodeVm.probeCached(it.url, it.stream?.headers.orEmpty()) == null
         }.take(8)
         for (pair in todo.chunked(2)) {
             kotlinx.coroutines.coroutineScope {
-                pair.map { async { episodeVm.probe(it.url) } }.forEach { it.await() }
+                pair.map { async { episodeVm.probe(it.url, it.stream?.headers.orEmpty()) } }.forEach { it.await() }
             }
             if (consider()) return@LaunchedEffect
         }
@@ -1219,6 +1227,7 @@ internal class PlayerSession(
     var subPicked by run { mutableStateOf(false) }
     // Legendas externas (OpenSubtitles e addons). Ligam sozinhas quando são a melhor no idioma.
     var externalSubs by run { mutableStateOf<List<com.joabtv.app.data.remote.ExternalSub>>(emptyList()) }
+    var baseExternalSubs by run { mutableStateOf<List<com.joabtv.app.data.remote.ExternalSub>>(emptyList()) }
     var selectedSubUrl by run { mutableStateOf<String?>(null) }
     // Falas da legenda externa escolhida. O player desenha a fala por cima do vídeo, o que deixa
     // atrasar ou adiantar sem recarregar nada.
@@ -1533,7 +1542,7 @@ internal class PlayerSession(
 
     // Fontes com o que se sabe delas (teste do detalhe, outro filme visto aqui).
     fun facts() = currentSources.map { s ->
-        val p = episodeVm.probeCached(s.url)
+        val p = episodeVm.probeCached(s.url, s.stream?.headers.orEmpty())
         SourceFacts(
             s.url, s.addon, s.label, sourceQualityRank(s.label), p,
             wrongTitle = s.url in wrongUrls || (p != null && durationMismatch(runtimeMin, p.sec)),

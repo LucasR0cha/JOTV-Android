@@ -13,7 +13,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /** Legenda externa (arquivo .srt) de um filme/episódio. */
-data class ExternalSub(val url: String, val lang: String, val label: String)
+data class ExternalSub(val url: String, val lang: String, val label: String, val headers: Map<String, String> = emptyMap())
 
 private data class SubResponse(val subtitles: List<SubDto> = emptyList())
 private data class SubDto(
@@ -42,9 +42,9 @@ class SubtitleService @Inject constructor(
     private fun label(lang: String) = com.joabtv.app.data.local.SubLangs.label(lang)
 
     /** Texto do arquivo de legenda, ou null se não baixou. */
-    suspend fun download(url: String): String? = withContext(Dispatchers.IO) {
+    suspend fun download(url: String, headers: Map<String, String> = emptyMap()): String? = withContext(Dispatchers.IO) {
         runCatching {
-            client.newCall(Request.Builder().url(url).build()).execute().use { if (it.isSuccessful) it.body?.string() else null }
+            client.newCall(Request.Builder().url(url).apply { headers.forEach { (key, value) -> header(key, value) } }.build()).execute().use { if (it.isSuccessful) it.body?.string() else null }
         }.getOrNull()
     }
 

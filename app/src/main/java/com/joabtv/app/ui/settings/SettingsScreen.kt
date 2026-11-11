@@ -71,6 +71,7 @@ import com.joabtv.app.ui.theme.*
 @Composable
 fun SettingsScreen(
     onOpenAddons: () -> Unit = {},
+    onOpenPlugins: () -> Unit = onOpenAddons,
     onOpenProfiles: () -> Unit = {},
     onOpenHomeCustomize: () -> Unit = {},
     onOpenDebrid: () -> Unit = {},
@@ -199,11 +200,17 @@ fun SettingsScreen(
                     .padding(horizontal = pad).padding(bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                // Seu catálogo. Cinco cartões na ordem fixa (Minha Início, Nuvio, Stremio, Addons, Coleções).
+                // Seu catálogo reúne contas, addons e provedores por perfil.
                 SettingsSection("Seu catálogo")
                 if (!me.kids && !catalog.nuvio.signedIn && !catalog.stremio.signedIn && catalog.addons.total == 0) Text(
                     "Comece trazendo suas coisas de uma conta ou explore addons.",
                     color = TextSecondary, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.padding(start = 4.dp),
+                )
+                if (!me.kids) com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Extension,
+                    title = "Plugins",
+                    sub = "Repositórios Nuvio, provedores JavaScript e configurações por perfil",
+                    onClick = onOpenPlugins,
                 )
                 cards.forEachIndexed { i, c ->
                     LiveCard(

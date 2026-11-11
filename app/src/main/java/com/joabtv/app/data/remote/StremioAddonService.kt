@@ -55,6 +55,8 @@ data class StremioStream(
     val releaseText: String = "",
     val fileName: String = "",
     val fileSize: Long = 0,
+    val headers: Map<String, String> = emptyMap(),
+    val subtitles: List<ExternalSub> = emptyList(),
 )
 
 private data class StremioStreamDto(
@@ -80,6 +82,7 @@ private data class StremioStreamResponse(
 @Singleton
 class StremioAddonService @Inject constructor(
     private val prefs: com.joabtv.app.data.local.PlatformPrefs,
+    private val plugins: com.joabtv.app.data.plugins.PluginRepository,
 ) {
 
     private val gson = Gson()
@@ -109,6 +112,8 @@ class StremioAddonService @Inject constructor(
 
     /** Nome do addon por base URL (preenchido ao ler o manifest) — usado p/ rotular as fontes. */
     private val addonNames = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun playbackSources(addons: List<String>, type: String): List<String> = addons + plugins.sourceKeys(type)
 
     private fun baseOf(manifestOrBase: String) = manifestOrBase.trim()
         .removeSuffix("/manifest.json").removeSuffix("/")
@@ -162,6 +167,7 @@ class StremioAddonService @Inject constructor(
         /** TMDB id do título. Usado como 2ª tentativa quando o addon não indexa por IMDB. */
         tmdbId: Int = 0,
     ): List<StremioStream> = withContext(Dispatchers.IO) { coroutineScope {
+        if (baseOrManifest.startsWith("plugin:")) return@coroutineScope plugins.streams(baseOrManifest, type, tmdbId, season, episode)
         // Aceita "tt..." (IMDB) e "tmdb:{id}" (TMDB).
         if (imdbId.isBlank() && tmdbId <= 0) return@coroutineScope emptyList()
         val base = baseOrManifest.trim()
