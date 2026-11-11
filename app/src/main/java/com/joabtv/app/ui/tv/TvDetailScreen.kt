@@ -422,7 +422,7 @@ private fun TvPersonOverlay(name: String, items: List<MovieItem>, loading: Boole
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         TvScrollArea(inset = 2.r) {
             LazyVerticalGrid(
-                GridCells.Fixed(8), Modifier.fillMaxSize().background(Background.copy(alpha = .985f)),
+                GridCells.Fixed(tvColumns(8)), Modifier.fillMaxSize().background(Background.copy(alpha = .985f)),
                 contentPadding = PaddingValues(start = tvPad, end = tvPad, bottom = 4.r),
                 horizontalArrangement = Arrangement.spacedBy(1.3.r), verticalArrangement = Arrangement.spacedBy(2.r),
             ) {

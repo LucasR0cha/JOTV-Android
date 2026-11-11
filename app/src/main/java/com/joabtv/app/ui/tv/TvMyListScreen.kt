@@ -70,7 +70,7 @@ private fun TvMyListScreenBody(
     val hasBoth = saved.any { it.type == "MOVIE" } && saved.any { it.type == "SERIES" }
     TvScrollArea(inset = 2.r) {
         LazyVerticalGrid(
-            GridCells.Fixed(8), Modifier.fillMaxSize().background(Background), state = gs,
+            GridCells.Fixed(tvColumns(8)), Modifier.fillMaxSize().background(Background), state = gs,
             contentPadding = PaddingValues(start = tvPad, end = tvPad, bottom = 5.r),
             horizontalArrangement = Arrangement.spacedBy(1.3.r),
             verticalArrangement = Arrangement.spacedBy(2.r),

@@ -116,6 +116,11 @@ class LiveBarViewModel @Inject constructor(repo: LiveTvRepository, prefs: com.jo
 @HiltViewModel
 class LivePlayerViewModel @Inject constructor(private val repo: LiveTvRepository) : ViewModel() {
     val state = repo.state
+    suspend fun stream(channel: LiveChannel, attempt: Int) = repo.stream(channel, attempt)
+    suspend fun streams(channel: LiveChannel) = repo.streams(channel)
+    fun playerFilter() = repo.playerFilter()
+    fun savePlayerFilter(filter: com.joabtv.app.data.live.LiveBrowseFilter) = repo.savePlayerFilter(filter)
+    init { viewModelScope.launch { repo.refresh(false) } }
     fun channel(id: String) = repo.channel(id)
     fun watched(id: String) = repo.markWatched(id)
     fun toggleFavorite(id: String) = repo.toggleFavorite(id)

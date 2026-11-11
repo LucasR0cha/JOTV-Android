@@ -299,7 +299,7 @@ fun SettingsScreen(
 
                 SettingsSection("Aparência")
                 val appearance by viewModel.appearance.collectAsStateWithLifecycle()
-                AppearanceSettings(appearance, viewModel::setTheme, viewModel::setMotion, viewModel::setMenu)
+                AppearanceSettings(appearance, viewModel::setTheme, viewModel::setMotion, viewModel::setMenu, viewModel::setUiSize)
 
                 // Addons, Aparelho e TMDB somem no perfil infantil — só quem já passou pelo PIN
                 // pra sair do infantil mexe nisso (ver ProfilesScreen).
@@ -324,6 +324,14 @@ fun SettingsScreen(
 
                 // Status das fontes. Chama a rede, então gira e trava enquanto verifica.
                 SettingsSection("Diagnóstico")
+                val frameMeter by viewModel.frameMeter.collectAsStateWithLifecycle()
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Refresh,
+                    title = "Medidor de quadros",
+                    sub = "Mostra no canto da tela os quadros por segundo e de onde vem o tempo, para medir no aparelho",
+                    trailing = { Switch(checked = frameMeter, onCheckedChange = { viewModel.setFrameMeter(it) }, modifier = Modifier.focusProperties { canFocus = false }) },
+                    onClick = { viewModel.setFrameMeter(!frameMeter) },
+                )
                 com.joabtv.app.ui.common.SettingsRow(
                     icon = Icons.Default.Refresh,
                     title = if (checkingHealth) "Verificando…" else "Verificar fontes agora",
@@ -572,6 +580,7 @@ internal fun AppearanceSettings(
     onTheme: (com.joabtv.app.data.local.AppTheme) -> Unit,
     onMotion: (com.joabtv.app.data.local.InterfaceMotion) -> Unit,
     onMenu: ((com.joabtv.app.data.local.MenuStyle) -> Unit)? = null,
+    onSize: ((com.joabtv.app.data.local.InterfaceSize) -> Unit)? = null,
 ) {
     SettingsCard {
         PrefRow("Tema", com.joabtv.app.data.local.AppTheme.entries.map { it to it.label }, appearance.theme, onTheme, tonal = true)
@@ -587,6 +596,17 @@ internal fun AppearanceSettings(
             PrefRow("Menu", com.joabtv.app.data.local.MenuStyle.entries.map { it to it.label }, appearance.menu, onMenu, tonal = true)
             Text(
                 "Cápsula na lateral, barra no topo da tela ou lateral escondida.",
+                color = TextTertiary, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp),
+            )
+        }
+        // O tamanho vale só na TV, onde tudo é medido pela largura da tela. A linha da tela ajuda a achar a causa quando alguém relata texto pequeno.
+        if (onSize != null && com.joabtv.app.ui.common.LocalIsTv.current) {
+            val metrics = androidx.compose.ui.platform.LocalContext.current.resources.displayMetrics
+            Spacer(Modifier.height(18.dp))
+            PrefRow("Tamanho da interface", com.joabtv.app.data.local.InterfaceSize.entries.map { it to it.label }, appearance.uiSize, onSize, tonal = true)
+            Text(
+                "Aumenta o texto, os cartões e as margens juntos. Em TV pequena ou vista de longe, use Grande. " +
+                    "Esta tela tem ${metrics.widthPixels} x ${metrics.heightPixels} pixels a ${metrics.densityDpi} dpi.",
                 color = TextTertiary, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp),
             )
         }

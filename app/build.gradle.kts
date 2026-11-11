@@ -15,8 +15,8 @@ android {
         applicationId  = "com.joabtv.app"
         minSdk         = 23
         targetSdk      = 35
-        versionCode    = 10
-        versionName    = "1.0.9"
+        versionCode    = 15
+        versionName    = "1.0.14"
         // Chave TMDB lida de gradle property (local.properties / ~/.gradle/gradle.properties),
         // fora do VCS. Sem ela, fica vazia e o usuário informa a própria chave em Configurações.
         val tmdbKey = (project.findProperty("TMDB_API_KEY") as String?) ?: ""
@@ -38,11 +38,16 @@ android {
             // (R8 + minify + debuggable=false = MUITO mais rápido que o build debug).
             // Para publicar de verdade, troque por um keystore próprio.
             signingConfig = signingConfigs.getByName("debug")
+            // Só ARM. O libtorrent4j do release não tem versão x86, e outras bibliotecas tinham. Num emulador x86_64
+            // (MuMu, MEmu, BlueStacks) o Android escolhia x86_64 por causa delas, não achava o libtorrent4j e o app
+            // caía ao tocar uma fonte de torrent. Sem x86 no pacote ele roda como ARM pela tradução do emulador.
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
         }
         create("tvTest") {
             initWith(getByName("release"))
             matchingFallbacks += "release"
-            ndk { abiFilters += "x86" }
+            // O emulador de TV é x86 e usa a biblioteca x86 do libtorrent4j (tvTestImplementation).
+            ndk { abiFilters.clear(); abiFilters += "x86" }
         }
     }
     lint {

@@ -1,0 +1,22 @@
+# Perfil de baseline do JOTV. Os coringas pedem a compilação antecipada do código do app e das bibliotecas que a
+# interface usa. Sem isso, num APK instalado fora da Play Store, o Compose roda interpretado até o JIT esquentar e
+# a navegação fica abaixo de 20 quadros por segundo nas primeiras horas.
+HSPLcom/joabtv/app/**;->**(**)**
+HSPLandroidx/compose/**;->**(**)**
+HSPLandroidx/lifecycle/**;->**(**)**
+HSPLandroidx/activity/**;->**(**)**
+HSPLandroidx/navigation/**;->**(**)**
+HSPLandroidx/room/**;->**(**)**
+HSPLandroidx/core/**;->**(**)**
+HSPLandroidx/collection/**;->**(**)**
+HSPLandroidx/savedstate/**;->**(**)**
+HSPLcoil/**;->**(**)**
+HSPLdagger/**;->**(**)**
+HSPLkotlin/**;->**(**)**
+HSPLkotlinx/coroutines/**;->**(**)**
+HSPLokhttp3/**;->**(**)**
+HSPLokio/**;->**(**)**
+HSPLcom/google/gson/**;->**(**)**
+Lcom/joabtv/app/**;
+Landroidx/compose/**;
+Lcoil/**;

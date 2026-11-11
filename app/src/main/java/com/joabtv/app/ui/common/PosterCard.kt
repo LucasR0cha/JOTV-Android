@@ -3,8 +3,11 @@ package com.joabtv.app.ui.common
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
+import coil.imageLoader
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import coil.size.Precision
+import coil.size.Scale
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +30,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
+import com.joabtv.app.data.local.DayRanks
 import com.joabtv.app.data.local.PosterInfo
 import com.joabtv.app.data.local.SourceQuality
 import com.joabtv.app.data.local.dayString
@@ -68,6 +74,13 @@ import kotlin.math.sqrt
 
 /** Ranking, resumo das fontes e cor dos pôsteres. Nulo em prévia, e aí o cartão sai sem eles. */
 val LocalPosterInfo = staticCompositionLocalOf<PosterInfo?> { null }
+
+/**
+ * Ranking de hoje e resumo das fontes, lidos uma vez na raiz do app. Antes cada pôster abria dois coletores
+ * (um por fluxo), e uma tela cheia tem dezenas de pôsteres.
+ */
+val LocalPosterRanks = staticCompositionLocalOf<State<DayRanks?>?> { null }
+val LocalPosterQuality = staticCompositionLocalOf<State<Map<String, SourceQuality>>?> { null }
 
 // ── Regras da etiqueta e da faixa (iguais ao webOS) ─────────────────────────
 
@@ -239,18 +252,28 @@ internal fun rememberPosterVisual(
 ): PosterVisual {
     val info = LocalPosterInfo.current
     val key = posterKey(item)
-    val ranks = info?.ranks?.collectAsStateWithLifecycle()?.value
-    val qualityFlow = remember(info, key) { info?.quality?.qualityFor(key) }
-    val quality = qualityFlow?.collectAsStateWithLifecycle(initialValue = info?.quality?.value?.get(key))?.value
-        ?.takeIf { badge == null && it.fresh(System.currentTimeMillis()) }
+    val ranks = LocalPosterRanks.current?.value
+    val qualityMap = LocalPosterQuality.current
+    // O cartão só recompõe quando o resumo dele muda, e não a cada resumo novo de qualquer título.
+    val quality by remember(key, qualityMap, badge) {
+        derivedStateOf { qualityMap?.value?.get(key)?.takeIf { badge == null && it.fresh(System.currentTimeMillis()) } }
+    }
 
     var hue by remember(key) { mutableStateOf(if (key.isEmpty()) null else info?.tint(key)) }
     // Só pôster do TMDB e só enquanto não tem cor salva.
     val readHue = remember(key) { hue == null && info != null && key.isNotEmpty() && item.posterUrl.startsWith("https://image.tmdb.org/") }
-    var loaded by remember(key) { mutableStateOf<Bitmap?>(null) }
+    var loaded by remember(key) { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // O pôster que aparece na tela pode ser bitmap de hardware (sem subir textura na hora de desenhar). A cor sai de uma
+    // leitura de 8 por 12 pixels, vinda do cache em disco, que nunca é desenhada.
     if (readHue) LaunchedEffect(loaded) {
-        val b = loaded ?: return@LaunchedEffect
-        val h = withContext(Dispatchers.Default) { posterHue(b) } ?: return@LaunchedEffect
+        if (!loaded) return@LaunchedEffect
+        val small = context.imageLoader.execute(
+            ImageRequest.Builder(context).data(item.posterUrl).size(8, 12).precision(Precision.INEXACT).scale(Scale.FILL)
+                .allowHardware(false).memoryCachePolicy(CachePolicy.DISABLED).build(),
+        )
+        val bmp = (small.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
+        val h = withContext(Dispatchers.Default) { posterHue(bmp) } ?: return@LaunchedEffect
         hue = h
         info?.putTint(key, h)
     }
@@ -268,9 +291,9 @@ internal fun rememberPosterVisual(
         typeBadge -> PosterTag(if (item.type == MediaType.SERIES) "Série" else "Filme")
         else -> posterTag(item, info?.rankOf(ranks, item) ?: 0, days.first, days.second)
     }
-    val reduced = rememberReducedMotion()
-    val tint by animateColorAsState(tintColor(hue), tween(if (reduced) 0 else 300), label = "tint")
-    return PosterVisual(tint, tag, quality, if (readHue) ({ d -> loaded = (d as? BitmapDrawable)?.bitmap }) else null)
+    // A cor da faixa entra na hora. Animada, recompunha o cartão inteiro a cada quadro por 300 ms.
+    val tint = tintColor(hue)
+    return PosterVisual(tint, tag, quality, if (readHue) ({ _ -> loaded = true }) else null)
 }
 
 @Composable
@@ -285,6 +308,7 @@ internal fun BoxScope.PosterDecorations(
     Strip(item, visual.tint, Modifier.align(Alignment.BottomCenter), unit, textUnit)
 }
 
+
 @Composable
 private fun TagChip(tag: PosterTag, tint: Color, modifier: Modifier, unit: Dp, textUnit: TextUnit) {
     // Até 86% da largura, centrada, e o texto longo termina em reticências.
@@ -292,7 +316,7 @@ private fun TagChip(tag: PosterTag, tint: Color, modifier: Modifier, unit: Dp, t
         Text(
             tag.text, color = if (tag.top) TOP_INK else INK, fontSize = textUnit * 10f, lineHeight = textUnit * 12f,
             fontWeight = FontWeight.ExtraBold, fontFamily = Inter, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.shadow(4.dp, TAG_SHAPE).background(if (tag.top) Accent else tint, TAG_SHAPE)
+            modifier = Modifier.background(if (tag.top) Accent else tint, TAG_SHAPE)
                 .padding(horizontal = unit * 7, vertical = unit * 2),
         )
     }
@@ -344,7 +368,7 @@ private fun QualityChips(q: SourceQuality, modifier: Modifier, unit: Dp, textUni
         Text(
             res, color = Color(0xFF0D0D0D), fontSize = textUnit * 10f, lineHeight = textUnit * 12f, fontWeight = FontWeight.ExtraBold,
             fontFamily = Inter,
-            modifier = Modifier.shadow(unit * 3, CHIP).background(Color(0xFFF2F2F2), CHIP).padding(horizontal = unit * 5, vertical = unit),
+            modifier = Modifier.background(Color(0xFFF2F2F2), CHIP).padding(horizontal = unit * 5, vertical = unit),
         )
         if (dolby || hdr) Row(
             Modifier.background(Color.Black.copy(alpha = .8f), CHIP).padding(horizontal = unit * 4, vertical = unit * 2),

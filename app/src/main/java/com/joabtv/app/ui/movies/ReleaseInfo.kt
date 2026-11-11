@@ -18,6 +18,26 @@ internal fun groupReleases(streams: List<StremioStream>): List<ReleaseGroup> = s
     else "url:${s.url}"
 }.values.map { ReleaseGroup(it) }
 
+/**
+ * Versões que cabem em uma página. Mantém a ordem recebida (a prioridade dos addons), mas um addon
+ * com centenas de versões não ocupa a página inteira. Na primeira volta cada addon entra com no
+ * máximo limit dividido pelo número de addons, e o resto da página se completa na ordem original.
+ */
+internal fun pageOf(groups: List<ReleaseGroup>, limit: Int): List<ReleaseGroup> {
+    val addons = groups.map { it.lead.addon }.distinct()
+    if (addons.size < 2 || groups.size <= limit) return groups.take(limit)
+    val cap = maxOf(1, limit / addons.size)
+    val taken = HashMap<String, Int>()
+    var used = 0
+    val chosen = BooleanArray(groups.size)
+    groups.forEachIndexed { i, g ->
+        val n = taken[g.lead.addon] ?: 0
+        if (used < limit && n < cap) { taken[g.lead.addon] = n + 1; chosen[i] = true; used++ }
+    }
+    groups.indices.forEach { i -> if (!chosen[i] && used < limit) { chosen[i] = true; used++ } }
+    return groups.filterIndexed { i, _ -> chosen[i] }
+}
+
 private val RELEASE_CODEC = Regex("\\b(hevc|x265|h[ .]?265|av1|x264|h[ .]?264|avc)\\b", RegexOption.IGNORE_CASE)
 private val RELEASE_KIND = Regex("\\b(web[ .-]?dl|web[ .-]?rip|blu[ .-]?ray|remux|hdtv|dvd[ .-]?rip)\\b", RegexOption.IGNORE_CASE)
 private val RELEASE_SIZE = Regex("\\b(\\d{1,6}(?:[.,]\\d{1,3})?)\\s?(TiB|GiB|MiB|TB|GB|MB)\\b", RegexOption.IGNORE_CASE)

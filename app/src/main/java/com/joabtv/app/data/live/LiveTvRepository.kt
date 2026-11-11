@@ -3,6 +3,13 @@ package com.joabtv.app.data.live
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +34,8 @@ import javax.inject.Singleton
 @Singleton
 class LiveTvRepository @Inject constructor(
     @ApplicationContext context: Context,
+    private val platformPrefs: com.joabtv.app.data.local.PlatformPrefs,
+    private val addons: com.joabtv.app.data.remote.StremioAddonService,
 ) {
     data class State(
         val sources: List<LiveSource> = emptyList(),
@@ -49,6 +58,10 @@ class LiveTvRepository @Inject constructor(
     private val client = com.joabtv.app.data.remote.AppDns.mediaClient.newBuilder()
         .callTimeout(90, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
     private val lock = Mutex()
+    private val discoveryLock = Mutex()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var addonSignature = ""
+    private var discoveredAt = 0L
 
     private val _state = MutableStateFlow(
         State(
@@ -65,6 +78,29 @@ class LiveTvRepository @Inject constructor(
         val s = _state.value.sources.filter { it.enabled }
         val chans = s.flatMap { readChannels(it.id)?.first.orEmpty() }
         _state.update { it.copy(channels = chans, epg = readEpg()?.first.orEmpty()) }
+        scope.launch { platformPrefs.addons.collectLatest { discoverAddons(false) } }
+    }
+
+    private suspend fun discoverAddons(force: Boolean) = discoveryLock.withLock {
+        val active = platformPrefs.stremioAddonList()
+        val sig = active.joinToString("|")
+        if (!force && sig == addonSignature && System.currentTimeMillis() - discoveredAt < TTL) return@withLock
+        var failed = false
+        val found = coroutineScope {
+            active.map { url -> async {
+                val old = _state.value.sources.firstOrNull { it.type == LiveSourceType.ADDON && it.url == url }
+                val manifest = addons.getManifest(url) ?: run { failed = true; return@async old }
+                if (manifest.tvCatalogs.isEmpty()) return@async null
+                val id = "a" + java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).take(10).joinToString("") { "%02x".format(it) }
+                LiveSource(id, manifest.name, LiveSourceType.ADDON, url = url, enabled = old?.enabled ?: (id !in prefs.getStringSet("addon_off", emptySet()).orEmpty()), catalogs = manifest.tvCatalogs)
+            } }.awaitAll().filterNotNull()
+        }
+        addonSignature = sig
+        discoveredAt = if (failed) System.currentTimeMillis() - TTL + 60_000 else System.currentTimeMillis()
+        val current = _state.value
+        writeSources(current.sources.filter { it.type != LiveSourceType.ADDON } + found)
+        val allowed = _state.value.sources.filter { it.enabled }.map { it.id }.toSet()
+        _state.update { it.copy(channels = it.channels.filter { c -> c.sourceId in allowed }) }
     }
 
     // ── Fontes ──────────────────────────────────────────────────────────────────
@@ -87,6 +123,11 @@ class LiveTvRepository @Inject constructor(
     }
 
     fun setEnabled(id: String, on: Boolean) {
+        if (_state.value.sources.any { it.id == id && it.type == LiveSourceType.ADDON }) {
+            val off = prefs.getStringSet("addon_off", emptySet()).orEmpty().toMutableSet()
+            if (on) off.remove(id) else off.add(id)
+            prefs.edit().putStringSet("addon_off", off).apply()
+        }
         writeSources(_state.value.sources.map { if (it.id == id) it.copy(enabled = on) else it })
         val s = _state.value.sources.filter { it.enabled }
         _state.update { st -> st.copy(channels = s.flatMap { readChannels(it.id)?.first.orEmpty() }) }
@@ -108,8 +149,10 @@ class LiveTvRepository @Inject constructor(
     /** Atualiza canais (e depois o guia). [force] ignora o arquivo de 12 h. */
     suspend fun refresh(force: Boolean = false) = lock.withLock {
         withContext(Dispatchers.IO) {
+            _state.update { it.copy(loading = true, error = null) }
+            discoverAddons(force)
             val sources = _state.value.sources.filter { it.enabled }
-            if (sources.isEmpty()) { _state.update { it.copy(channels = emptyList(), error = null) }; return@withContext }
+            if (sources.isEmpty()) { _state.update { it.copy(channels = emptyList(), loading = false, error = null) }; return@withContext }
             _state.update { it.copy(loading = true, error = null) }
             val errors = mutableListOf<String>()
             val epgUrls = LinkedHashSet<String>()
@@ -147,6 +190,62 @@ class LiveTvRepository @Inject constructor(
             getText("$base&action=get_live_streams")?.let { XtreamParser.live(it, s, groups, ext) }?.takeIf { it.isNotEmpty() }
                 ?.let { it to listOf("${s.server}/xmltv.php?username=${enc(s.user)}&password=${enc(s.pass)}") }
         }
+        LiveSourceType.ADDON -> fetchAddonChannels(s).takeIf { it.isNotEmpty() }?.let { it to emptyList() }
+    }
+
+    private fun resourceUrl(base: String, path: String): String {
+        val clean = base.substringBefore('#')
+        val query = clean.substringAfter('?', "").let { if (it.isEmpty()) "" else "?$it" }
+        return clean.substringBefore('?').removeSuffix("/manifest.json").trimEnd('/') + "/" + path + query
+    }
+
+    private fun fetchAddonChannels(source: LiveSource): List<LiveChannel> {
+        val out = linkedMapOf<String, LiveChannel>()
+        for (catalog in source.catalogs) {
+            val genres = if (catalog.genreRequired) catalog.genres else listOf("")
+            for (genre in genres) {
+                var skip = 0
+                while (out.size < 10000) {
+                    val extras = buildList {
+                        if (genre.isNotEmpty()) add("genre=${enc(genre)}")
+                        if (skip > 0) add("skip=$skip")
+                    }.joinToString("&").let { if (it.isBlank()) "" else "/$it" }
+                    val response = getText(resourceUrl(source.url, "catalog/${catalog.type}/${enc(catalog.id)}$extras.json"))
+                        ?.let { runCatching { JSONObject(it) }.getOrNull() } ?: break
+                    val channels = LiveAddonParser.channels(response, source, catalog, genre)
+                    val added = channels.count { it.id !in out }
+                    channels.forEach { if (out.size < 10000 && it.id !in out) out[it.id] = it }
+                    val count = response.optJSONArray("metas")?.length() ?: 0
+                    if (!catalog.paginated || count == 0 || added == 0) break
+                    skip += count
+                }
+            }
+        }
+        return out.values.toList()
+    }
+
+    /** Resolve novamente ao abrir e ao tentar outra fonte. URLs de vídeo podem expirar. */
+    suspend fun stream(channel: LiveChannel, attempt: Int = 0): LiveStream {
+        val options = streams(channel)
+        return options[attempt.coerceAtLeast(0) % options.size]
+    }
+
+    suspend fun streams(channel: LiveChannel): List<LiveStream> = withContext(Dispatchers.IO) {
+        if (channel.addonBase.isBlank()) return@withContext listOf(LiveStream(channel.url, channel.headers, channel.name))
+        val body = getText(resourceUrl(channel.addonBase, "stream/${enc(channel.addonType)}/${enc(channel.addonId)}.json"))
+            ?: throw IllegalStateException("O addon não respondeu. Tente novamente.")
+        val streams = LiveAddonParser.streams(JSONObject(body))
+        if (streams.isEmpty()) throw IllegalStateException("O addon não disponibilizou transmissão para este canal agora.")
+        streams
+    }
+
+    fun playerFilter(): LiveBrowseFilter = runCatching {
+        val o = JSONObject(prefs.getString("player_filter", "{}").orEmpty())
+        LiveBrowseFilter(o.optString("mode", "all"), o.optString("source"), o.optString("group"), o.optString("query"))
+    }.getOrDefault(LiveBrowseFilter())
+
+    fun savePlayerFilter(filter: LiveBrowseFilter) {
+        prefs.edit().putString("player_filter", JSONObject().put("mode", filter.mode).put("source", filter.sourceId).put("group", filter.group).put("query", filter.query).toString()).apply()
     }
 
     private fun refreshEpg(channels: List<LiveChannel>, urls: List<String>, force: Boolean) {
@@ -212,7 +311,7 @@ class LiveTvRepository @Inject constructor(
     // ── Rede e arquivos ─────────────────────────────────────────────────────────
 
     private fun getText(url: String): String? = runCatching {
-        client.newCall(Request.Builder().url(url).header("User-Agent", "JOTV").build()).execute().use {
+        client.newCall(Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36").header("Accept", "application/json, */*").build()).execute().use {
             if (it.isSuccessful) it.body?.string() else null
         }
     }.getOrNull()
@@ -224,6 +323,10 @@ class LiveTvRepository @Inject constructor(
             LiveSource(
                 o.getString("id"), o.optString("name"), runCatching { LiveSourceType.valueOf(o.optString("type")) }.getOrDefault(LiveSourceType.M3U),
                 o.optString("url"), o.optString("server"), o.optString("user"), o.optString("pass"), o.optString("epg"), o.optBoolean("on", true),
+                catalogs = o.optJSONArray("catalogs")?.let { a -> (0 until a.length()).map { i ->
+                    val c = a.getJSONObject(i)
+                    LiveAddonCatalog(c.optString("type", "tv"), c.getString("id"), c.optString("name"), c.optJSONArray("genres")?.let { g -> (0 until g.length()).map { g.getString(it) } }.orEmpty(), c.optBoolean("required"), c.optBoolean("skip"))
+                } }.orEmpty(),
             )
         }
     }.getOrDefault(emptyList())
@@ -234,6 +337,7 @@ class LiveTvRepository @Inject constructor(
             a.put(
                 JSONObject().put("id", it.id).put("name", it.name).put("type", it.type.name).put("url", it.url)
                     .put("server", it.server).put("user", it.user).put("pass", it.pass).put("epg", it.epgUrl).put("on", it.enabled)
+                    .put("catalogs", JSONArray().apply { it.catalogs.forEach { c -> put(JSONObject().put("type", c.type).put("id", c.id).put("name", c.name).put("genres", JSONArray(c.genres)).put("required", c.genreRequired).put("skip", c.paginated)) } })
             )
         }
         prefs.edit().putString("sources", a.toString()).apply()
@@ -248,6 +352,7 @@ class LiveTvRepository @Inject constructor(
             a.put(
                 JSONObject().put("i", c.id).put("n", c.name).put("u", c.url).put("l", c.logo).put("g", c.group)
                     .put("e", c.epgId).put("c", c.number).put("h", h)
+                    .put("a", c.addonBase).put("m", c.addonId).put("t", c.addonType)
             )
         }
         File(dir, "ch_$sourceId.json").writeText(
@@ -267,6 +372,7 @@ class LiveTvRepository @Inject constructor(
             LiveChannel(
                 c.getString("i"), sourceId, c.optString("n"), c.optString("u"), c.optString("l"), c.optString("g"),
                 c.optString("e"), c.optInt("c"), h?.keys()?.asSequence()?.associateWith { k -> h.optString(k) }.orEmpty(),
+                c.optString("a"), c.optString("m"), c.optString("t", "tv"),
             )
         }
         val epg = o.optJSONArray("epg")?.let { e -> (0 until e.length()).map { e.optString(it) } }.orEmpty()

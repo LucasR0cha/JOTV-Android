@@ -303,6 +303,10 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
             if (!didSeek && pendingSeekMs > 0) { exoPlayer.seekTo(pendingSeekMs); didSeek = true }
             // Transmitindo: mantém o player local MUDO (o Cast recebe a fonte em efeito próprio).
             if (casting) exoPlayer.playWhenReady = false
+        } catch (_: com.joabtv.app.data.torrent.TorrentUnavailable) {
+            // Sem o motor de torrent neste aparelho a fonte magnet não abre. Segue pelo caminho de erro, que tenta a próxima.
+            toastMsg = "Este aparelho não toca torrent. Tentando outra fonte."
+            movieErrored = true
         } catch (_: Exception) {}
     }
 
@@ -1353,6 +1357,13 @@ internal class PlayerSession(
     /** Liga o som de [src] com a imagem atual. [onDone] diz se deu certo. */
     fun setExt(src: MoviePlayerSource, onDone: (Boolean) -> Unit) {
         dropExt()
+        val item = try {
+            mediaItemFor(context, src.url)
+        } catch (_: com.joabtv.app.data.torrent.TorrentUnavailable) {
+            toastMsg = "Este aparelho não toca torrent."
+            onDone(false)
+            return
+        }
         val ext = ExoPlayer.Builder(context).setMediaSourceFactory(mediaSourceFactory(context)).build().apply {
             // Só o som. Sem decodificar imagem nem legenda.
             trackSelectionParameters = trackSelectionParameters.buildUpon()
@@ -1360,7 +1371,7 @@ internal class PlayerSession(
                 .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
                 .setPreferredAudioLanguage("pt")
                 .build()
-            setMediaItem(mediaItemFor(context, src.url))
+            setMediaItem(item)
         }
         extUrl = src.url
         extSync = ExtAudioSync(
@@ -1567,8 +1578,9 @@ internal class PlayerSession(
         val groups = groupReleases(currentSources.map { it.stream ?: com.joabtv.app.data.remote.StremioStream(it.label, it.url, it.addon,
             qualityRank = com.joabtv.app.data.remote.qualityRankOf(it.label)) })
             .sortedByDescending { g -> g.members.any { it.url == playing } }
+        val page = pageOf(groups, sourceLimit)
         return buildList {
-            groups.take(sourceLimit).forEach { group ->
+            page.forEach { group ->
                 val active = group.members.any { it.url == playing }
                 val src = group.members.firstOrNull { it.url == playing } ?: group.lead
                 add(TvPlayerAction(src.label, true, active, addon = src.addon, stream = src,
@@ -1576,8 +1588,8 @@ internal class PlayerSession(
                     if (!active) applyMovieSource(currentSources.indexOfFirst { it.url == src.url }, manual = true)
                 })
             }
-            if (groups.size > sourceLimit) add(TvPlayerAction("Mostrar mais", false, false,
-                sub = "${groups.size - sourceLimit} versões", keepOpen = true) { sourceLimit += 30 })
+            if (groups.size > page.size) add(TvPlayerAction("Mostrar mais", false, false,
+                sub = "${groups.size - page.size} versões", keepOpen = true) { sourceLimit += 30 })
         }
     }
     val subActions: List<TvPlayerAction> get() = buildList {

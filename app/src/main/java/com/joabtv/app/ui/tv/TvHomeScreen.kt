@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import com.joabtv.app.ui.common.shimmer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -25,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -38,11 +40,17 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import kotlin.math.roundToInt
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -63,6 +71,7 @@ import com.joabtv.app.ui.navigation.TvMenuTop
 import com.joabtv.app.data.local.MenuStyle
 import com.joabtv.app.ui.theme.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
@@ -123,6 +132,18 @@ private fun TvHomeScreenBody(
     var page by remember { mutableIntStateOf(0) }
     // O título selecionado continua no destaque ao voltar para os botões.
     var focusedItem by remember { mutableStateOf<MovieItem?>(null) }
+    val pendingFocus = remember { mutableStateOf<MovieItem?>(null) }
+    val focusSettled by remember {
+        derivedStateOf { pendingFocus.value == focusedItem }
+    }
+    LaunchedEffect(Unit) {
+        snapshotFlow { pendingFocus.value }.collectLatest { item ->
+            if (item != null) {
+                delay(80)
+                focusedItem = item
+            }
+        }
+    }
     val carouselItem = heroItems.getOrNull(page.coerceAtMost((heroItems.size - 1).coerceAtLeast(0)))
     val hero = focusedItem ?: carouselItem
 
@@ -147,14 +168,15 @@ private fun TvHomeScreenBody(
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val lifecycleState by lifecycle.lifecycle.currentStateFlow.collectAsState()
     val homeActive = !navigationOpen && lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-    LaunchedEffect(page, focusedItem, heroItems.size, trailer, homeActive) {
-        if (!homeActive || focusedItem != null || heroItems.size < 2 || trailer != null) return@LaunchedEffect
+    LaunchedEffect(page, focusedItem, heroItems.size, trailer, homeActive, focusSettled) {
+        if (!homeActive || !focusSettled || focusedItem != null || heroItems.size < 2 || trailer != null) return@LaunchedEffect
         delay(8000)
         page = (page + 1) % heroItems.size
     }
     // Logo, arte e faixa etária chegam depois de uma pausa no foco, como no webOS.
-    LaunchedEffect(hero?.tmdbId) {
+    LaunchedEffect(hero?.tmdbId, focusSettled) {
         val h = hero ?: return@LaunchedEffect
+        if (!focusSettled) return@LaunchedEffect
         delay(380)
         val series = h.type == MediaType.SERIES
         viewModel.ensureHeroLogo(h.tmdbId, series)
@@ -213,21 +235,22 @@ private fun TvHomeScreenBody(
             // Menu Superior. A fileira focada fica inteira e a seguinte espia embaixo. As fileiras
             // têm altura natural e a área delas começa no topo da fileira focada.
             val peekLayout = LocalMenuStyle.current == MenuStyle.TOP
-            val peek = 6.r
+            // A espiada da fileira seguinte encolhe entre 1,1 e 1,2 do Tamanho da interface. Sem isso o destaque não cabe e passa por baixo da barra do menu Superior.
+            val peek = 6.r * ((1.2f - LocalUiScale.current) / 0.1f).coerceIn(0f, 1f)
             val density = androidx.compose.ui.platform.LocalDensity.current
             val firstBlock by remember {
                 derivedStateOf { rails.layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }?.size ?: 0 }
             }
             val block = railContentHeight ?: with(density) { firstBlock.toDp() }.takeIf { it > 0.r } ?: 27.r
             val railsTopTarget = if (peekLayout) (maxHeight - peek - block).coerceAtLeast(maxHeight * .3f) else pageTop
-            val railsTop by animateDpAsState(
+            val railsTop = animateDpAsState(
                 targetValue = railsTopTarget,
-                animationSpec = tween(if (reduced) 0 else 220), label = "railsTop",
+                animationSpec = tween(if (reduced) 0 else 140), label = "railsTop",
             )
-            val heroBottom by animateDpAsState(
+            val heroBottom = animateDpAsState(
                 targetValue = if (peekLayout) maxHeight - railsTopTarget + 1.2.r
                     else railContentHeight?.plus(4.5.r) ?: 30.6.r,
-                animationSpec = tween(if (reduced) 0 else 220), label = "heroPosition",
+                animationSpec = tween(if (reduced) 0 else 140), label = "heroPosition",
             )
             TvHeroBanner(
                 item = hero,
@@ -238,8 +261,8 @@ private fun TvHomeScreenBody(
                 onDown = { focusManager.moveFocus(FocusDirection.Down) || runCatching { railsEntry.requestFocus(); true }.getOrDefault(false) },
                 pageCount = if (focusedItem == null) heroItems.size else 0,
                 page = page,
-                trailerOn = homeActive && state.heroTrailer && trailer == null,
-                trailerFor = viewModel::heroTrailerStream,
+                trailerOn = homeActive && state.heroTrailer && trailer == null && focusSettled,
+                trailerFor = { viewModel.heroTrailerStream(it, background = true) },
                 onTrailerEnd = { if (focusedItem == null && heroItems.size > 1) page = (page + 1) % heroItems.size },
                 trailerBusy = trailerBusy && trailerCard == null,
                 onWatch = { hero?.let(onItemClick) },
@@ -262,7 +285,7 @@ private fun TvHomeScreenBody(
             }
             railsArea {
                 LazyColumn(
-                    Modifier.fillMaxSize().padding(start = TvMenuClosed, top = if (peekLayout) railsTop else pageTop)
+                    Modifier.fillMaxSize().padding(start = TvMenuClosed).tvTopInset(railsTop)
                         .focusRequester(railsEntry).focusGroup()
                         .onKeyEvent { ev ->
                             // Cima na primeira fileira sobe para o destaque. Entre fileiras segue o foco normal.
@@ -275,7 +298,7 @@ private fun TvHomeScreenBody(
                     // até o alto da área e a faixa de baixo fica vazia (nada para espiar).
                     contentPadding = PaddingValues(bottom = if (peekLayout) peek else 0.r),
                 ) {
-                    homeRails(state, viewModel, onItemClick, onFocus = { focusedItem = it }, onTrailer = ::playCard,
+                    homeRails(state, viewModel, onItemClick, onFocus = { pendingFocus.value = it }, onTrailer = ::playCard,
                         collections = collections, onFolderClick = onFolderClick,
                         pageHeight = if (peekLayout) Dp.Unspecified else pageHeight, onPageContentHeight = { railContentHeight = it })
                 }
@@ -366,7 +389,7 @@ private fun TvHeroBanner(
     item: MovieItem?,
     state: MoviesHomeViewModel.UiState,
     height: Dp,
-    contentBottom: Dp,
+    contentBottom: State<Dp>,
     heroEntry: FocusRequester,
     onDown: () -> Boolean,
     pageCount: Int,
@@ -395,7 +418,7 @@ private fun TvHeroBanner(
     }
     Box(modifier.fillMaxWidth().height(height)) {
         Box(Modifier.fillMaxSize()) {
-            Crossfade(backdrop, animationSpec = tween(if (reduced) 0 else 280), label = "heroBg") { url ->
+            Crossfade(backdrop, animationSpec = tween(if (reduced) 0 else 140), label = "heroBg") { url ->
                 if (url.isNotBlank()) AsyncImage(
                     url, null, Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop, alignment = BiasAlignment(0f, -0.5f),
@@ -407,19 +430,12 @@ private fun TvHeroBanner(
                 )
             }
         }
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
-            0f to Background.copy(alpha = .93f), 0.28f to Background.copy(alpha = .75f),
-            0.6f to Background.copy(alpha = .2f), 0.82f to Color.Transparent,
-        )))
-        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().fillMaxHeight(0.7f).background(
-            Brush.verticalGradient(
-                0f to Color.Transparent, 0.37f to Background.copy(alpha = .4f),
-                0.68f to Background.copy(alpha = .94f), 0.92f to Background,
-            )
-        ))
+        Box(Modifier.fillMaxSize().heroScrim())
         if (item == null) return@Box
         Column(
-            Modifier.align(Alignment.BottomStart).padding(start = TvMenuClosed + tvPad, bottom = contentBottom)
+            Modifier.align(Alignment.BottomStart)
+                .offset { IntOffset(0, -contentBottom.value.roundToPx()) }
+                .padding(start = TvMenuClosed + tvPad)
                 .width(45.r),
         ) {
             TvTitleArtwork(item.title, state.heroLogos[item.tmdbId].orEmpty(),
@@ -456,6 +472,50 @@ private fun TvHeroBanner(
             }
         }
     }
+}
+
+/**
+ * Escurece o destaque para o texto ler. São dois degradês, um da esquerda para a direita e outro de baixo para cima,
+ * que antes eram duas camadas do tamanho da tela por cima da arte. Aqui viram uma imagem de 128 por 72 com a soma dos
+ * dois, desenhada de uma vez, e a placa de vídeo pinta uma camada a menos por quadro.
+ */
+private fun Modifier.heroScrim(): Modifier = drawBehind {
+    drawImage(
+        HeroScrim, dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
+        filterQuality = androidx.compose.ui.graphics.FilterQuality.Low,
+    )
+}
+
+private val HeroScrim: ImageBitmap by lazy {
+    val w = 128
+    val h = 72
+    val px = IntArray(w * h)
+    for (y in 0 until h) {
+        val av = scrimAlpha((y + 0.5f) / h, VERTICAL_SCRIM_TOP, floatArrayOf(0f, .37f, .68f, .92f), floatArrayOf(0f, .4f, .94f, 1f))
+        for (x in 0 until w) {
+            val ah = scrimAlpha((x + 0.5f) / w, 0f, floatArrayOf(0f, .28f, .6f, .82f), floatArrayOf(.93f, .75f, .2f, 0f))
+            val a = 1f - (1f - ah) * (1f - av)
+            px[y * w + x] = Color(Background.red, Background.green, Background.blue, a).toArgb()
+        }
+    }
+    android.graphics.Bitmap.createBitmap(px, w, h, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
+}
+
+/** O degradê vertical cobre os 30% de baixo para cima, a parte de cima da tela fica sem ele. */
+private const val VERTICAL_SCRIM_TOP = 0.3f
+
+/** Opacidade do degradê em [pos] (0 a 1 da tela). [from] é onde o degradê começa e as paradas valem sobre o resto. */
+private fun scrimAlpha(pos: Float, from: Float, stops: FloatArray, alphas: FloatArray): Float {
+    if (pos < from) return 0f
+    val t = (pos - from) / (1f - from)
+    if (t <= stops.first()) return alphas.first()
+    for (i in 1 until stops.size) {
+        if (t <= stops[i]) {
+            val k = (t - stops[i - 1]) / (stops[i] - stops[i - 1])
+            return alphas[i - 1] + (alphas[i] - alphas[i - 1]) * k
+        }
+    }
+    return alphas.last()
 }
 
 @Composable
@@ -516,10 +576,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.homeRails(
                 }
             }
             SystemRow.NEW_EPISODES -> if (state.newEpisodes.isNotEmpty()) item(key = row.key) {
+                // Lista e mapas guardados, assim a fileira não recompõe (e os pôsteres com ela) a cada rodada da Início.
+                val episodes = state.newEpisodes
+                val shown = remember(episodes) { episodes.map { it.item } }
+                val badges = remember(episodes) { episodes.associate { it.item.tmdbId to it.badge } }
+                val subs = remember(episodes) { episodes.associate { it.item.tmdbId to it.sub } }
                 PosterRail(
-                    row.displayTitle, state.newEpisodes.map { it.item }, onItemClick, onFocus,
-                    badges = state.newEpisodes.associate { it.item.tmdbId to it.badge },
-                    subs = state.newEpisodes.associate { it.item.tmdbId to it.sub },
+                    row.displayTitle, shown, onItemClick, onFocus,
+                    badges = badges, subs = subs,
                     pageHeight = pageHeight, onPageContentHeight = onPageContentHeight,
                 )
             }
@@ -611,7 +675,7 @@ private fun PosterRail(
             TvPoster(
                 item = item, onClick = { onItemClick(item) }, width = 12.5.r,
                 progress = progress?.get(item.tmdbId), subtitle = subs?.get(item.tmdbId), badge = badges?.get(item.tmdbId),
-                onFocus = { onFocus(item) }, qualityNeighbors = items.drop(index + 1).take(7),
+                onFocus = { onFocus(item) }, qualityNeighbors = { items.subList(index + 1, minOf(items.size, index + 8)) },
             )
         }
         if (seeAll != null) item(key = "seeAll") { SeeAllCard(seeAll) }
@@ -677,11 +741,11 @@ private fun TrailersRail(
 
 @Composable
 private fun TvSkeletonRail() {
-    val brush = com.joabtv.app.ui.common.skeletonBrush()
+    val brush = com.joabtv.app.ui.common.rememberShimmer()
     Column(Modifier.padding(top = 1.3.r)) {
-        Box(Modifier.padding(start = tvPad).size(16.r, 1.8.r).clip(RoundedCornerShape(0.5.r)).background(brush))
+        Box(Modifier.padding(start = tvPad).size(16.r, 1.8.r).clip(RoundedCornerShape(0.5.r)).shimmer(brush))
         Row(Modifier.padding(start = tvPad, top = 1.r), horizontalArrangement = Arrangement.spacedBy(1.25.r)) {
-            repeat(8) { Box(Modifier.size(12.5.r, 18.75.r).clip(RoundedCornerShape(0.9.r)).background(brush)) }
+            repeat(8) { Box(Modifier.size(12.5.r, 18.75.r).clip(RoundedCornerShape(0.9.r)).shimmer(brush)) }
         }
     }
 }
@@ -704,7 +768,7 @@ private fun TvCatalogGrid(
     LaunchedEffect(near) { if (near) viewModel.loadMoreGrid() }
     TvScrollArea(inset = 3.r) {
         LazyVerticalGrid(
-            GridCells.Fixed(8), Modifier.fillMaxSize().background(Background), state = gs,
+            GridCells.Fixed(tvColumns(8)), Modifier.fillMaxSize().background(Background), state = gs,
             contentPadding = PaddingValues(start = tvPad, end = tvPad, bottom = 5.r),
             horizontalArrangement = Arrangement.spacedBy(1.3.r),
             verticalArrangement = Arrangement.spacedBy(2.r),

@@ -12,7 +12,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -38,13 +37,13 @@ fun TvContinueCard(
     onLongClick: (() -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale = tvFocusScale(focused, 1.04f)
+    val scale = tvFocusScaleState(focused, 1.04f)
     val shape = RoundedCornerShape(0.9.r)
     var failed by remember(artwork?.imageUrl) { mutableStateOf(false) }
     val image = if (!failed) artwork?.imageUrl.orEmpty().ifBlank { item.backdropUrl }.ifBlank { item.posterUrl }
         else artwork?.posterUrl.orEmpty().ifBlank { item.posterUrl }
     Box(
-        Modifier.width(26.r).aspectRatio(16f / 9f).scale(scale)
+        Modifier.width(26.r).aspectRatio(16f / 9f).tvFocusLayer(scale, cached = true)
             .shadow(if (focused) 1.2.r else 0.r, shape).clip(shape).background(BackgroundCard)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .tvClick(onClick, onLongClick)

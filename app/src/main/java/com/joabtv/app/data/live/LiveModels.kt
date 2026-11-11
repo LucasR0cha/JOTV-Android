@@ -1,7 +1,7 @@
 package com.joabtv.app.data.live
 
 /** De onde vêm os canais. */
-enum class LiveSourceType { M3U, XTREAM }
+enum class LiveSourceType { M3U, XTREAM, ADDON }
 
 /**
  * Fonte de TV ao vivo. Lista M3U usa [url]. Conta Xtream usa [server], [user] e [pass].
@@ -17,6 +17,7 @@ data class LiveSource(
     val pass: String = "",
     val epgUrl: String = "",
     val enabled: Boolean = true,
+    val catalogs: List<LiveAddonCatalog> = emptyList(),
 )
 
 /** Um canal. [id] é estável entre atualizações (fonte + id do canal na fonte). */
@@ -31,6 +32,9 @@ data class LiveChannel(
     val number: Int = 0,
     /** Cabeçalhos que a lista pede (User-Agent, Referer). */
     val headers: Map<String, String> = emptyMap(),
+    val addonBase: String = "",
+    val addonId: String = "",
+    val addonType: String = "tv",
 )
 
 /** Programa do guia. Horários em epoch ms. */

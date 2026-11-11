@@ -27,6 +27,7 @@ data class AddonManifest(
     val resources: List<String> = emptyList(),
     /** Catálogos que podem virar fileira na Início (filme e série sem filtro obrigatório). */
     val catalogs: List<AddonCatalog> = emptyList(),
+    val tvCatalogs: List<com.joabtv.app.data.live.LiveAddonCatalog> = emptyList(),
 )
 
 /** Item de um catálogo de addon, ainda com o id do Stremio (tt... ou tmdb:...). */
@@ -142,6 +143,7 @@ class StremioAddonService @Inject constructor(
                 types = types,
                 resources = res,
                 catalogs = AddonLinks.homeCatalogs(json),
+                tvCatalogs = com.joabtv.app.data.live.LiveAddonParser.catalogs(o),
             ).also { m ->
                 if (m.name.isNotBlank()) addonNames[baseOf(url)] = m.name
                 // A Início monta as fileiras de addon a partir disso, sem esperar a rede.

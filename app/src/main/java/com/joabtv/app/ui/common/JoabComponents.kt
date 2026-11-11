@@ -25,7 +25,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
@@ -66,10 +68,16 @@ fun <T> joabTween(ms: Int, reduced: Boolean): TweenSpec<T> = tween(if (reduced) 
 
 /** Escala de foco e de toque. Foco 1.06 (D-pad), toque 0.97, 160 ms como no webOS. */
 @Composable
-private fun pressFocusScale(pressed: Boolean, focused: Boolean, focusScale: Float = 1.06f): Float {
+private fun pressFocusScale(pressed: Boolean, focused: Boolean, focusScale: Float = 1.06f): State<Float> {
     val reduced = rememberReducedMotion()
     val target = if (reduced) 1f else if (focused) focusScale else if (pressed) 0.97f else 1f
-    return animateFloatAsState(target, joabTween(160, reduced), label = "pf").value
+    return animateFloatAsState(target, joabTween(160, reduced), label = "pf")
+}
+
+/** Escala lida só na camada gráfica. O cartão não recompõe a cada quadro da animação. */
+private fun Modifier.layerScale(s: State<Float>): Modifier = graphicsLayer {
+    scaleX = s.value
+    scaleY = s.value
 }
 
 /** Ícone girando, usado no "Salvando…". Parado com animação reduzida. */
@@ -261,7 +269,7 @@ fun GlassCircleButton(
     val s = pressFocusScale(pressed, focused)
     Box(
         modifier
-            .scale(s)
+            .layerScale(s)
             .onFocusChanged { focused = it.isFocused }
             .size(size.coerceAtLeast(48.dp))
             .clip(CircleShape)
@@ -393,7 +401,7 @@ fun FilterChipPill(
         contentAlignment = Alignment.Center,
     ) {
         Row(
-            Modifier.scale(s).heightIn(min = 48.dp).clip(RoundedCornerShape(999.dp)).background(bg).padding(horizontal = 16.dp, vertical = 8.dp),
+            Modifier.layerScale(s).heightIn(min = 48.dp).clip(RoundedCornerShape(999.dp)).background(bg).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
@@ -437,7 +445,7 @@ fun MediaPosterCard(
     val shape = RoundedCornerShape(14.dp)
     Box(
         modifier
-            .scale(s)
+            .layerScale(s)
             .aspectRatio(aspectRatio)
             .shadow(if (focused) 18.dp else 0.dp, shape)
             .clip(shape)
@@ -458,11 +466,8 @@ fun MediaPosterCard(
             modifier = Modifier.align(Alignment.Center).padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 10.dp + imageBottom),
         )
         val ctx = LocalContext.current
-        // Bitmap de software só para quem vai ler os pixels (o de hardware não deixa).
-        val model: Any? = if (onImage == null) imageUrl
-        else remember(imageUrl) { coil.request.ImageRequest.Builder(ctx).data(imageUrl).allowHardware(false).build() }
         AsyncImage(
-            model = model, contentDescription = title, contentScale = ContentScale.Crop,
+            model = imageUrl, contentDescription = title, contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize().padding(bottom = imageBottom),
             onSuccess = onImage?.let { f -> { s: coil.compose.AsyncImagePainter.State.Success -> f(s.result.drawable) } },
         )
@@ -578,7 +583,7 @@ fun JoabButton(
     val shape = RoundedCornerShape(999.dp)
     Row(
         modifier
-            .scale(s)
+            .layerScale(s)
             .heightIn(min = if (compact) 48.dp else 52.dp)
             .clip(shape)
             .then(if (tone == ButtonTone.PRIMARY && enabled) Modifier.background(PrimaryActionBrush) else Modifier.background(bg))
@@ -620,30 +625,36 @@ fun JoabPrimaryButton(
 
 // ── ESQUELETO ───────────────────────────────────────────────────────────────
 
-/** Brilho que corre da direita para a esquerda (.skel do webOS). Parado com animação reduzida. */
+/**
+ * Posição do brilho do esqueleto, de 1 a 0. Só é lida na hora de desenhar (ver [shimmer]), então a animação invalida
+ * o desenho dos esqueletos e não recompõe tela nenhuma. Parada com animação reduzida.
+ */
 @Composable
-fun skeletonBrush(): Brush {
-    val reduced = rememberReducedMotion()
-    val x = if (reduced) 0.5f else rememberInfiniteTransition(label = "sk").animateFloat(
+fun rememberShimmer(): State<Float> {
+    val still = rememberReducedMotion()
+    return if (still) remember { mutableFloatStateOf(0.5f) } else rememberInfiniteTransition(label = "sk").animateFloat(
         1f, 0f, infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing)), label = "skX",
-    ).value
-    val w = 1200f
-    val start = x * w * 2 - w
-    return Brush.linearGradient(
-        listOf(Color(0xFF1C1C1C), Color(0xFF262626), Color(0xFF1C1C1C)),
-        start = Offset(start, 0f), end = Offset(start + w, 0f),
     )
 }
 
+private val SHIMMER_COLORS = listOf(Color(0xFF1C1C1C), Color(0xFF262626), Color(0xFF1C1C1C))
+
+/** Fundo do esqueleto com o brilho que corre da direita para a esquerda (.skel do webOS). */
+fun Modifier.shimmer(x: State<Float>): Modifier = drawBehind {
+    val w = 1200f
+    val start = x.value * w * 2 - w
+    drawRect(Brush.linearGradient(SHIMMER_COLORS, start = Offset(start, 0f), end = Offset(start + w, 0f)))
+}
+
 @Composable
-fun SkeletonBox(modifier: Modifier, radius: Dp = 14.dp, brush: Brush = skeletonBrush()) {
-    Box(modifier.clip(RoundedCornerShape(radius)).background(brush))
+fun SkeletonBox(modifier: Modifier, radius: Dp = 14.dp, shimmer: State<Float> = rememberShimmer()) {
+    Box(modifier.clip(RoundedCornerShape(radius)).shimmer(shimmer))
 }
 
 /** Esqueleto de fileira de pôsteres enquanto o conteúdo chega. */
 @Composable
 fun SkeletonRail(modifier: Modifier = Modifier, count: Int = 6, cardWidth: Dp = 128.dp) {
-    val brush = skeletonBrush()
+    val brush = rememberShimmer()
     val pad = pagePadding()
     Column(modifier.fillMaxWidth()) {
         SkeletonBox(Modifier.padding(start = pad, bottom = 12.dp).size(width = 160.dp, height = 20.dp), 6.dp, brush)

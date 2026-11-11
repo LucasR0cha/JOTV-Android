@@ -429,7 +429,7 @@ private fun HomeSectionsTab(
                 HeroCarousel(
                     heroItems, state.heroLogos, onItemClick,
                     trailerOn = state.heroTrailer && atTop,
-                    trailerFor = viewModel::heroTrailerStream,
+                    trailerFor = { viewModel.heroTrailerStream(it, background = true) },
                 )
             }
         }
@@ -850,7 +850,7 @@ private fun LatestTrailersRow(
         when {
             // Espaço reservado do mesmo tamanho do card: a fileira não "pula" quando carrega.
             state.trailersLoading -> {
-                val brush = com.joabtv.app.ui.common.skeletonBrush()
+                val brush = com.joabtv.app.ui.common.rememberShimmer()
                 androidx.compose.foundation.lazy.LazyRow(
                     contentPadding = PaddingValues(horizontal = pad),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),

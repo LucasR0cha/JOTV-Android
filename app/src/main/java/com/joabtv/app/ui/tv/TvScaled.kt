@@ -6,6 +6,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import com.joabtv.app.ui.theme.LocalUiScale
 
 /**
  * Telas de lista e formulário que já seguem o desenho do webOS (Configurações com resumo fixo à
@@ -31,7 +32,7 @@ fun TvScaled(content: @Composable () -> Unit) {
 private fun tvScaledFactor(): Float {
     val d = LocalDensity.current
     val config = LocalConfiguration.current
-    return minOf(config.screenWidthDp * d.density / 1600f, config.screenHeightDp * d.density / 900f)
+    return minOf(config.screenWidthDp * d.density / 1600f, config.screenHeightDp * d.density / 900f) * LocalUiScale.current
 }
 
 /**

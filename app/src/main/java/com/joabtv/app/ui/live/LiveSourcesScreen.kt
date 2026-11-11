@@ -106,7 +106,7 @@ fun LiveSourcesScreen(onBack: () -> Unit, viewModel: LiveSourcesViewModel = hilt
                             Column(Modifier.weight(1f)) {
                                 Text(s.name, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
                                 val parts = listOfNotNull(
-                                    if (s.type == LiveSourceType.M3U) "Lista M3U" else "Xtream",
+                                    when (s.type) { LiveSourceType.M3U -> "Lista M3U"; LiveSourceType.XTREAM -> "Xtream"; LiveSourceType.ADDON -> "Addon ao vivo" },
                                     if (s.enabled) "$count canais" else "Desligada",
                                     acc?.let { a -> if (a.expiresAt > 0) "vence em ${date(a.expiresAt)}" else a.status.ifBlank { null } },
                                 )
@@ -116,7 +116,7 @@ fun LiveSourcesScreen(onBack: () -> Unit, viewModel: LiveSourcesViewModel = hilt
                                 checked = s.enabled, onCheckedChange = { viewModel.setEnabled(s.id, it) },
                                 colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Accent, uncheckedThumbColor = TextTertiary, uncheckedTrackColor = BackgroundCard2, uncheckedBorderColor = Border),
                             )
-                            IconButton(onClick = { confirmRemove = s.id }, modifier = Modifier.size(48.dp)) {
+                            if (s.type != LiveSourceType.ADDON) IconButton(onClick = { confirmRemove = s.id }, modifier = Modifier.size(48.dp)) {
                                 Icon(Icons.Default.Delete, "Remover ${s.name}", tint = LiveRed)
                             }
                         }

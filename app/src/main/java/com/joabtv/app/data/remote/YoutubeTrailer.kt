@@ -69,6 +69,9 @@ class YoutubeTrailer @Inject constructor(
     private companion object {
         const val USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0"
+
+        /** Altura máxima do trailer mudo do fundo da Início. Um decodificador de hardware dá conta de 720p H.264 em qualquer TV. */
+        const val BACKGROUND_CAP = 720
     }
 
     /** Stream do trailer: URL de vídeo (+ áudio se DASH). null se falhar. */
@@ -109,14 +112,18 @@ class YoutubeTrailer @Inject constructor(
         }
     }
 
-    /** Trailer: NewPipe (googlevideo direto) e cai pro Piped. null se tudo falhar. */
-    suspend fun stream(videoKey: String): TrailerStream? = withContext(Dispatchers.IO) {
+    /**
+     * Trailer: NewPipe (googlevideo direto) e cai pro Piped. null se tudo falhar. [background] é o trailer mudo do
+     * fundo da Início. Ele para em 720p, só H.264 em mp4 e sem faixa de áudio. Antes pegava até 4K em VP9 ou AV1,
+     * que muita TV decodifica por software e deixa a interface sem fôlego. O botão Trailer segue pela banda medida.
+     */
+    suspend fun stream(videoKey: String, background: Boolean = false): TrailerStream? = withContext(Dispatchers.IO) {
         if (videoKey.isBlank()) return@withContext null
-        val cap = adaptiveCap()
-        newPipe(videoKey, cap) ?: piped(videoKey, cap)
+        val cap = if (background) minOf(adaptiveCap(), BACKGROUND_CAP) else adaptiveCap()
+        newPipe(videoKey, cap, background) ?: piped(videoKey, cap, background)
     }
 
-    private fun piped(videoKey: String, cap: Int): TrailerStream? {
+    private fun piped(videoKey: String, cap: Int, background: Boolean): TrailerStream? {
         for (base in pipedInstances) {
             val r = runCatching {
                 val req = okhttp3.Request.Builder().url("$base/streams/$videoKey")
@@ -133,6 +140,8 @@ class YoutubeTrailer @Inject constructor(
                             val o = vs.getJSONObject(i)
                             if (!o.optBoolean("videoOnly", false)) continue
                             if (!o.optString("mimeType").contains("mp4", true)) continue
+                            val codec = o.optString("codec")
+                            if (background && codec.isNotBlank() && !codec.startsWith("avc", true)) continue
                             val q = res(o.optString("quality"))
                             if (q in 1..cap && q > vQ) { vQ = q; vUrl = o.optString("url") }
                         }
@@ -144,6 +153,7 @@ class YoutubeTrailer @Inject constructor(
                             val br = o.optInt("bitrate", 0)
                             if (br > aBr) { aBr = br; aUrl = o.optString("url") }
                         }
+                        if (vUrl != null && background) return@use TrailerStream(vUrl, null)
                         if (vUrl != null && aUrl != null) return@use TrailerStream(vUrl, aUrl)
                         // 2) Progressivo muxado (videoOnly=false) se não houver DASH.
                         var bestUrl: String? = null; var bestQ = -1
@@ -178,14 +188,22 @@ class YoutubeTrailer @Inject constructor(
         return runCatching { client.newCall(req).execute().use { it.code == 206 || it.code == 200 } }.getOrDefault(false)
     }
 
-    private fun newPipe(videoKey: String, cap: Int): TrailerStream? {
+    /** H.264 em mp4. Os outros (VP9, AV1) pedem decodificador que muita TV não tem em hardware. */
+    private fun isAvc(s: org.schabi.newpipe.extractor.stream.VideoStream): Boolean {
+        val codec = runCatching { s.codec }.getOrNull().orEmpty()
+        return s.format == org.schabi.newpipe.extractor.MediaFormat.MPEG_4 && (codec.isBlank() || codec.startsWith("avc", true))
+    }
+
+    private fun newPipe(videoKey: String, cap: Int, background: Boolean): TrailerStream? {
         return runCatching {
             ensureInit()
             val info = StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$videoKey")
             // 1) DASH HD: melhor vídeo-only (cap 1080p) + melhor áudio → mesclados no ExoPlayer.
             //    Dá 720p/1080p (o progressivo muxado do YouTube trava em 360p).
-            val vid = info.videoOnlyStreams.filter { !it.content.isNullOrBlank() && res(it.resolution) in 1..cap }
+            val vid = info.videoOnlyStreams.filter { !it.content.isNullOrBlank() && res(it.resolution) in 1..cap && (!background || isAvc(it)) }
                 .maxByOrNull { res(it.resolution) }
+            // O fundo mudo só usa o vídeo, sem áudio e sem checar a faixa dele.
+            if (background && vid != null && servesToEnd(vid.content)) return@runCatching TrailerStream(vid.content, null)
             val aud = preferredAudio(
                 info.audioStreams.filter { !it.content.isNullOrBlank() },
                 trackId = { it.audioTrackId },

@@ -160,7 +160,7 @@ fun TvDiscoverScreen(
                     }
                     else -> TvScrollArea(1.r) {
                         LazyVerticalGrid(
-                            GridCells.Fixed(8), state = grid,
+                            GridCells.Fixed(tvColumns(8)), state = grid,
                             contentPadding = PaddingValues(start = tvPad, end = tvPad, top = 0.7.r, bottom = 3.r),
                             horizontalArrangement = Arrangement.spacedBy(1.r), verticalArrangement = Arrangement.spacedBy(1.5.r),
                             modifier = Modifier.fillMaxSize(),
@@ -245,7 +245,7 @@ private fun FilterPicker(
 ) {
     val multi = field == DiscoverFilter.GENRES
     var draft by remember(field) { mutableStateOf(selected) }
-    val columns = if (multi) 3 else if (field == DiscoverFilter.YEAR) 4 else 2
+    val columns = tvColumns(if (multi) 3 else if (field == DiscoverFilter.YEAR) 4 else 2)
     val firstIndex = options.indexOfFirst { it.id in selected }.coerceAtLeast(0)
     val grid = rememberLazyGridState(initialFirstVisibleItemIndex = (firstIndex / columns) * columns)
     val first = remember { FocusRequester() }

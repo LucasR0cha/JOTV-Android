@@ -34,4 +34,16 @@ class AppearancePreferencesTest {
         assertTrue("pref_menu_style" in SCOPED_KEYS)
         assertEquals("p.segundo.pref_menu_style", scopedKey("pref_menu_style", "segundo"))
     }
+
+    @Test fun tamanhoDaInterfaceComecaNoPadraoEAceitaSoAsChavesConhecidas() {
+        assertEquals(InterfaceSize.STANDARD, AppearancePreferences().uiSize)
+        assertEquals(1f, InterfaceSize.STANDARD.scale, 0f)
+        assertEquals(InterfaceSize.STANDARD, InterfaceSize.fromKey(null))
+        assertEquals(InterfaceSize.STANDARD, InterfaceSize.fromKey("desconhecido"))
+        InterfaceSize.entries.forEach { assertEquals(it, InterfaceSize.fromKey(it.key)) }
+        // Cada passo é maior que o anterior, senão a escolha na tela não muda nada.
+        assertTrue(InterfaceSize.entries.map { it.scale }.zipWithNext().all { (a, b) -> b > a })
+        assertTrue("pref_ui_size" in SCOPED_KEYS)
+        assertEquals("p.segundo.pref_ui_size", scopedKey("pref_ui_size", "segundo"))
+    }
 }

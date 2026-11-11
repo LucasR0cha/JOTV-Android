@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -53,6 +54,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
+import androidx.compose.ui.unit.offset
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.em
 import coil.compose.AsyncImage
@@ -62,6 +65,7 @@ import com.joabtv.app.ui.common.PosterDecorations
 import com.joabtv.app.ui.common.rememberPosterVisual
 import com.joabtv.app.ui.common.SpinningIcon
 import com.joabtv.app.ui.common.rememberReducedMotion
+import kotlinx.coroutines.Job
 import com.joabtv.app.ui.theme.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -69,15 +73,26 @@ import kotlinx.coroutines.awaitCancellation
 
 // ── MEDIDAS ─────────────────────────────────────────────────────────────────
 // O webOS mede tudo em rem, com 1rem = 1/120 da largura da tela (16px em 1920). Aqui igual,
-// assim a TV fica com as mesmas proporções do webOS em qualquer densidade.
+// assim a TV fica com as mesmas proporções do webOS em qualquer densidade. O Tamanho da interface
+// (Configurações, Aparência) multiplica esse rem.
 
 /** dp de 1rem do webOS nesta tela. */
 @Composable
 @ReadOnlyComposable
-fun remDp(): Float = LocalConfiguration.current.let { tvRem(it.screenWidthDp, it.screenHeightDp) }
+fun remDp(): Float = LocalConfiguration.current.let { tvRem(it.screenWidthDp, it.screenHeightDp) } * LocalUiScale.current
 
 internal fun tvRem(widthDp: Int, heightDp: Int): Float =
     minOf(widthDp / 120f, heightDp / 67.5f).coerceAtLeast(1f)
+
+/**
+ * Colunas de uma grade de TV. No tamanho padrão valem as [base] colunas e, quando o Tamanho da interface cresce, a grade perde
+ * colunas na mesma proporção. Com a mesma quantidade o pôster ficaria do mesmo tamanho e o texto maior não caberia no rodapé.
+ */
+@Composable
+@ReadOnlyComposable
+fun tvColumns(base: Int): Int = tvColumnsFor(base, LocalUiScale.current)
+
+internal fun tvColumnsFor(base: Int, scale: Float): Int = (base / scale).roundToInt().coerceAtLeast(1)
 
 /** Medida em rem do webOS. */
 val Number.r: Dp
@@ -99,7 +114,7 @@ val tvPad: Dp @Composable @ReadOnlyComposable get() = 3.4.r
 @OptIn(ExperimentalFoundationApi::class)
 private class ColumnSpec(private val inset: Float, private val reduced: Boolean) : BringIntoViewSpec {
     override val scrollAnimationSpec: AnimationSpec<Float>
-        get() = if (reduced) snap() else tween(220)
+        get() = if (reduced) snap() else tween(140)
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
         val top = offset - inset
         return when {
@@ -117,7 +132,7 @@ private class ColumnSpec(private val inset: Float, private val reduced: Boolean)
 @OptIn(ExperimentalFoundationApi::class)
 private class RowSpec(private val pad: Float, private val reduced: Boolean) : BringIntoViewSpec {
     override val scrollAnimationSpec: AnimationSpec<Float>
-        get() = if (reduced) snap() else tween(160)
+        get() = if (reduced) snap() else tween(100)
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
         val peek = size * 0.6f
         return when {
@@ -144,7 +159,7 @@ fun TvScrollArea(inset: Dp, content: @Composable () -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 private class PeekSpec(private val peek: Float, private val reduced: Boolean) : BringIntoViewSpec {
     override val scrollAnimationSpec: AnimationSpec<Float>
-        get() = if (reduced) snap() else tween(220)
+        get() = if (reduced) snap() else tween(140)
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
         if (offset < 0 || offset + size > containerSize - peek + 1f) offset else 0f
 }
@@ -165,13 +180,37 @@ fun TvPeekScrollArea(peek: Dp, content: @Composable () -> Unit) {
 fun Modifier.tvRow(): Modifier = composed {
     val req = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
-    this.bringIntoViewRequester(req).onFocusChanged { if (it.hasFocus) scope.launch { req.bringIntoView() } }
+    var request by remember { mutableStateOf<Job?>(null) }
+    var hadFocus by remember { mutableStateOf(false) }
+    this.bringIntoViewRequester(req).onFocusChanged {
+        if (it.hasFocus != hadFocus) {
+            hadFocus = it.hasFocus
+            request?.cancel()
+            request = if (it.hasFocus) scope.launch { req.bringIntoView() } else null
+        }
+    }
 }
 
 /** Foco aqui rola a área até o topo (data-scroll-top do webOS), para mostrar o destaque inteiro. */
 fun Modifier.tvScrollTop(toTop: suspend () -> Unit): Modifier = composed {
     val scope = rememberCoroutineScope()
-    this.onFocusChanged { if (it.hasFocus) scope.launch { runCatching { toTop() } } }
+    val latestToTop by rememberUpdatedState(toTop)
+    var request by remember { mutableStateOf<Job?>(null) }
+    var hadFocus by remember { mutableStateOf(false) }
+    this.onFocusChanged {
+        if (it.hasFocus != hadFocus) {
+            hadFocus = it.hasFocus
+            request?.cancel()
+            request = if (it.hasFocus) scope.launch { latestToTop() } else null
+        }
+    }
+}
+
+/** A animação da área das fileiras atualiza a medida sem recompor o destaque e os cartões. */
+internal fun Modifier.tvTopInset(inset: State<Dp>): Modifier = layout { measurable, constraints ->
+    val top = inset.value.roundToPx().coerceIn(0, constraints.maxHeight)
+    val placeable = measurable.measure(constraints.offset(vertical = -top))
+    layout(placeable.width, placeable.height + top) { placeable.placeRelative(0, top) }
 }
 
 /**
@@ -300,7 +339,7 @@ fun TvCountPill(text: String) {
 
 // ── FOCO ────────────────────────────────────────────────────────────────────
 
-/** Escala animada do foco, 160 ms como no webOS. Parada com "remover animações". */
+/** Escala animada do foco em 90 ms. Parada com "remover animações". */
 @Composable
 fun tvFocusScale(focused: Boolean, to: Float): Float {
     return tvFocusScaleState(focused, to).value
@@ -309,13 +348,25 @@ fun tvFocusScale(focused: Boolean, to: Float): Float {
 @Composable
 internal fun tvFocusScaleState(focused: Boolean, to: Float): State<Float> {
     val reduced = rememberReducedMotion()
-    return animateFloatAsState(if (focused && !reduced) to else 1f, tween(if (reduced) 0 else 160), label = "tvf")
+    return animateFloatAsState(if (focused && !reduced) to else 1f, tween(if (reduced) 0 else 90), label = "tvf")
 }
 
 internal fun Modifier.tvFocusLayer(scale: State<Float>): Modifier = graphicsLayer {
     val value = scale.value
     scaleX = value
     scaleY = value
+}
+
+/**
+ * Igual ao [tvFocusLayer], e com [cached] o cartão parado vira uma textura só. A thread de desenho passa a
+ * desenhar um quadrado por cartão em vez de uns quinze comandos (imagem, faixa, etiqueta, textos). Com foco, ou
+ * durante a escala, volta a desenhar direto para o texto não ficar borrado pela escala da textura.
+ */
+internal fun Modifier.tvFocusLayer(scale: State<Float>, cached: Boolean): Modifier = graphicsLayer {
+    val value = scale.value
+    scaleX = value
+    scaleY = value
+    if (cached) compositingStrategy = if (value == 1f) androidx.compose.ui.graphics.CompositingStrategy.Offscreen else androidx.compose.ui.graphics.CompositingStrategy.Auto
 }
 
 /** Clique de TV sem o anel genérico (cada cartão desenha o próprio foco). Segurar OK = [onLongClick]. */
@@ -328,6 +379,10 @@ fun Modifier.tvClick(onClick: () -> Unit, onLongClick: (() -> Unit)? = null, ena
 }
 
 // ── PÔSTER (.poster-card) ───────────────────────────────────────────────────
+
+private val NoNeighbors: () -> List<MovieItem> = { emptyList() }
+
+private val PosterPlaceholder = androidx.compose.ui.graphics.painter.ColorPainter(BackgroundCard2)
 
 @Composable
 fun TvPoster(
@@ -343,46 +398,49 @@ fun TvPoster(
     typeBadge: String? = null,
     onFocus: () -> Unit = {},
     onLongClick: (() -> Unit)? = null,
-    qualityNeighbors: List<MovieItem> = emptyList(),
+    qualityNeighbors: () -> List<MovieItem> = NoNeighbors,
 ) {
     val title = item.title
     var focused by remember { mutableStateOf(false) }
     val visual = rememberPosterVisual(item, badge, typeBadge != null, showTag = order <= 0, requestQuality = false)
     val posterInfo = com.joabtv.app.ui.common.LocalPosterInfo.current
-    if (focused && badge == null && posterInfo != null) LaunchedEffect(item.tmdbId, item.type, qualityNeighbors) {
+    if (focused && badge == null && posterInfo != null) LaunchedEffect(item.tmdbId, item.type) {
         delay(700)
-        val nearby = listOf(item) + qualityNeighbors.take(7)
+        val nearby = listOf(item) + qualityNeighbors().take(7)
         nearby.forEach(posterInfo::want)
         try { awaitCancellation() } finally { nearby.forEach(posterInfo::unwant) }
     }
     val context = LocalContext.current
-    val readColor = visual.onImage != null
-    val image = remember(context, item.posterUrl, item.backdropUrl, readColor) {
-        ImageRequest.Builder(context).data(item.posterUrl.ifBlank { item.backdropUrl })
-            .apply { if (readColor) allowHardware(false) }.build()
+    val image = remember(context, item.posterUrl, item.backdropUrl) {
+        ImageRequest.Builder(context).data(item.posterUrl.ifBlank { item.backdropUrl }).build()
     }
     val s = tvFocusScaleState(focused, 1.06f)
     val shape = RoundedCornerShape(0.9.r)
+    var imageFailed by remember(item.posterUrl, item.backdropUrl) { mutableStateOf(false) }
+    val noUrl = item.posterUrl.isBlank() && item.backdropUrl.isBlank()
     Column(modifier.then(if (width == Dp.Unspecified) Modifier.fillMaxWidth() else Modifier.width(width))) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
-                .tvFocusLayer(s)
+                .tvFocusLayer(s, cached = true)
                 .shadow(if (focused) 1.2.r else 0.dp, shape)
                 .clip(shape)
-                .background(BackgroundCard2)
+                // O fundo só aparece quando não há imagem. Com a imagem carregada ele era uma camada inteira desenhada por baixo.
+                .then(if (imageFailed || noUrl) Modifier.background(BackgroundCard2) else Modifier)
                 .then(if (focused) Modifier.border(0.22.r, Color.White, shape) else Modifier)
                 .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
                 .tvClick(onClick, onLongClick),
         ) {
-            Text(
+            if (imageFailed || noUrl) Text(
                 title, color = TextTertiary, fontSize = 1.05.rs, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                 maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.align(Alignment.Center).padding(1.r),
             )
             AsyncImage(
                 image, title, Modifier.fillMaxSize().padding(bottom = 2.09.r), contentScale = ContentScale.Crop,
+                placeholder = PosterPlaceholder,
                 onSuccess = { visual.onImage?.invoke(it.result.drawable) },
+                onError = { imageFailed = true },
             )
             PosterDecorations(item, visual, unit = 0.095.r, textUnit = 0.095.rs)
             if (order > 0) Box(
@@ -448,7 +506,7 @@ fun TvWideCard(
     val shape = RoundedCornerShape(0.9.r)
     Column(modifier.width(width)) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(16f / 9f).tvFocusLayer(s)
+            Modifier.fillMaxWidth().aspectRatio(16f / 9f).tvFocusLayer(s, cached = true)
                 .shadow(if (focused) 1.2.r else 0.dp, shape).clip(shape).background(BackgroundCard2)
                 .then(if (focused) Modifier.border(0.22.r, Color.White, shape) else Modifier)
                 .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }

@@ -257,12 +257,20 @@ class TorrentStreamer(private val root: File) {
     }
 }
 
+/** O aparelho não tem o libtorrent4j para a arquitetura dele. A fonte de torrent falha, o app não cai. */
+class TorrentUnavailable(cause: Throwable) : IOException("este aparelho não roda o motor de torrent", cause)
+
 /** Motor único do app, criado só quando a primeira fonte de torrent toca. */
 object Torrents {
     @Volatile private var engine: TorrentStreamer? = null
 
+    /** UnsatisfiedLinkError chega embrulhado em LinkageError, e a segunda tentativa vira NoClassDefFoundError. */
     fun get(context: Context): TorrentStreamer = engine ?: synchronized(this) {
-        engine ?: TorrentStreamer(File(context.applicationContext.cacheDir, "torrents")).also { engine = it }
+        engine ?: try {
+            TorrentStreamer(File(context.applicationContext.cacheDir, "torrents"))
+        } catch (e: LinkageError) {
+            throw TorrentUnavailable(e)
+        }.also { engine = it }
     }
 
     fun ifStarted(): TorrentStreamer? = engine

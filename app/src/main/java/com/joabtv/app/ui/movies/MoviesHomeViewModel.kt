@@ -203,14 +203,15 @@ class MoviesHomeViewModel @Inject constructor(
     private val heroTrailerCache = HashMap<String, com.joabtv.app.data.remote.YoutubeTrailer.TrailerStream?>()
 
     /** Stream do trailer de um título do destaque (os 2 melhores do TMDB). null quando não há. */
-    suspend fun heroTrailerStream(item: MovieItem): com.joabtv.app.data.remote.YoutubeTrailer.TrailerStream? {
-        val k = "${item.type}:${item.tmdbId}"
+    suspend fun heroTrailerStream(item: MovieItem, background: Boolean = false): com.joabtv.app.data.remote.YoutubeTrailer.TrailerStream? {
+        // O trailer mudo do fundo (background) é uma versão leve, 720p em H.264. O botão Trailer segue pela banda medida.
+        val k = "${item.type}:${item.tmdbId}:${if (background) "fundo" else "cheio"}"
         if (heroTrailerCache.containsKey(k)) return heroTrailerCache[k]
         val apiKey = prefs.tmdbApiKey
         val keys = runCatching {
             if (item.type == MediaType.SERIES) tmdb.getTvVideos(item.tmdbId, apiKey = apiKey) else tmdb.getMovieVideos(item.tmdbId, apiKey = apiKey)
         }.getOrNull().trailerKeys().take(2)
-        val st = keys.firstNotNullOfOrNull { runCatching { youtubeTrailer.stream(it) }.getOrNull() }
+        val st = keys.firstNotNullOfOrNull { runCatching { youtubeTrailer.stream(it, background) }.getOrNull() }
         heroTrailerCache[k] = st
         return st
     }

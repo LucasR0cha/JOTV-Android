@@ -94,12 +94,15 @@ private val JoabShapes = Shapes(
 /** Estilo do menu da TV escolhido no perfil. O celular no toque ignora. */
 val LocalMenuStyle = androidx.compose.runtime.staticCompositionLocalOf { com.joabtv.app.data.local.MenuStyle.SIDE }
 
+/** Fator do Tamanho da interface da TV (1 é o padrão). Multiplica o rem em remDp e a escala das telas em TvScaled. */
+val LocalUiScale = androidx.compose.runtime.staticCompositionLocalOf { 1f }
+
 @Composable
 fun JoabTvTheme(appearance: AppearancePreferences = AppearancePreferences(), content: @Composable () -> Unit) {
     val palette = remember(appearance.theme) { paletteFor(appearance.theme) }
     val colors = remember(palette) { joabColorScheme(palette) }
     val reduced = systemReducedMotion() || appearance.motion == InterfaceMotion.REDUCED
-    CompositionLocalProvider(LocalAppPalette provides palette, LocalReducedMotion provides reduced, LocalMenuStyle provides appearance.menu) {
+    CompositionLocalProvider(LocalAppPalette provides palette, LocalReducedMotion provides reduced, LocalMenuStyle provides appearance.menu, LocalUiScale provides appearance.uiSize.scale) {
         MaterialTheme(colorScheme = colors, typography = JoabTypography, shapes = JoabShapes, content = content)
     }
 }

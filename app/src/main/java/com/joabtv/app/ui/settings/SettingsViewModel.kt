@@ -122,6 +122,12 @@ class SettingsViewModel @Inject constructor(
     fun setMenu(menu: com.joabtv.app.data.local.MenuStyle) {
         platformPrefs.appearance = platformPrefs.appearance.copy(menu = menu)
     }
+    fun setUiSize(size: com.joabtv.app.data.local.InterfaceSize) {
+        platformPrefs.appearance = platformPrefs.appearance.copy(uiSize = size)
+    }
+
+    val frameMeter: StateFlow<Boolean> = platformPrefs.frameMeterFlow
+    fun setFrameMeter(on: Boolean) { platformPrefs.frameMeter = on }
 
     val hasParentalPin: Boolean get() = platformPrefs.hasParentalPin
     fun setParentalPin(pin: String) = platformPrefs.setParentalPin(pin)

@@ -13,6 +13,41 @@ class ReleaseInfoTest {
         assertEquals(2, groupReleases(listOf(a, b.copy(fileSize = 3_000_000_000))).size)
     }
 
+    private fun versoes(addon: String, n: Int) = (0 until n).map { i ->
+        StremioStream("1080p", "https://$addon.invalid/$i", addon, fileName = "$addon.$i.mkv", fileSize = 1_000_000_000L + i)
+    }
+
+    @Test fun addonDaFrenteNaoEmpurraOsOutrosParaForaDaPagina() {
+        val groups = groupReleases(versoes("Torrentio", 60) + versoes("Direto", 4))
+        val page = pageOf(groups, 24)
+        assertEquals(24, page.size)
+        assertEquals(4, page.count { it.lead.addon == "Direto" })
+        assertEquals(20, page.count { it.lead.addon == "Torrentio" })
+        // A ordem de prioridade segue a recebida. O addon da frente vem primeiro.
+        assertEquals(page, groups.filter { it in page })
+        assertEquals("Torrentio", page.first().lead.addon)
+        assertEquals("Direto", page.last().lead.addon)
+    }
+
+    @Test fun paginaCrescePorInteiroSemPerderOQueJaAparecia() {
+        val groups = groupReleases(versoes("A", 80) + versoes("B", 30) + versoes("C", 2))
+        var anterior = emptyList<ReleaseGroup>()
+        for (limit in listOf(24, 48, 72, 96)) {
+            val page = pageOf(groups, limit)
+            assertEquals(limit, page.size)
+            assertTrue(page.containsAll(anterior))
+            assertEquals(2, page.count { it.lead.addon == "C" })
+            anterior = page
+        }
+    }
+
+    @Test fun umAddonSoOuListaCurtaNaoMuda() {
+        val um = groupReleases(versoes("A", 40))
+        assertEquals(um.take(24), pageOf(um, 24))
+        val curta = groupReleases(versoes("A", 10) + versoes("B", 5))
+        assertEquals(curta, pageOf(curta, 24))
+    }
+
     @Test fun mesmaQualidadeSemIdentidadeNaoAgrupaArquivosDiferentes() {
         val a = StremioStream("1080p", "https://a.invalid/1", "Addon A")
         assertEquals(2, groupReleases(listOf(a, a.copy(url = "https://b.invalid/2"))).size)

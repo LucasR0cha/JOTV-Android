@@ -65,17 +65,20 @@ internal object ScrubThumbnailer {
                     return@withLock null
                 }
                 retriever = r
-                frameSize = previewFrameSize(
-                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0,
-                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0,
-                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0,
-                )
+                frameSize = runCatching {
+                    previewFrameSize(
+                        r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0,
+                        r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0,
+                        r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0,
+                    )
+                }.getOrNull()
             }
             val bmp = runCatching {
                 val size = frameSize
-                if (Build.VERSION.SDK_INT >= 27 && size != null) {
+                val scaled = if (Build.VERSION.SDK_INT >= 27 && size != null) runCatching {
                     retriever?.getScaledFrameAtTime(posMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST, size.first, size.second)
-                } else retriever?.getFrameAtTime(posMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST)?.let(::downscale)
+                }.getOrNull() else null
+                scaled ?: retriever?.getFrameAtTime(posMs * 1000, MediaMetadataRetriever.OPTION_CLOSEST)?.let(::downscale)
             }.getOrNull()
             cache[bucket] = bmp
             bmp

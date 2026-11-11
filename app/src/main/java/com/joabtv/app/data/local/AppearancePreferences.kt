@@ -25,8 +25,22 @@ enum class MenuStyle(val key: String, val label: String) {
     }
 }
 
+/**
+ * Tamanho da interface da TV. A TV mede tudo em rem (1/120 da largura da tela), então em TV pequena ou vista de longe
+ * o texto fica pequeno. O fator multiplica o rem e o texto, os cartões e as margens crescem juntos. O passo maior para em 1,2
+ * porque acima disso o destaque, a barra do menu Superior e a primeira fileira não cabem mais juntos na altura da tela.
+ */
+enum class InterfaceSize(val key: String, val label: String, val scale: Float) {
+    STANDARD("standard", "Padrão", 1f), MEDIUM("medium", "Médio", 1.1f), LARGE("large", "Grande", 1.2f);
+
+    companion object {
+        fun fromKey(key: String?): InterfaceSize = entries.firstOrNull { it.key == key } ?: STANDARD
+    }
+}
+
 data class AppearancePreferences(
     val theme: AppTheme = AppTheme.GRAPHITE,
     val motion: InterfaceMotion = InterfaceMotion.SMOOTH,
     val menu: MenuStyle = MenuStyle.SIDE,
+    val uiSize: InterfaceSize = InterfaceSize.STANDARD,
 )

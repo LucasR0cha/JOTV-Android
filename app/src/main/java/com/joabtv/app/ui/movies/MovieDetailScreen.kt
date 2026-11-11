@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
@@ -129,17 +130,20 @@ fun MovieDetailScreen(
     // Série terminada (último ep ≥90%) → sugere "Próximo seriado" (1ª série relacionada).
     val nextSeries = primary.nextSeries
 
-    // Ken Burns scale animation
-    val infiniteTransition = rememberInfiniteTransition(label = "kenburns")
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 1.08f,
-        targetValue = 1.18f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(16000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "kenburns_scale",
-    )
+    // Ken Burns. O valor só é lido na camada gráfica, então a tela não recompõe a cada quadro.
+    // Com animação reduzida fica parado.
+    val reducedKb = com.joabtv.app.ui.common.rememberReducedMotion()
+    val scale: androidx.compose.runtime.State<Float> =
+        if (reducedKb) remember { androidx.compose.runtime.mutableFloatStateOf(1.08f) }
+        else rememberInfiniteTransition(label = "kenburns").animateFloat(
+            initialValue = 1.08f,
+            targetValue = 1.18f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(16000, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "kenburns_scale",
+        )
 
     // Na TV o botão aceita foco mesmo travado ("Carregando fontes…"), então basta a tela carregar.
     LaunchedEffect(state.isLoading, primary.enabled) {
@@ -185,7 +189,7 @@ fun MovieDetailScreen(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .scale(scale),
+                                .graphicsLayer { scaleX = scale.value; scaleY = scale.value },
                         )
                     } else {
                         Box(
@@ -976,7 +980,8 @@ internal fun SourceList(
         if (wrongCount > 0) SeasonChip(if (showWrong) "Ocultar outro filme ($wrongCount)" else "Mostrar todas ($wrongCount de outro filme)", showWrong) { showWrong = !showWrong }
     }
     val best = facts.getOrNull(com.joabtv.app.data.remote.bestIndex(facts))?.url
-    filtered.take(limit).chunked(cols.coerceAtLeast(1)).forEach { row ->
+    val page = pageOf(filtered, limit)
+    page.chunked(cols.coerceAtLeast(1)).forEach { row ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             row.forEach { group ->
                 val source = group.members.firstOrNull { !fact(it).dead && !fact(it).wrongTitle } ?: group.lead
@@ -1000,7 +1005,7 @@ internal fun SourceList(
             repeat(cols.coerceAtLeast(1) - row.size) { Spacer(Modifier.weight(1f)) }
         }
     }
-    if (filtered.size > limit) com.joabtv.app.ui.common.JoabButton("Mostrar mais (${filtered.size - limit})", { limit += 24 })
+    if (filtered.size > page.size) com.joabtv.app.ui.common.JoabButton("Mostrar mais (${filtered.size - page.size})", { limit += 24 })
     if (filtered.isEmpty() && streams.isNotEmpty()) Text(
         if (wrongCount > 0 && !showWrong) "As fontes encontradas parecem ser de outro filme. Use Mostrar todas para conferir."
         else "Nenhuma versão neste filtro.", color = TextSecondary, fontSize = 13.sp,
