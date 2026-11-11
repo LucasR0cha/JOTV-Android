@@ -37,6 +37,26 @@ O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-leg
 
 ## Novidades
 
+### Guia de canais dentro do player ao vivo
+
+Na TV ao vivo, a lista de canais e o guia de programação abrem por cima do vídeo, sem sair do player. Na Android TV dá para filtrar por favoritos, recentes, fonte e grupo, buscar pelo nome do canal ou do programa, trocar de canal pelo CH+ e CH- ou digitando o número e apertar 0 para voltar ao canal anterior. Os addons com canais ao vivo agora entram na TV ao vivo como uma fonte **Addon ao vivo**. O guia também chegou à LG, à Samsung e ao Windows.
+
+### Roda também no emulador de computador
+
+O app fechava sozinho ao tocar uma fonte de torrent no MuMu, no MEmu, no BlueStacks e em emuladores parecidos. O pacote agora leva só código ARM e roda pela tradução do próprio emulador. Quando um aparelho não tem o motor de torrent, a fonte falha e o player tenta a próxima, sem derrubar o app.
+
+### Início mais leve no Android
+
+O app vem com um perfil de compilação, então o código roda compilado em vez de interpretado. Os pôsteres deixam de refazer o desenho à toa, o cartão parado vira uma textura só e o destaque troca com menos trabalho. O trailer do destaque toca em 720p H.264 e sem áudio, para não pesar na TV. Em Configurações, Diagnóstico, o **Medidor de quadros** mostra no canto da tela os quadros por segundo e de onde vem o tempo, para medir no seu aparelho.
+
+### Tamanho da interface na TV
+
+Em Configurações, Aparência, cada perfil escolhe o **Tamanho da interface** entre Padrão, Médio e Grande. Aumenta o texto, os cartões e as margens juntos, e serve para TV pequena ou vista de longe.
+
+### Lista de fontes com todos os addons
+
+A lista de fontes mostra resultados de todos os addons já na primeira página. Antes, um addon de torrent com muitos resultados ficava na frente e escondia os dos addons de baixo.
+
 ### Seu catálogo, mais fácil de configurar
 
 As Configurações abrem com **Seu catálogo**, cinco cartões que mostram o estado de cada coisa e já trazem o botão da próxima ação. Entrou no Nuvio ou no Stremio, o **Trazer tudo** aparece no próprio cartão, e o painel **O que veio** mostra o que chegou e o motivo de cada parte que não veio. Na **Minha Início** a linha inteira liga e desliga, o modo **Mover** troca a ordem (na TV pelas setas, no celular por Para o topo e Para o fim), e dá para renomear, escolher o destaque em lista e **Voltar ao padrão** com Desfazer. Cada addon tem o painel **Fileiras**, e o addon novo entra com as 10 primeiras fileiras para a Início não encher de uma vez. A Início vazia ensina o caminho, com Ligar sugestões, Explorar addons e Organizar a Início.
@@ -86,8 +106,8 @@ opção**, junta o mesmo arquivo achado em addons diferentes e passa para a pró
 ### TV ao vivo
 
 Listas **M3U**, contas **Xtream** e addons com canais, com guia de programação **XMLTV**,
-categorias, favoritos, recentes e busca de canal. No player, as setas (ou CH+ e CH-) trocam de canal
-e o OK mostra o que está passando.
+categorias, favoritos, recentes e busca de canal. No player, o **guia de canais** abre por cima do
+vídeo, com a lista e a programação, e o CH+ e o CH- trocam de canal.
 
 <p align="center">
   <img src="docs/readme/tv-ao-vivo.jpg" alt="Grade de canais ao vivo na TV com categorias" width="100%">
@@ -215,7 +235,9 @@ Oculto funcionam com o mouse.
 - Listas M3U, contas Xtream e addons com canais
 - Guia XMLTV (inclusive compactado em .gz no celular e na LG)
 - Categorias, favoritos, recentes e busca de canal
-- Troca de canal pelas setas ou pelo CH+ e CH-, com o programa atual na tela
+- Guia de canais dentro do player, com a lista e a programação por cima do vídeo, e troca de canal pelo CH+ e CH-, com o programa atual na tela
+- Na Android TV, filtros por favoritos, recentes, fonte e grupo, busca por canal ou programa, troca pelo número do canal e o 0 para voltar ao anterior
+- Addons com canais ao vivo entram como fonte, com o nome Addon ao vivo
 - A aba Ao vivo só aparece depois que você cadastra uma fonte
 
 </details>
@@ -239,6 +261,8 @@ Oculto funcionam com o mouse.
 - Navegação inteira pelo controle, com foco sempre visível e retorno ao card de onde você saiu
 - Temas Grafite, Azul e Verde e opção de movimento reduzido (TV)
 - Menus Lateral, Superior e Oculto por perfil, na TV e no computador
+- Tamanho da interface (Padrão, Médio e Grande) por perfil na Android TV
+- Medidor de quadros em Configurações, Diagnóstico, para medir o desempenho no próprio aparelho (Android)
 
 </details>
 
@@ -259,6 +283,8 @@ Todos os arquivos ficam na página de **[Releases](../../releases/latest)**. Nã
 
 1. Baixe o `.apk` da Release direto no aparelho.
 2. Abra o arquivo. Na primeira vez o Android pede para liberar a instalação de fonte desconhecida no app que você usou para baixar (navegador ou Arquivos). Libere e confirme.
+
+O APK é para aparelhos ARM, que são quase todos os celulares, tablets e TV boxes. Emulador de computador (MuMu, MEmu, BlueStacks) roda pela tradução do próprio emulador.
 
 </details>
 
@@ -372,6 +398,9 @@ A chave do TMDB pode ir no `~/.gradle/gradle.properties` como `TMDB_API_KEY`. De
 ./gradlew assembleRelease       # APK de release em app/build/outputs/apk/release/
 ./gradlew testDebugUnitTest     # testes
 ```
+
+O APK de release leva só ARM. Para testar num emulador x86, use o `installDebug`, que leva também as
+bibliotecas x86.
 
 Sem a `TMDB_API_KEY` o app abre pedindo a sua chave do TMDB em Configurações. O APK das Releases já
 vem com uma chave pronta. A sincronia com o
