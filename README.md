@@ -10,7 +10,7 @@
 **Filmes, séries e TV ao vivo no celular e na televisão.**
 
 Um app só para celular, tablet, Android TV, LG webOS, Samsung Tizen e Windows.<br>
-O catálogo vem do TMDB, em português. Os vídeos vêm dos addons que você escolhe.
+O catálogo vem do TMDB, em português. Os vídeos vêm dos addons e dos plugins que você escolhe.
 
 [![Baixar para Android](https://img.shields.io/badge/Android-baixar%20o%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](../../releases/latest)
 [![Baixar para LG webOS](https://img.shields.io/badge/LG%20webOS-baixar%20o%20IPK-A50034?style=for-the-badge&logo=lg&logoColor=white)](../../releases/latest)
@@ -28,7 +28,7 @@ O catálogo vem do TMDB, em português. Os vídeos vêm dos addons que você esc
 ## O que é o JOTV
 
 O JOTV junta num lugar só tudo o que você assiste. Capas, sinopses, elenco, trailers e notas vêm do
-**TMDB**, sempre em português. Os vídeos vêm dos **addons no padrão Stremio** que você instala, e o
+**TMDB**, sempre em português. Os vídeos vêm dos **addons no padrão Stremio** e dos **plugins** que você instala, e o
 app escolhe sozinho a melhor fonte para o seu gosto (dublado ou legendado, até a qualidade que você
 definir). Na TV tudo funciona pelo controle remoto, no celular pelo toque, e cada pessoa da casa tem o
 próprio perfil com lista, histórico e progresso.
@@ -36,6 +36,22 @@ próprio perfil com lista, histórico e progresso.
 O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-legal).
 
 ## Novidades
+
+### Plugins
+
+O JOTV agora aceita plugins. Em Configurações, Plugins, você adiciona por link repositórios de provedores no formato do Nuvio, e as fontes deles entram na lista de fontes e no player como as dos addons. O gerenciador começa **vazio**. O JOTV não traz, não indica e não instala plugin nenhum, e cada pessoa cola só os links que quiser (no perfil adulto). O gerenciador existe no Android, na LG, na Samsung e no Windows.
+
+Aceita três formatos.
+
+- Repositório JavaScript no formato do Nuvio, com `scrapers`, `providers` ou `plugins` no manifesto, pelo endereço do GitHub ou pelo link direto do JSON
+- Arquivo JavaScript individual
+- Addon Stremio, que segue para o gerenciador de addons
+
+Provedor novo começa desligado. Cada um tem ativação, configurações próprias (as senhas ficam mascaradas), teste de carregamento e teste de fontes. A lista tem busca e filtros, ordem de prioridade, atualização individual ou em conjunto com conferência diária, pausa, remoção e **backup** dos links, da ordem e da ativação (as configurações dos provedores não entram). Os cabeçalhos HTTP e as legendas externas acompanham a reprodução.
+
+O código do plugin roda isolado, num QuickJS dentro de um Worker, sem acesso ao DOM, ao armazenamento do app, a arquivos nem a processos. Cada execução tem 48 MiB de memória, até 120 segundos, 80 chamadas de rede e 24 MiB de respostas. No Android, na LG e no Windows a rede só alcança endereços públicos, com o DNS e cada redirecionamento conferidos. Na Samsung o navegador da TV faz a conexão, e a conferência vale só para o endereço escrito. Plugin é código de terceiros, então instale só de quem você confia.
+
+Extensões CS3, que usam código nativo do Android, não rodam. Na Samsung o navegador da TV barra alguns pedidos e cabeçalhos, e por isso alguns provedores podem não tocar lá.
 
 ### Guia de canais dentro do player ao vivo
 
@@ -203,6 +219,18 @@ Oculto funcionam com o mouse.
 - Configuração no site do addon, com QR code para configurar pelo celular e levar o link pronto para a TV
 - Catálogos dos addons viram fileiras da Início, com o painel Fileiras para escolher quais aparecem (um addon novo entra com 10)
 - Você decide quais addons usar. O app começa sem nenhum, no celular e na TV, e você instala pelo link do manifest, pela Loja ou trazendo da sua conta Stremio ou Nuvio
+
+</details>
+
+<details>
+<summary><b>Plugins</b></summary>
+
+- Gerenciador em Configurações, Plugins (perfil adulto), que começa vazio e só instala o que você colar
+- Repositório JavaScript no formato do Nuvio, arquivo JavaScript individual ou addon Stremio
+- Provedor novo começa desligado, com ativação, configurações próprias e teste de fontes
+- Busca, filtros, ordem de prioridade, atualização com conferência diária, backup e limpeza do cache
+- As fontes entram na lista de fontes e no player, com os cabeçalhos HTTP e as legendas
+- Código isolado no QuickJS, com limites de memória, tempo, rede e dados
 
 </details>
 
@@ -378,6 +406,7 @@ UI (Jetpack Compose)  →  ViewModel (Hilt)  →  Repository  →  Room / Retrof
 - Preferências por perfil em `PlatformPrefs`, inclusive a Início personalizada e as coleções.
 - Media3 (ExoPlayer) com `MediaSession` e Chromecast, e libtorrent4j no motor P2P.
 - Retrofit e OkHttp para o TMDB, com DNS seguro para os links de vídeo dos addons.
+- O motor de plugins roda num WebView interno com Workers e QuickJS, sem acesso ao app. O código fica em `data/plugins` e as bibliotecas em `assets/plugins`.
 
 </details>
 
@@ -421,6 +450,7 @@ app/src/main/java/com/joabtv/app/
 │   ├── debrid/        Real-Debrid, TorBox e Premiumize
 │   ├── live/          M3U, Xtream e guia XMLTV
 │   ├── local/         Room e preferências por perfil
+│   ├── plugins/       gerenciador e motor de plugins
 │   ├── remote/        TMDB, addons Stremio, legendas e DNS seguro
 │   ├── repository/    biblioteca e downloads
 │   └── torrent/       motor P2P
@@ -432,7 +462,7 @@ app/src/main/java/com/joabtv/app/
     ├── live/          TV ao vivo
     ├── movies/        Início, detalhe, busca e player
     ├── navigation/    navegação e menus da TV (lateral, superior e oculto)
-    ├── settings/      Seu catálogo, Minha Início, addons, contas, debrid e perfis
+    ├── settings/      Seu catálogo, Minha Início, addons, plugins, contas, debrid e perfis
     ├── theme/         cores e tipografia
     └── tv/            telas exclusivas da TV
 ```
@@ -442,8 +472,9 @@ app/src/main/java/com/joabtv/app/
 ## Aviso legal
 
 O JOTV não hospeda, não distribui e não guarda vídeo nenhum. Ele é um player e uma interface para
-addons de terceiros no protocolo Stremio, que a própria pessoa escolhe instalar. O uso e a legalidade
-das fontes acessadas por esses addons são responsabilidade de quem os instala.
+addons de terceiros no protocolo Stremio e para plugins de terceiros, que a própria pessoa escolhe
+instalar. O JOTV não traz nem recomenda nenhum plugin. O uso e a legalidade das fontes acessadas por
+esses addons e plugins são responsabilidade de quem os instala.
 
 Este produto usa a API do TMDB, mas não é endossado nem certificado pelo TMDB. As capturas usam
 dados públicos do TMDB, canais abertos e o filme aberto Sintel, da Blender Foundation (CC BY 3.0),
@@ -456,3 +487,6 @@ numa fonte de demonstração.
 O instalador de Windows leva o [mpv](https://mpv.io) como programa separado, que é software livre
 sob a GPL. O código do mpv fica em [mpv-player/mpv](https://github.com/mpv-player/mpv) e a build
 usada vem de [zhongfly/mpv-winbuild](https://github.com/zhongfly/mpv-winbuild/releases/tag/2026-10-26-baa3e11d42).
+
+O motor de plugins leva o QuickJS e bibliotecas JavaScript de código aberto. As licenças ficam em
+`app/src/main/assets/plugins/LICENSES.txt`.
