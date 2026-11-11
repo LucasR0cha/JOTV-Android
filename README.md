@@ -37,6 +37,10 @@ O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-leg
 
 ## Novidades
 
+### Plugins mais rápidos
+
+Os provedores ativos agora são consultados em paralelo, com até 32 buscas ao mesmo tempo, e cada fonte entra na lista assim que chega, sem esperar os provedores mais lentos. A inicialização ficou mais leve, porque poucos motores isolados atendem várias buscas, e as respostas ficam num cache curto (30 segundos, ou 2 segundos quando a busca volta vazia). Os provedores e as configurações foram preservados. Quem já usava plugins passa para **Buscar em paralelo** uma vez, e em Preferências dá para voltar para um ou dois de cada vez. Os tempos foram medidos só em testes controlados, com provedores simulados, no navegador e num emulador Android, e não em TV nem em celular reais.
+
 ### Plugins
 
 O JOTV agora aceita plugins. Em Configurações, Plugins, você adiciona por link repositórios de provedores no formato do Nuvio, e as fontes deles entram na lista de fontes e no player como as dos addons. O gerenciador começa **vazio**. O JOTV não traz, não indica e não instala plugin nenhum, e cada pessoa cola só os links que quiser (no perfil adulto). O gerenciador existe no Android, na LG, na Samsung e no Windows.
@@ -230,6 +234,7 @@ Oculto funcionam com o mouse.
 - Provedor novo começa desligado, com ativação, configurações próprias e teste de fontes
 - Busca, filtros, ordem de prioridade, atualização com conferência diária, backup e limpeza do cache
 - As fontes entram na lista de fontes e no player, com os cabeçalhos HTTP e as legendas
+- Busca em paralelo (até 32 ao mesmo tempo), com cada fonte aparecendo assim que chega, e cache curto
 - Código isolado no QuickJS, com limites de memória, tempo, rede e dados
 
 </details>
