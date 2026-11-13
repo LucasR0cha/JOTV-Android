@@ -162,6 +162,40 @@ class SettingsViewModel @Inject constructor(
     val subBg: StateFlow<Boolean> = _subBg.asStateFlow()
     fun setSubBg(v: Boolean) { platformPrefs.subBg = v; _subBg.value = v }
 
+    // Preferências avançadas de reprodução e troca de fontes
+    private val _autoSwitch = MutableStateFlow(platformPrefs.autoSwitchSources)
+    val autoSwitch: StateFlow<Boolean> = _autoSwitch.asStateFlow()
+    fun setAutoSwitch(v: Boolean) { platformPrefs.autoSwitchSources = v; _autoSwitch.value = v }
+
+    private val _sourceTimeout = MutableStateFlow(platformPrefs.sourceTimeoutSec)
+    val sourceTimeout: StateFlow<Int> = _sourceTimeout.asStateFlow()
+    fun setSourceTimeout(v: Int) { platformPrefs.sourceTimeoutSec = v; _sourceTimeout.value = v }
+
+    private val _autoUpgrade = MutableStateFlow(platformPrefs.autoUpgradeQuality)
+    val autoUpgrade: StateFlow<Boolean> = _autoUpgrade.asStateFlow()
+    fun setAutoUpgrade(v: Boolean) { platformPrefs.autoUpgradeQuality = v; _autoUpgrade.value = v }
+
+    private val _debridCachedOnly = MutableStateFlow(platformPrefs.debridCachedOnly)
+    val debridCachedOnly: StateFlow<Boolean> = _debridCachedOnly.asStateFlow()
+    fun setDebridCachedOnly(v: Boolean) { platformPrefs.debridCachedOnly = v; _debridCachedOnly.value = v }
+
+    // Trackers e sincronização de reprodução
+    private val _simklToken = MutableStateFlow(platformPrefs.simklToken)
+    val simklToken: StateFlow<String> = _simklToken.asStateFlow()
+    fun setSimklToken(v: String) { platformPrefs.simklToken = v; _simklToken.value = v }
+
+    private val _wetrakrKey = MutableStateFlow(platformPrefs.wetrakrKey)
+    val wetrakrKey: StateFlow<String> = _wetrakrKey.asStateFlow()
+    fun setWetrakrKey(v: String) { platformPrefs.wetrakrKey = v; _wetrakrKey.value = v }
+
+    private val _publicmetadbKey = MutableStateFlow(platformPrefs.publicmetadbKey)
+    val publicmetadbKey: StateFlow<String> = _publicmetadbKey.asStateFlow()
+    fun setPublicmetadbKey(v: String) { platformPrefs.publicmetadbKey = v; _publicmetadbKey.value = v }
+
+    private val _mdblistKey = MutableStateFlow(platformPrefs.mdblistKey)
+    val mdblistKey: StateFlow<String> = _mdblistKey.asStateFlow()
+    fun setMdblistKey(v: String) { platformPrefs.mdblistKey = v; _mdblistKey.value = v }
+
     /** Apaga as posições salvas do perfil ativo. Minha Lista não muda. */
     fun clearContinueWatching() { viewModelScope.launch { library.clearHistory() } }
 

@@ -197,6 +197,8 @@ data class SourceFacts(
     val lang get() = langOf(label)
     /** Torrent que vai tocar pelo motor do aparelho (com cache no debrid ele vira link direto). */
     val p2p get() = TorrentMagnet.isMagnet(url) && debrid < 2
+    val isUsenet get() = Regex("""\busenet\b|\beasynews\b|\bnzb\b""", RegexOption.IGNORE_CASE).containsMatchIn(label) ||
+        Regex("""^nzb:|^usenet:|\.nzb(\?|$)""", RegexOption.IGNORE_CASE).containsMatchIn(url)
 }
 
 /**

@@ -276,6 +276,11 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
     // Legenda externa é desenhada pelo próprio player (ver externalCues), então trocar de
     // legenda não recarrega o vídeo.
     val activeStreamHeaders = (currentSources.getOrNull(currentSourceIdx)?.takeIf { it.url == streamUrl } ?: currentSources.firstOrNull { it.url == streamUrl })?.stream?.headers.orEmpty()
+    LaunchedEffect(tmdbId, curSeason, curEpisode, duration) {
+        if (duration > 0L) {
+            skipSegs = episodeVm.skipSegments(tmdbId, title, type, curSeason, curEpisode, duration.toDouble() / 1000.0)
+        }
+    }
     LaunchedEffect(streamUrl, activeStreamHeaders) {
         val url = streamUrl ?: return@LaunchedEffect
         playVia = ""
@@ -693,13 +698,17 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
         val p2p = TorrentMagnet.isMagnet(u) && playVia != "debrid"
         var startPos = position
         while (true) {
-            kotlinx.coroutines.delay(if (p2p) 30_000 else 12_000)
+            val timeoutSec = progressVm.sourceTimeoutSec.coerceIn(8, 60)
+            kotlinx.coroutines.delay(if (p2p) 30_000 else (timeoutSec * 1000).toLong())
             if (!buffering || streamUrl != u || position > startPos + 500) return@LaunchedEffect
             // P2P que ainda recebe dado num ritmo razoável segue esperando em vez de trocar.
             if (p2p && (Torrents.ifStarted()?.status(u)?.downloadBps ?: 0) > 64_000) { startPos = position; continue }
-            // Ainda travando na mesma fonte e sem progredir → troca (ou avisa, se travada à mão).
-            if (userLockedSource) sourceFailed = true
-            else if (!nextMovieSource(slow = true)) sourceFailed = true
+            // Se o usuário desligou a troca automática ou travou à mão, segue esperando sem pular
+            if (!progressVm.autoSwitchSources || userLockedSource) {
+                startPos = position
+                continue
+            }
+            if (!nextMovieSource(slow = true)) sourceFailed = true
             return@LaunchedEffect
         }
     }
@@ -710,6 +719,44 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
         onBack()
     }
 
+}
+
+internal data class ActiveSegment(val label: String, val targetMs: Long, val isIntro: Boolean = false, val isNext: Boolean = false)
+
+internal fun calculateActiveSegment(
+    segs: com.joabtv.app.data.remote.SkipSegments?,
+    introMark: Pair<Long, Long>?,
+    type: String,
+    curEpisode: Int,
+    introSkippedEp: Int,
+    pos: Long,
+): ActiveSegment? {
+    if (segs == null && introMark == null) return null
+    segs?.recap?.let { r ->
+        if (pos >= (r.start - 2000L).coerceAtLeast(0L) && pos < (r.end - 1000L)) {
+            return ActiveSegment("Pular resumo", r.end)
+        }
+    }
+    val intro = segs?.intro ?: (if (type == "SERIES" && introMark != null) com.joabtv.app.data.remote.SkipSegment(introMark.first, introMark.second) else null)
+    if (intro != null && introSkippedEp != curEpisode) {
+        if (pos >= (intro.start - 2000L).coerceAtLeast(0L) && pos < (intro.end - 1000L)) {
+            return ActiveSegment("Pular abertura", intro.end, isIntro = true)
+        }
+    }
+    segs?.outro?.let { o ->
+        if (pos >= (o.start - 2000L).coerceAtLeast(0L) && pos < o.end) {
+            if (segs.postCredits != null && segs.postCredits.start > pos) {
+                return ActiveSegment("Ir para pós-créditos", segs.postCredits.start)
+            }
+            return ActiveSegment(if (type == "SERIES") "Próximo episódio" else "Pular encerramento", o.end, isNext = type == "SERIES")
+        }
+    }
+    segs?.postCredits?.let { p ->
+        if (pos >= (p.start - 2000L).coerceAtLeast(0L) && pos < p.end) {
+            return ActiveSegment("Pular pós-créditos", p.end, isNext = type == "SERIES")
+        }
+    }
+    return null
 }
 
 /** Tela do player. Vídeo, camadas por cima e painel. */
@@ -845,6 +892,21 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
         when {
             // ── Player custom (ExoPlayer) ──
             streamUrl != null -> {
+                var playerViewInstance by remember { mutableStateOf<PlayerView?>(null) }
+                LaunchedEffect(subSize, subBg, playerViewInstance) {
+                    playerViewInstance?.subtitleView?.apply {
+                        setApplyEmbeddedStyles(false)
+                        setApplyEmbeddedFontSizes(false)
+                        setFractionalTextSize(androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * subSize)
+                        setStyle(androidx.media3.ui.CaptionStyleCompat(
+                            android.graphics.Color.WHITE,
+                            if (subBg) 0xB3000000.toInt() else android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT,
+                            if (subBg) androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE else androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                            android.graphics.Color.BLACK, null,
+                        ))
+                    }
+                }
                 AndroidView(
                     factory = { ctx ->
                         PlayerView(ctx).apply {
@@ -852,14 +914,18 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                             useController = false // controles custom (Compose)
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                            playerViewInstance = this
                         }
                     },
                     update = {
+                        playerViewInstance = it
                         it.resizeMode = screenModes[screenModeIdx].second
                         it.scaleX = if (screenModeIdx == 2) 1.33f else 1f
                         it.scaleY = if (screenModeIdx == 2) 1.33f else 1f
                         // Legenda embutida segue o tamanho e o fundo escolhidos.
                         it.subtitleView?.apply {
+                            setApplyEmbeddedStyles(false)
+                            setApplyEmbeddedFontSizes(false)
                             setFractionalTextSize(androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * subSize)
                             setStyle(androidx.media3.ui.CaptionStyleCompat(
                                 android.graphics.Color.WHITE,
@@ -881,21 +947,24 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                 // Transmitindo p/ Chromecast: a mídia roda na TV; celular vira controle.
                 if (casting) CastingOverlay(title)
 
-                // PULAR ABERTURA: aparece só quando a série tem marcador aprendido e a posição
-                // está dentro dele. Fica na tela mesmo com os controles escondidos (tipo Netflix).
-                val mark = introMark
-                val inIntro = mark != null && type == "SERIES" && introSkippedEp != curEpisode &&
-                    position >= (mark.first - 2_000L) && position < (mark.second - 1_000L)
+                // PULAR ABERTURA / RESUMO / ENCERRAMENTO / PÓS-CRÉDITOS
+                val curActiveSeg = remember(skipSegs, introMark, type, curEpisode, introSkippedEp, position) {
+                    calculateActiveSegment(skipSegs, introMark, type, curEpisode, introSkippedEp, position)
+                }
                 AnimatedVisibility(
-                    visible = inIntro && !inPip && !locked,
+                    visible = curActiveSeg != null && !inPip && !locked,
                     enter = fadeIn(), exit = fadeOut(),
                     modifier = Modifier.align(Alignment.BottomEnd),
                 ) {
-                    SkipIntroButton(raised = controlsVisible) {
-                        mark?.let { m ->
-                            currentPlayer().seekTo(m.second)
-                            position = m.second
-                            introSkippedEp = curEpisode
+                    curActiveSeg?.let { seg ->
+                        SkipIntroButton(raised = controlsVisible, label = seg.label) {
+                            if (seg.isNext && type == "SERIES" && hasNextEpisode) {
+                                playNextEpisode()
+                            } else {
+                                currentPlayer().seekTo(seg.targetMs)
+                                position = seg.targetMs
+                                if (seg.isIntro) introSkippedEp = curEpisode
+                            }
                         }
                     }
                 }
@@ -1227,6 +1296,7 @@ internal class PlayerSession(
     var subPicked by run { mutableStateOf(false) }
     // Legendas externas (OpenSubtitles e addons). Ligam sozinhas quando são a melhor no idioma.
     var externalSubs by run { mutableStateOf<List<com.joabtv.app.data.remote.ExternalSub>>(emptyList()) }
+    var skipSegs by run { mutableStateOf<com.joabtv.app.data.remote.SkipSegments?>(null) }
     var baseExternalSubs by run { mutableStateOf<List<com.joabtv.app.data.remote.ExternalSub>>(emptyList()) }
     var selectedSubUrl by run { mutableStateOf<String?>(null) }
     // Falas da legenda externa escolhida. O player desenha a fala por cima do vídeo, o que deixa
@@ -1602,28 +1672,38 @@ internal class PlayerSession(
         }
     }
     val subActions: List<TvPlayerAction> get() = buildList {
-        if (textGroups.isNotEmpty() || externalSubs.isNotEmpty()) {
-            add(TvPlayerAction("Desativada", false, selectedSubUrl == null && !subtitleOn) { pickSub(null, null) })
-            // Cada faixa do vídeo com o nome do idioma, a do idioma do perfil primeiro.
+        add(TvPlayerAction("Desativada", false, selectedSubUrl == null && !subtitleOn) { pickSub(null, null) })
+        // Cada faixa do vídeo com o nome do idioma, a do idioma do perfil primeiro.
+        if (textGroups.isNotEmpty()) {
             textGroups.sortedBy { SubLangs.rank(it.getTrackFormat(0).language, subLang) }.forEachIndexed { i, g ->
                 val f = g.getTrackFormat(0)
                 val name = f.label?.takeIf { it.isNotBlank() } ?: SubLangs.label(f.language)
                 add(TvPlayerAction(name, false, subtitleOn && g.isSelected, header = if (i == 0) "No vídeo" else "") { pickSub(g, null) })
             }
+        }
+        if (externalSubs.isNotEmpty()) {
             externalSubs.forEachIndexed { i, sub ->
                 add(TvPlayerAction(sub.label, false, selectedSubUrl == sub.url, header = if (i == 0) "Legendas externas" else "") { pickSub(null, sub) })
             }
-            // Ajustes no fim da lista, sempre na mesma ordem, para nada pular de lugar ao tocar.
-            add(TvPlayerAction("Tamanho", false, false, sub = subSizeLabel(subSize), header = "Ajustes", keepOpen = true) {
-                subSize = nextSubSize(subSize); progressVm.subSize = subSize
-            })
-            add(TvPlayerAction("Fundo", false, false, sub = if (subBg) "Com fundo" else "Sem fundo", keepOpen = true) {
-                subBg = !subBg; progressVm.subBg = subBg
-            })
-            val onlyExt = if (selectedSubUrl == null) "  ·  vale para legenda externa" else ""
-            add(TvPlayerAction("Atrasar 0,5 s", false, false, sub = subDelayLabel(subDelay) + onlyExt, keepOpen = true) { subDelay = addDelay(subDelay, 0.5) })
-            add(TvPlayerAction("Adiantar 0,5 s", false, false, sub = "Use quando a legenda aparece depois da fala", keepOpen = true) { subDelay = addDelay(subDelay, -0.5) })
+        } else if (textGroups.isEmpty()) {
+            add(TvPlayerAction("Nenhuma legenda externa encontrada", false, false, disabled = true) {})
         }
+        // Ajustes no fim da lista, sempre na mesma ordem, para nada pular de lugar ao tocar.
+        add(TvPlayerAction("Tamanho", false, false, sub = subSizeLabel(subSize), header = "Ajustes", keepOpen = true) {
+            subSize = nextSubSize(subSize); progressVm.subSize = subSize
+        })
+        add(TvPlayerAction("Fundo", false, false, sub = if (subBg) "Com fundo" else "Sem fundo", keepOpen = true) {
+            subBg = !subBg; progressVm.subBg = subBg
+        })
+        val onlyExt = if (selectedSubUrl == null) "  ·  vale para legenda externa" else ""
+        add(TvPlayerAction("Atrasar 0,5 s", false, false, sub = subDelayLabel(subDelay) + onlyExt, keepOpen = true) { subDelay = addDelay(subDelay, 0.5) })
+        add(TvPlayerAction("Adiantar 0,5 s", false, false, sub = "Use quando a legenda aparece depois da fala", keepOpen = true) { subDelay = addDelay(subDelay, -0.5) })
+        add(TvPlayerAction("Recarregar legendas", false, false, keepOpen = true) {
+            scope.launch {
+                baseExternalSubs = runCatching { episodeVm.subtitlesFor(tmdbId, type, curSeason, curEpisode) }.getOrDefault(emptyList())
+                toastMsg = if (baseExternalSubs.isNotEmpty()) "Legendas recarregadas (${baseExternalSubs.size})" else "Nenhuma legenda externa encontrada"
+            }
+        })
     }
     // Faixas da fonte atual e, abaixo, o som de outra fonte. Serve para ver a imagem boa de uma
     // versão legendada ouvindo a dublagem de outra.
@@ -1742,7 +1822,7 @@ internal class PlayerSession(
     val tvChips: List<PlayerChipItem> get() = buildList {
         add(PlayerChipItem(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
             if (isPlaying) "Pausar" else "Assistir", main = true) { togglePlay() })
-        if (subActions.isNotEmpty()) add(PlayerChipItem(WebPlayerIcons.Subtitles, "Legendas", active = subtitleOn || selectedSubUrl != null) { openDpadPanel("subs") })
+        add(PlayerChipItem(WebPlayerIcons.Subtitles, "Legendas", active = subtitleOn || selectedSubUrl != null) { openDpadPanel("subs") })
         if (audioGroups.size > 1 || currentSources.size > 1)
             add(PlayerChipItem(WebPlayerIcons.Audio, if (extUrl != null) "Som de outra fonte" else "Áudio", active = extUrl != null) { openDpadPanel("audio") })
         if (currentSources.size > 1) add(PlayerChipItem(WebPlayerIcons.Sources, "Fontes") { openDpadPanel("sources") })

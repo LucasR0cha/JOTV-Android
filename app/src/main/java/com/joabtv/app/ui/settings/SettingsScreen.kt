@@ -304,6 +304,86 @@ fun SettingsScreen(
                     )
                 }
 
+                val autoSwitch by viewModel.autoSwitch.collectAsStateWithLifecycle()
+                val sourceTimeout by viewModel.sourceTimeout.collectAsStateWithLifecycle()
+                val autoUpgrade by viewModel.autoUpgrade.collectAsStateWithLifecycle()
+                val debridCachedOnly by viewModel.debridCachedOnly.collectAsStateWithLifecycle()
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Refresh,
+                    title = "Troca automática de fonte",
+                    sub = if (autoSwitch) "Pula para outra fonte caso a atual falhe ou demore para carregar" else "Desativada. O player mantém a fonte escolhida sem trocar sozinho",
+                    trailing = { Switch(checked = autoSwitch, onCheckedChange = { viewModel.setAutoSwitch(it) }, modifier = Modifier.focusProperties { canFocus = false }) },
+                    onClick = { viewModel.setAutoSwitch(!autoSwitch) },
+                )
+                if (autoSwitch) {
+                    SettingsCard {
+                        PrefRow(
+                            "Tempo de espera de fonte lenta",
+                            listOf(8 to "8 s", 12 to "12 s", 20 to "20 s", 30 to "30 s", 45 to "45 s", 60 to "60 s"),
+                            sourceTimeout,
+                            viewModel::setSourceTimeout,
+                        )
+                        Text(
+                            "Tempo máximo que o player espera antes de buscar outra fonte automaticamente.",
+                            color = TextTertiary, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp),
+                        )
+                    }
+                }
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Bolt,
+                    title = "Melhoria de qualidade",
+                    sub = if (autoUpgrade) "Tenta subir para resolução superior como 1080p ou 4K em segundo plano" else "Desativada. Mantém a resolução que abriu",
+                    trailing = { Switch(checked = autoUpgrade, onCheckedChange = { viewModel.setAutoUpgrade(it) }, modifier = Modifier.focusProperties { canFocus = false }) },
+                    onClick = { viewModel.setAutoUpgrade(!autoUpgrade) },
+                )
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Extension,
+                    title = "Debrid apenas com cache",
+                    sub = if (debridCachedOnly) "Evita fontes sem cache que exigiriam baixar no servidor debrid" else "Permite todas as fontes debrid mesmo sem cache imediato",
+                    trailing = { Switch(checked = debridCachedOnly, onCheckedChange = { viewModel.setDebridCachedOnly(it) }, modifier = Modifier.focusProperties { canFocus = false }) },
+                    onClick = { viewModel.setDebridCachedOnly(!debridCachedOnly) },
+                )
+
+                SettingsSection("Trackers e Sincronização")
+                val simklToken by viewModel.simklToken.collectAsStateWithLifecycle()
+                val wetrakrKey by viewModel.wetrakrKey.collectAsStateWithLifecycle()
+                val publicmetadbKey by viewModel.publicmetadbKey.collectAsStateWithLifecycle()
+                val mdblistKey by viewModel.mdblistKey.collectAsStateWithLifecycle()
+
+                var editTracker by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
+
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Sync,
+                    title = "Simkl",
+                    sub = if (simklToken.isNotBlank()) "Conectado. Sincroniza reprodução de filmes e séries" else "Desconectado. Toque para inserir seu token de acesso Simkl",
+                    trailing = if (simklToken.isNotBlank()) ({ Icon(Icons.Default.CheckCircle, "Conectado", tint = Accent) }) else null,
+                    onClick = { editTracker = Triple("Token do Simkl", simklToken) { viewModel.setSimklToken(it) } },
+                )
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Sync,
+                    title = "WeTrakr",
+                    sub = if (wetrakrKey.isNotBlank()) "Conectado. Chave configurada" else "Desconectado. Toque para inserir sua API key do WeTrakr",
+                    trailing = if (wetrakrKey.isNotBlank()) ({ Icon(Icons.Default.CheckCircle, "Conectado", tint = Accent) }) else null,
+                    onClick = { editTracker = Triple("Chave do WeTrakr", wetrakrKey) { viewModel.setWetrakrKey(it) } },
+                )
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Sync,
+                    title = "PublicMetaDB",
+                    sub = if (publicmetadbKey.isNotBlank()) "Conectado. Chave configurada" else "Desconectado. Toque para inserir sua API key",
+                    trailing = if (publicmetadbKey.isNotBlank()) ({ Icon(Icons.Default.CheckCircle, "Conectado", tint = Accent) }) else null,
+                    onClick = { editTracker = Triple("Chave PublicMetaDB", publicmetadbKey) { viewModel.setPublicmetadbKey(it) } },
+                )
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Sync,
+                    title = "MDBList",
+                    sub = if (mdblistKey.isNotBlank()) "Conectado. Chave configurada" else "Desconectado. Toque para inserir sua API key do MDBList",
+                    trailing = if (mdblistKey.isNotBlank()) ({ Icon(Icons.Default.CheckCircle, "Conectado", tint = Accent) }) else null,
+                    onClick = { editTracker = Triple("Chave do MDBList", mdblistKey) { viewModel.setMdblistKey(it) } },
+                )
+                editTracker?.let { (dialogTitle, current, onSave) ->
+                    TrackerDialog(dialogTitle, current, onSave = { onSave(it); editTracker = null }, onDismiss = { editTracker = null })
+                }
+
                 SettingsSection("Aparência")
                 val appearance by viewModel.appearance.collectAsStateWithLifecycle()
                 AppearanceSettings(appearance, viewModel::setTheme, viewModel::setMotion, viewModel::setMenu, viewModel::setUiSize)
@@ -754,5 +834,42 @@ private fun PlatformOption(
         modifier = if (selected) Modifier.border(1.dp, Accent.copy(alpha = 0.6f), RoundedCornerShape(14.dp)) else Modifier,
         trailing = if (selected) ({ Icon(Icons.Default.CheckCircle, "Selecionado", tint = Accent) }) else null,
         onClick = onClick,
+    )
+}
+
+@Composable
+private fun TrackerDialog(title: String, current: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = BackgroundCard,
+        title = { Text(title, color = TextPrimary, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Cole seu token ou chave da API para sincronizar em todos os aparelhos.", color = TextSecondary, fontSize = 14.sp)
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Accent,
+                        unfocusedBorderColor = Border,
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(text.trim()) }) { Text("Salvar", color = Accent, fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = {
+            if (current.isNotBlank()) {
+                TextButton(onClick = { onSave("") }) { Text("Desconectar", color = Danger) }
+            } else {
+                TextButton(onClick = onDismiss) { Text("Cancelar", color = TextSecondary) }
+            }
+        },
     )
 }

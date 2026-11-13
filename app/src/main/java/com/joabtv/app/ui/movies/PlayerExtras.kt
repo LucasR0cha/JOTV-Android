@@ -157,7 +157,9 @@ internal fun parseSubs(body: String): List<SubCue> {
 /** Fala na tela no instante [posMs] com a legenda atrasada [delayMs]. */
 internal fun cueAt(cues: List<SubCue>, posMs: Long, delayMs: Long): String {
     val t = posMs - delayMs
-    return cues.lastOrNull { it.start <= t }?.takeIf { t <= it.end }?.text.orEmpty()
+    val active = cues.filter { it.start <= t && t <= it.end }
+    if (active.isEmpty()) return ""
+    return active.joinToString("\n") { it.text }
 }
 
 // ── Som de outra fonte ────────────────────────────────────────────────────────

@@ -126,18 +126,10 @@ fun AddonManagerScreen(
             )
         }
         // Em tela larga a lista fica à esquerda e o painel de instalar fica fixo à direita.
-        Row(Modifier.fillMaxSize()) {
-        if (wide) Column(
-            Modifier.width(360.dp).fillMaxHeight().verticalScroll(rememberScrollState())
-                .padding(start = pad, top = 6.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            ExploreEntry(onExplore)
-            install()
-        }
+        Row(Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(
             Modifier.weight(1f).fillMaxHeight(),
-            contentPadding = PaddingValues(start = pad, end = pad, top = 6.dp, bottom = 32.dp),
+            contentPadding = PaddingValues(start = pad, end = if (wide) 16.dp else pad, top = 6.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (!wide) {
@@ -188,6 +180,14 @@ fun AddonManagerScreen(
             if (state.addons.isEmpty()) {
                 item { EmptyAddons() }
             }
+        }
+        if (wide) Column(
+            Modifier.width(360.dp).fillMaxHeight().verticalScroll(rememberScrollState())
+                .padding(end = pad, top = 6.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            ExploreEntry(onExplore)
+            install()
         }
         }
     }

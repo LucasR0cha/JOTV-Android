@@ -37,6 +37,7 @@ class TraktService @Inject constructor(
     private val prefs: PlatformPrefs,
     private val library: LibraryRepository,
     private val tmdb: TmdbApiService,
+    private val multiTracker: MultiTrackerService,
 ) {
     private val http = client.newBuilder().cache(null).build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -250,7 +251,10 @@ class TraktService @Inject constructor(
         if (type == MediaType.SERIES.name && season > 0 && episode > 0) {
             body.put("show", ids).put("episode", JSONObject().put("season", season).put("number", episode))
         } else body.put("movie", ids)
-        scope.launch { runCatching { call("POST", "/scrobble/$action", body) } }
+        scope.launch {
+            runCatching { call("POST", "/scrobble/$action", body) }
+            multiTracker.scrobble(action, "", "", tmdbId, type == MediaType.SERIES.name, season, episode, progress / 100.0)
+        }
     }
 
     fun watchlistChanged(tmdbId: Int, type: String, added: Boolean) {

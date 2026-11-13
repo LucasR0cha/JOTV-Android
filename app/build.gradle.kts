@@ -22,6 +22,8 @@ android {
         // fora do VCS. Sem ela, fica vazia e o usuário informa a própria chave em Configurações.
         val tmdbKey = (project.findProperty("TMDB_API_KEY") as String?) ?: ""
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbKey\"")
+        val simklClientId = (project.findProperty("SIMKL_CLIENT_ID") as String?) ?: ""
+        buildConfigField("String", "SIMKL_CLIENT_ID", "\"$simklClientId\"")
         // Trakt (trakt.tv/oauth/applications). Lido do local.properties, que não vai para o git.
         // Vazio deixa o Trakt desligado e escondido nas Configurações.
         val local = Properties().apply {

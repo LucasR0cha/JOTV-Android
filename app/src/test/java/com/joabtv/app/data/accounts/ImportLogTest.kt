@@ -44,9 +44,9 @@ class ImportLogTest {
     @Test
     fun `registro volta igual depois de gravar e ler`() {
         val log = ImportLog()
-            .put("nuvio", "addons", PartRecord(ok = true, n = 7, skip = 2, failed = 1, unusable = 3, rows = 40, rowsOn = 10), "pessoa@teste.com", "Filhos", t0)
-            .put("nuvio", "library", PartRecord(ok = true, list = 42, progress = 18, nomatch = 4), "pessoa@teste.com", "Filhos", t0 + 1)
-            .put("nuvio", "debrid", PartRecord(ok = true, label = "Real-Debrid"), "pessoa@teste.com", "Filhos", t0 + 2)
+            .put("nuvio", "addons", PartRecord(ok = true, n = 7, skip = 2, failed = 1, unusable = 3, rows = 40, rowsOn = 10), "joabe@teste.com", "Filhos", t0)
+            .put("nuvio", "library", PartRecord(ok = true, list = 42, progress = 18, nomatch = 4), "joabe@teste.com", "Filhos", t0 + 1)
+            .put("nuvio", "debrid", PartRecord(ok = true, label = "Real-Debrid"), "joabe@teste.com", "Filhos", t0 + 2)
             .put("stremio", "addons", PartRecord(ok = false, why = "O Stremio recusou o pedido"), "x@y.com", "", t0 + 3)
             .withPick(NuvioPick(2, "Filhos", true))
         val back = ImportLog.decode(log.encode())

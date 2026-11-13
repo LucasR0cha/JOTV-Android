@@ -363,18 +363,14 @@ private fun TvEpisodes(
                     ),
                     progress = if (watching && state.resumeDurationMs > 0) state.resumePositionMs.toFloat() / state.resumeDurationMs else null,
                     onClick = {
-                        val total = state.seasons[ep.seasonNumber]?.size ?: 0
-                        if (watching && state.resumeSourceUrl.isNotBlank() && state.resumePositionMs > 10_000) {
-                            onPlayDirect(state.resumeSourceUrl, state.resumePositionMs, state.resumeLastEpisode,
-                                listOf(MoviePlayerSource("Fonte salva", state.resumeSourceUrl)), ep.seasonNumber, ep.episodeNumber, total)
-                        } else onPlayEpisode(item.tmdbId, ep.seasonNumber, ep.episodeNumber, total)
+                        onSelect(ep.seasonNumber, ep.episodeNumber)
                     },
                     onLongClick = { onSelect(ep.seasonNumber, ep.episodeNumber) },
                 )
             }
         }
         Text(
-            "OK assiste  ·  Segure OK para escolher a fonte", color = TextTertiary, fontSize = 0.95.rs,
+            "OK no episódio para ver as fontes", color = TextTertiary, fontSize = 0.95.rs,
             modifier = Modifier.padding(horizontal = tvPad).offset(y = (-0.4).r),
         )
     }

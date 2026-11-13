@@ -41,10 +41,29 @@ class SubtitleService @Inject constructor(
     private fun rank(lang: String) = com.joabtv.app.data.local.SubLangs.rank(lang, prefs.subLang)
     private fun label(lang: String) = com.joabtv.app.data.local.SubLangs.label(lang)
 
-    /** Texto do arquivo de legenda, ou null se não baixou. */
+    /** Texto do arquivo de legenda, ou null se não baixou. Trata GZIP e charsets legados. */
     suspend fun download(url: String, headers: Map<String, String> = emptyMap()): String? = withContext(Dispatchers.IO) {
         runCatching {
-            client.newCall(Request.Builder().url(url).apply { headers.forEach { (key, value) -> header(key, value) } }.build()).execute().use { if (it.isSuccessful) it.body?.string() else null }
+            val req = Request.Builder().url(url).apply {
+                headers.forEach { (key, value) -> header(key, value) }
+                header("User-Agent", "Mozilla/5.0")
+            }.build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val bytes = resp.body?.bytes() ?: return@use null
+                val rawBytes = if (bytes.size >= 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte()) {
+                    java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(bytes)).use { it.readBytes() }
+                } else bytes
+                try {
+                    java.nio.charset.StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(rawBytes)).toString()
+                } catch (e: Exception) {
+                    try {
+                        java.nio.charset.Charset.forName("windows-1252").decode(java.nio.ByteBuffer.wrap(rawBytes)).toString()
+                    } catch (e2: Exception) {
+                        String(rawBytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+                    }
+                }
+            }
         }.getOrNull()
     }
 

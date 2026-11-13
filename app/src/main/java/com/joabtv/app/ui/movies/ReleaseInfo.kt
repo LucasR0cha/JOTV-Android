@@ -58,6 +58,7 @@ internal fun releaseInfo(stream: StremioStream, title: String, providers: List<S
         if (stream.hdr || hasHdr(text)) add(if (Regex("HDR10\\+|HDR10Plus", RegexOption.IGNORE_CASE).containsMatchIn(text)) "HDR10+"
             else if (text.contains("HDR10", true)) "HDR10" else "HDR")
         if (stream.atmos || hasAtmos(text)) add("Atmos")
+        if (Regex("""\busenet\b|\beasynews\b|\bnzb\b""", RegexOption.IGNORE_CASE).containsMatchIn(text) || Regex("""^nzb:|^usenet:|\.nzb(\?|$)""", RegexOption.IGNORE_CASE).containsMatchIn(stream.url)) add("Usenet")
         if (Regex("\\btrue[ .-]?hd\\b", RegexOption.IGNORE_CASE).containsMatchIn(text)) add("TrueHD")
         if (Regex("\\bddp|e[ .-]?ac3|dd\\+", RegexOption.IGNORE_CASE).containsMatchIn(text)) add("DD+")
         if (Regex("\\bdts(?:[ .-]?hd)?\\b", RegexOption.IGNORE_CASE).containsMatchIn(text)) add("DTS")

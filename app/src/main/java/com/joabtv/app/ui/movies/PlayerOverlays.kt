@@ -56,7 +56,12 @@ internal fun BoxScope.ExternalSubtitle(
     raised: Boolean,
 ) {
     var subPos by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(cues) { while (true) { subPos = player.currentPosition; delay(100) } }
+    LaunchedEffect(cues, player) {
+        while (true) {
+            subPos = player.currentPosition
+            delay(50)
+        }
+    }
     val line = cueAt(cues, subPos, delayMs)
     if (line.isEmpty()) return
     Text(
@@ -64,12 +69,12 @@ internal fun BoxScope.ExternalSubtitle(
         fontSize = (if (isTv) 24 else 18).sp * sizeScale, lineHeight = (if (isTv) 30 else 23).sp * sizeScale,
         fontWeight = FontWeight.SemiBold,
         style = androidx.compose.ui.text.TextStyle(
-            shadow = if (withBg) null else androidx.compose.ui.graphics.Shadow(Color.Black, blurRadius = 6f),
+            shadow = if (withBg) null else androidx.compose.ui.graphics.Shadow(Color.Black, blurRadius = 8f),
         ),
         modifier = Modifier.align(Alignment.BottomCenter)
             .padding(start = 24.dp, end = 24.dp, bottom = if (raised) 190.dp else 32.dp)
-            .then(if (withBg) Modifier.clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = 0.62f)) else Modifier)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .then(if (withBg) Modifier.clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.78f)) else Modifier)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
     )
 }
 
@@ -87,7 +92,7 @@ internal fun CastingOverlay(title: String) {
 
 /** Botão Pular abertura (.pl-skip). Branco com texto escuro. */
 @Composable
-internal fun SkipIntroButton(raised: Boolean, onClick: () -> Unit) {
+internal fun SkipIntroButton(raised: Boolean, label: String = "Pular abertura", onClick: () -> Unit) {
     Row(
         Modifier
             // O vídeo ocupa a tela toda, inclusive o recorte da câmera. O botão fica fora dele.
@@ -103,7 +108,7 @@ internal fun SkipIntroButton(raised: Boolean, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(Icons.Default.SkipNext, null, tint = TextOnLight, modifier = Modifier.size(20.dp))
-        Text("Pular abertura", color = TextOnLight, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+        Text(label, color = TextOnLight, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
     }
 }
 

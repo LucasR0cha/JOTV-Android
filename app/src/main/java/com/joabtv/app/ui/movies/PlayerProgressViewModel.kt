@@ -47,6 +47,12 @@ class PlayerProgressViewModel @Inject constructor(
     var subBg: Boolean
         get() = prefs.subBg
         set(v) { prefs.subBg = v }
+    var autoSwitchSources: Boolean
+        get() = prefs.autoSwitchSources
+        set(v) { prefs.autoSwitchSources = v }
+    var sourceTimeoutSec: Int
+        get() = prefs.sourceTimeoutSec
+        set(v) { prefs.sourceTimeoutSec = v }
     var subtitleOn: Boolean
         get() = prefs.subtitleOn
         set(v) { prefs.subtitleOn = v }

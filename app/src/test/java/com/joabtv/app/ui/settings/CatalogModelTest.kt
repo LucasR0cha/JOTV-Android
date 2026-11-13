@@ -29,9 +29,9 @@ class CatalogModelTest {
 
     private val now = at(10, 18, 0)
     private val came = at(10, 14, 32)
-    private val signed = AccountSnap(signedIn = true, email = "pessoa@teste.com", since = true)
+    private val signed = AccountSnap(signedIn = true, email = "joabe@teste.com", since = true)
 
-    private fun parts(vararg p: Pair<String, PartRecord>) = ImportEntry(came, "pessoa@teste.com", "Principal", mapOf(*p))
+    private fun parts(vararg p: Pair<String, PartRecord>) = ImportEntry(came, "joabe@teste.com", "Principal", mapOf(*p))
     private val allOk = parts(
         "addons" to PartRecord(true, n = 5, skip = 2),
         "library" to PartRecord(true, list = 42, progress = 18),
@@ -77,14 +77,14 @@ class CatalogModelTest {
         val v = nuvio(signed)
         assertEquals(CardTag("Conectado", TagTone.ON), v.tag)
         assertEquals(listOf("Trazer tudo", "Mais"), v.acts.map { it.label })
-        assertEquals("pessoa@teste.com. Ainda não trouxe nada para este perfil.", v.lines.single())
+        assertEquals("joabe@teste.com. Ainda não trouxe nada para este perfil.", v.lines.single())
         assertTrue(v.pending)
     }
 
     @Test
     fun `conta de antes do registro nao vira pendencia`() {
         val v = nuvio(signed.copy(since = false))
-        assertEquals("pessoa@teste.com. Trazer de novo só soma o que faltar.", v.lines.single())
+        assertEquals("joabe@teste.com. Trazer de novo só soma o que faltar.", v.lines.single())
         assertFalse(v.pending)
     }
 
@@ -103,7 +103,7 @@ class CatalogModelTest {
     fun `trazido diz quando e o que veio`() {
         val v = nuvio(signed, allOk)
         assertEquals(CardTag("Conectado", TagTone.ON), v.tag)
-        assertEquals("pessoa@teste.com, perfil Principal do Nuvio", v.lines[0])
+        assertEquals("joabe@teste.com, perfil Principal do Nuvio", v.lines[0])
         assertEquals("Trazido hoje às 14h32. 7 addons, 42 na Minha Lista, 3 coleções.", v.lines[1])
         assertEquals(listOf("Atualizar", "O que veio", "Mais"), v.acts.map { it.label })
         assertFalse(v.failed)
@@ -151,9 +151,9 @@ class CatalogModelTest {
 
     @Test
     fun `stremio mostra so o que ele traz`() {
-        val e = ImportEntry(came, "pessoa@teste.com", "", mapOf("addons" to PartRecord(true, n = 3), "library" to PartRecord(true, list = 9)))
+        val e = ImportEntry(came, "joabe@teste.com", "", mapOf("addons" to PartRecord(true, n = 3), "library" to PartRecord(true, list = 9)))
         val v = accountView(Account.STREMIO, signed, e, null, now, utc)
-        assertEquals("pessoa@teste.com", v.lines[0])
+        assertEquals("joabe@teste.com", v.lines[0])
         assertEquals("Trazido hoje às 14h32. 3 addons, 9 na Minha Lista.", v.lines[1])
     }
 

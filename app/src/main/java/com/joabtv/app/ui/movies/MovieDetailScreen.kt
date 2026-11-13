@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Theaters
 import androidx.compose.material.icons.filled.PlayArrow
@@ -635,7 +636,7 @@ fun MovieDetailScreen(
                         watching = state.watchingEpisode == "${ep.seasonNumber}:${ep.episodeNumber}",
                         modifier = Modifier.padding(horizontal = pad, vertical = 5.dp),
                         onPlay = {
-                            onPlayEpisode(item.tmdbId, ep.seasonNumber, ep.episodeNumber, state.seasons[ep.seasonNumber]?.size ?: 0)
+                            viewModel.selectEpisode(ep.seasonNumber, ep.episodeNumber)
                         },
                         // (A) tocar o card abre o painel de fontes/servidores do episódio
                         onSelect = { viewModel.selectEpisode(ep.seasonNumber, ep.episodeNumber) },
@@ -723,6 +724,7 @@ fun MovieDetailScreen(
             EpisodeServersSheet(
                 season = season,
                 episode = episode,
+                onReload = { viewModel.selectEpisode(season, episode) },
                 stremioStreams = state.episodeStremioStreams,
                 facts = state.episodeFacts(),
                 debridTag = state.debridTag,
@@ -831,6 +833,7 @@ private fun EpisodeServersSheet(
     onPlayStremio: (com.joabtv.app.data.remote.StremioStream) -> Unit,
     isDownloadable: (String) -> Boolean = { false },
     onDownloadStremio: (com.joabtv.app.data.remote.StremioStream) -> Unit = {},
+    onReload: () -> Unit = {},
 ) {
     // Scrim cobre a tela inteira; toque fora fecha.
     val scrimSrc = remember { MutableInteractionSource() }
@@ -889,13 +892,22 @@ private fun EpisodeServersSheet(
                         letterSpacing = (-0.3).sp,
                     )
                 }
-                GlassCircleButton(
-                    icon = Icons.Default.Close,
-                    onClick = onDismiss,
-                    size = 38.dp,
-                    iconTint = TextSecondary,
-                    contentDescription = "Fechar",
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    GlassCircleButton(
+                        icon = Icons.Default.Refresh,
+                        onClick = onReload,
+                        size = 38.dp,
+                        iconTint = TextSecondary,
+                        contentDescription = "Recarregar fontes",
+                    )
+                    GlassCircleButton(
+                        icon = Icons.Default.Close,
+                        onClick = onDismiss,
+                        size = 38.dp,
+                        iconTint = TextSecondary,
+                        contentDescription = "Fechar",
+                    )
+                }
             }
             Spacer(Modifier.height(16.dp))
 
@@ -937,6 +949,7 @@ private val SRC_FILTERS = listOf<Triple<String, String, (com.joabtv.app.data.rem
     Triple("1080", "1080p") { (it.labelRank.takeIf { q -> q > 0 } ?: it.rank) in 1000..1199 },
     Triple("hdr", "HDR") { com.joabtv.app.data.remote.hasHdr(it.label) || com.joabtv.app.data.remote.hasDolbyVision(it.label) },
     Triple("instant", "Instantâneo") { it.debrid >= 2 },
+    Triple("usenet", "Usenet") { it.isUsenet },
 )
 
 /**
@@ -960,8 +973,9 @@ internal fun SourceList(
         return
     }
     var filter by remember { mutableStateOf("all") }
+    var addonFilter by remember { mutableStateOf("all") }
     var showWrong by remember { mutableStateOf(false) }
-    var limit by remember(filter, showWrong) { mutableIntStateOf(24) }
+    var limit by remember(filter, addonFilter, showWrong) { mutableIntStateOf(24) }
     val groups = remember(streams) { groupReleases(streams) }
     val byUrl = facts.associateBy { it.url }
     fun fact(s: com.joabtv.app.data.remote.StremioStream) = byUrl[s.url]
@@ -970,12 +984,28 @@ internal fun SourceList(
     val visible = groups.filter { g -> showWrong || g.members.any { !fact(it).wrongTitle } }
     val counts = SRC_FILTERS.associate { (k, _, fn) -> k to visible.count { g -> g.members.any { fn(fact(it)) } } }
     val predicate = SRC_FILTERS.firstOrNull { it.first == filter }?.third ?: { true }
-    val filtered = visible.filter { g -> g.members.any { predicate(fact(it)) } }
+    val filtered = visible.filter { g ->
+        g.members.any { predicate(fact(it)) } && (addonFilter == "all" || g.members.any { it.addon == addonFilter })
+    }
     if (groups.isNotEmpty()) Text("${groups.size} versões em ${streams.size} fontes", color = TextTertiary, fontSize = 13.sp)
-    if (groups.size > 4 || wrongCount > 0) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    val uniqueAddons = remember(visible) {
+        visible.flatMap { g -> g.members.mapNotNull { it.addon.takeIf { a -> a.isNotBlank() } } }.distinct()
+    }
+    if (groups.size > 4 || wrongCount > 0 || uniqueAddons.size > 1) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (groups.size > 4) SRC_FILTERS.forEach { (key, name, _) ->
             val n = counts[key] ?: 0
             if (key == "all" || n > 0) SeasonChip("$name $n", filter == key) { filter = key }
+        }
+        if (uniqueAddons.size > 1) {
+            uniqueAddons.forEach { adn ->
+                val count = visible.count { g -> g.members.any { it.addon == adn } }
+                if (count > 0) {
+                    val isSel = addonFilter == adn
+                    SeasonChip("$adn $count", isSel) {
+                        addonFilter = if (isSel) "all" else adn
+                    }
+                }
+            }
         }
         if (wrongCount > 0) SeasonChip(if (showWrong) "Ocultar outro filme ($wrongCount)" else "Mostrar todas ($wrongCount de outro filme)", showWrong) { showWrong = !showWrong }
     }

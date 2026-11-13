@@ -26,7 +26,13 @@ class EpisodePlayerViewModel @Inject constructor(
     private val subtitleService: com.joabtv.app.data.remote.SubtitleService,
     private val prober: com.joabtv.app.data.remote.SourceProber,
     private val debrid: com.joabtv.app.data.debrid.DebridService,
+    private val skipSegmentsService: com.joabtv.app.data.remote.SkipSegmentsService,
 ) : ViewModel() {
+
+    suspend fun skipSegments(tmdbId: Int, title: String, type: String, season: Int, episode: Int, durationSec: Double): com.joabtv.app.data.remote.SkipSegments {
+        val imdb = imdbId(tmdbId, type).orEmpty()
+        return skipSegmentsService.get(imdb, title, type == "SERIES", season, episode, durationSec)
+    }
 
     /** Serviço de debrid em uso ("Real-Debrid"). null sem conta ou desligado. */
     fun debridLabel(): String? = debrid.active()?.provider?.label

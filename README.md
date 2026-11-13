@@ -495,3 +495,5 @@ usada vem de [zhongfly/mpv-winbuild](https://github.com/zhongfly/mpv-winbuild/re
 
 O motor de plugins leva o QuickJS e bibliotecas JavaScript de código aberto. As licenças ficam em
 `app/src/main/assets/plugins/LICENSES.txt`.
+
+Para compilar a integra??o Simkl, configure a propriedade Gradle `SIMKL_CLIENT_ID` com o identificador da aplica??o.
