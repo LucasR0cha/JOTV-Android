@@ -7,17 +7,18 @@
 
 # JOTV
 
-**Filmes, séries e TV ao vivo no celular e na televisão.**
+**Filmes, séries e TV ao vivo no celular, na televisão e no computador.**
 
-Um app só para celular, tablet, Android TV, LG webOS, Samsung Tizen e Windows.<br>
+Um app só para celular, tablet, Android TV, LG webOS, Samsung Tizen, Windows e Linux.<br>
 O catálogo vem do TMDB, em português. Os vídeos vêm dos addons e dos plugins que você escolhe.
 
 [![Baixar para Android](https://img.shields.io/badge/Android-baixar%20o%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](../../releases/latest)
 [![Baixar para LG webOS](https://img.shields.io/badge/LG%20webOS-baixar%20o%20IPK-A50034?style=for-the-badge&logo=lg&logoColor=white)](../../releases/latest)
 [![Baixar para Samsung Tizen](https://img.shields.io/badge/Samsung%20Tizen-baixar%20o%20WGT-1428A0?style=for-the-badge&logo=samsung&logoColor=white)](../../releases/latest)
 [![Baixar para Windows](https://img.shields.io/badge/Windows-baixar%20o%20instalador-0078D4?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest)
+[![Baixar para Linux](https://img.shields.io/badge/Linux-Debian%20e%20AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.0)
 
-[Novidades](#novidades) · [Na TV](#na-tv) · [No celular](#no-celular) · [No Windows](#no-windows) · [Tudo o que o app faz](#tudo-o-que-o-app-faz) · [Instalação](#instalação) · [Para desenvolvedores](#para-desenvolvedores)
+[Novidades](#novidades) · [Na TV](#na-tv) · [No celular](#no-celular) · [No Windows](#no-windows) · [No Linux](#no-linux) · [Tudo o que o app faz](#tudo-o-que-o-app-faz) · [Instalação](#instalação) · [Para desenvolvedores](#para-desenvolvedores)
 
 </div>
 
@@ -37,13 +38,34 @@ O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-leg
 
 ## Novidades
 
+### Linux 0.1.0
+
+O JOTV chega ao Linux com a mesma interface e os recursos do Windows 0.2.10. A primeira versão tem
+pacote **Debian** e **AppImage portátil** para computadores x86_64, com X11 ou XWayland e glibc 2.35
+ou mais nova. O player usa libmpv e OpenGL dentro da janela, com os mesmos controles de fontes,
+legendas, velocidade, volume e marcas de tempo.
+
+Mouse, teclado, clique direito, clique prolongado, rótulos nos ícones e remoção de Continuar
+assistindo seguem o comportamento do Windows. Também entram addons, plugins, Debrid, torrent,
+TV ao vivo, perfis, backup por arquivo ou Wi-Fi com PIN e avisos de atualização pelo GitHub.
+
+[Baixar o Linux 0.1.0 e ver as notas da versão](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.0).
+
+### Atualizações e backup
+
+As Configurações avisam quando há uma versão nova para o seu aparelho e deixam escolher entre
+atualizar ou deixar para depois. O backup JSON guarda seus dados fora do aplicativo e pode ser
+transferido entre celular, computador e TV pela rede local. Chaves e sessões ficam fora do backup
+por padrão, e a restauração pede confirmação. As ações de limpar históricos e desconectar contas
+também pedem confirmação.
+
 ### Plugins mais rápidos
 
 Os provedores ativos agora são consultados em paralelo, com até 32 buscas ao mesmo tempo, e cada fonte entra na lista assim que chega, sem esperar os provedores mais lentos. A inicialização ficou mais leve, porque poucos motores isolados atendem várias buscas, e as respostas ficam num cache curto (30 segundos, ou 2 segundos quando a busca volta vazia). Os provedores e as configurações foram preservados. Quem já usava plugins passa para **Buscar em paralelo** uma vez, e em Preferências dá para voltar para um ou dois de cada vez. Os tempos foram medidos só em testes controlados, com provedores simulados, no navegador e num emulador Android, e não em TV nem em celular reais.
 
 ### Plugins
 
-O JOTV agora aceita plugins. Em Configurações, Plugins, você adiciona por link repositórios de provedores no formato do Nuvio, e as fontes deles entram na lista de fontes e no player como as dos addons. O gerenciador começa **vazio**. O JOTV não traz, não indica e não instala plugin nenhum, e cada pessoa cola só os links que quiser (no perfil adulto). O gerenciador existe no Android, na LG, na Samsung e no Windows.
+O JOTV agora aceita plugins. Em Configurações, Plugins, você adiciona por link repositórios de provedores no formato do Nuvio, e as fontes deles entram na lista de fontes e no player como as dos addons. O gerenciador começa **vazio**. O JOTV não traz, não indica e não instala plugin nenhum, e cada pessoa cola só os links que quiser (no perfil adulto). O gerenciador existe no Android, na LG, na Samsung, no Windows e no Linux.
 
 Aceita três formatos.
 
@@ -53,13 +75,13 @@ Aceita três formatos.
 
 Provedor novo começa desligado. Cada um tem ativação, configurações próprias (as senhas ficam mascaradas), teste de carregamento e teste de fontes. A lista tem busca e filtros, ordem de prioridade, atualização individual ou em conjunto com conferência diária, pausa, remoção e **backup** dos links, da ordem e da ativação (as configurações dos provedores não entram). Os cabeçalhos HTTP e as legendas externas acompanham a reprodução.
 
-O código do plugin roda isolado, num QuickJS dentro de um Worker, sem acesso ao DOM, ao armazenamento do app, a arquivos nem a processos. Cada execução tem 48 MiB de memória, até 120 segundos, 80 chamadas de rede e 24 MiB de respostas. No Android e no Windows, e na LG com o serviço do app ativo, as chamadas de rede feitas pelo código do plugin só alcançam endereços públicos, com o DNS e cada redirecionamento conferidos. Na Samsung (e na LG quando o serviço do app não responde) o navegador da TV faz a conexão, e a conferência vale só para o endereço escrito, então um redirecionamento ou um nome que aponte para a rede de casa não é barrado. O vídeo e as legendas que o plugin indica são baixados pelo player do app, como nos addons, sem essa conferência. O plugin também recebe o ID do título, as configurações do provedor e a chave do TMDB do app. Plugin é código de terceiros, então instale só de quem você confia.
+O código do plugin roda isolado, num QuickJS dentro de um Worker, sem acesso ao DOM, ao armazenamento do app, a arquivos nem a processos. Cada execução tem 48 MiB de memória, até 120 segundos, 80 chamadas de rede e 24 MiB de respostas. No Android, no Windows e no Linux, e na LG com o serviço do app ativo, as chamadas de rede feitas pelo código do plugin só alcançam endereços públicos, com o DNS e cada redirecionamento conferidos. Na Samsung (e na LG quando o serviço do app não responde) o navegador da TV faz a conexão, e a conferência vale só para o endereço escrito, então um redirecionamento ou um nome que aponte para a rede de casa não é barrado. O vídeo e as legendas que o plugin indica são baixados pelo player do app, como nos addons, sem essa conferência. O plugin também recebe o ID do título, as configurações do provedor e a chave do TMDB do app. Plugin é código de terceiros, então instale só de quem você confia.
 
 Extensões CS3, que usam código nativo do Android, não rodam. Na Samsung o navegador da TV barra alguns pedidos e cabeçalhos, e por isso alguns provedores podem não tocar lá.
 
 ### Guia de canais dentro do player ao vivo
 
-Na TV ao vivo, a lista de canais e o guia de programação abrem por cima do vídeo, sem sair do player. Na Android TV dá para filtrar por favoritos, recentes, fonte e grupo, buscar pelo nome do canal ou do programa, trocar de canal pelo CH+ e CH- ou digitando o número e apertar 0 para voltar ao canal anterior. Os addons com canais ao vivo agora entram na TV ao vivo como uma fonte **Addon ao vivo**. O guia também chegou à LG, à Samsung e ao Windows.
+Na TV ao vivo, a lista de canais e o guia de programação abrem por cima do vídeo, sem sair do player. Na Android TV dá para filtrar por favoritos, recentes, fonte e grupo, buscar pelo nome do canal ou do programa, trocar de canal pelo CH+ e CH- ou digitando o número e apertar 0 para voltar ao canal anterior. Os addons com canais ao vivo agora entram na TV ao vivo como uma fonte **Addon ao vivo**. O guia também chegou à LG, à Samsung, ao Windows e ao Linux.
 
 ### Roda também no emulador de computador
 
@@ -85,13 +107,13 @@ As Configurações abrem com **Seu catálogo**, cinco cartões que mostram o est
   <img src="docs/readme/tv-minha-inicio.jpg" alt="Minha Início na Android TV com a lista de fileiras, o resumo ao lado e os botões Mover e Renomear" width="100%">
 </p>
 
-### Torrent sem debrid também na TV LG e no Windows
+### Torrent sem debrid também na TV LG, no Windows e no Linux
 
-Fonte de torrent agora toca direto na **TV LG** (webOS recente, que roda Node 20 no serviço do app) e no **Windows**, sem conta de debrid, como o Android já fazia. O vídeo começa enquanto baixa e só o arquivo escolhido é baixado. Na LG o motor fica na memória, não grava no disco e não envia nada. No Windows tudo é apagado ao parar e o envio fica limitado a 2 MB/s. A espera depende de ter gente compartilhando o torrent. Na Samsung o P2P é **experimental** e vem desligado, e com debrid o torrent pronto continua tocando na hora.
+Fonte de torrent agora toca direto na **TV LG** (webOS recente, que roda Node 20 no serviço do app) e no **Windows e Linux**, sem conta de debrid, como o Android já fazia. O vídeo começa enquanto baixa e só o arquivo escolhido é baixado. Na LG o motor fica na memória, não grava no disco e não envia nada. No Windows e no Linux tudo é apagado ao parar e o envio fica limitado a 2 MB/s. A espera depende de ter gente compartilhando o torrent. Na Samsung o P2P é **experimental** e vem desligado, e com debrid o torrent pronto continua tocando na hora.
 
 ### Menus à sua escolha
 
-Em Configurações, Aparência, cada perfil escolhe o menu da TV e do computador. **Lateral** é o de sempre, **Superior** é uma barra no alto, com uma fileira inteira na Início e a seguinte espiando embaixo para mostrar que há mais listas, e **Oculto** esconde a lateral até você ir para o lado esquerdo (no Windows, o mouse na borda esquerda também abre).
+Em Configurações, Aparência, cada perfil escolhe o menu da TV e do computador. **Lateral** é o de sempre, **Superior** é uma barra no alto, com uma fileira inteira na Início e a seguinte espiando embaixo para mostrar que há mais listas, e **Oculto** esconde a lateral até você ir para o lado esquerdo (no Windows e no Linux, o mouse na borda esquerda também abre).
 
 ### Mais leve na LG
 
@@ -141,8 +163,8 @@ vídeo, com a lista e a programação, e o CH+ e o CH- trocam de canal.
 | **Contas Stremio e Nuvio** | Entre por e-mail ou pelo QR code e use o Trazer tudo para buscar addons, Minha Lista, o que você estava assistindo, coleções e as chaves de debrid. O QR é gerado no próprio aparelho e o painel O que veio mostra o resultado de cada parte. |
 | **Debrid** | Real-Debrid, TorBox e Premiumize. Fonte de torrent que já está pronta no debrid vira link direto e toca na hora, com um raio na lista indicando o que está pronto. |
 | **Legenda no seu idioma** | 53 idiomas, começando no português do Brasil, e a opção de a legenda já entrar ligada. O app prefere a legenda do próprio vídeo e completa com o OpenSubtitles e com as legendas dos addons. |
-| **Torrent sem debrid** | O Android, o Windows e a LG webOS recente têm motor P2P próprio e o vídeo começa enquanto baixa. Na Samsung o P2P é experimental e vem desligado. Com debrid, o torrent pronto toca na hora. |
-| **Loja com mouse** | No Windows e com o Magic Remote da LG, o clique escolhe o addon e cada cartão tem o próprio botão Instalar, Configurar ou Instalado. Passar o mouse por cima não troca mais a ficha. |
+| **Torrent sem debrid** | O Android, o Windows, o Linux e a LG webOS recente têm motor P2P próprio e o vídeo começa enquanto baixa. Na Samsung o P2P é experimental e vem desligado. Com debrid, o torrent pronto toca na hora. |
+| **Loja com mouse** | No Windows, no Linux e com o Magic Remote da LG, o clique escolhe o addon e cada cartão tem o próprio botão Instalar, Configurar ou Instalado. Passar o mouse por cima não troca mais a ficha. |
 | **Login com QR na TV** | O login por código do Stremio, do Nuvio, do Real-Debrid e do TorBox mostra o QR ao lado do código. É só apontar a câmera do celular. |
 | **Player novo no celular** | Controles na base da tela, como na TV, com botões maiores para o toque e espaço certo para a fonte ampliada do sistema. |
 
@@ -183,6 +205,21 @@ player iguais aos da TV. Funciona com teclado (setas, Enter e Esc) e com mouse. 
 cheia, aperte F11 ou leve o mouse ao topo da tela, que aparecem os botões de sair da tela cheia,
 minimizar e fechar. Torrent toca sem debrid pelo motor P2P embutido, e os menus Lateral, Superior e
 Oculto funcionam com o mouse.
+
+## No Linux
+
+O mesmo visual e os mesmos controles da versão Windows, com player libmpv integrado por OpenGL.
+Funciona com teclado e mouse, incluindo clique direito, clique prolongado, volume na tela e o texto
+das ações ao passar o mouse. F11 ou Alt+Enter alternam a tela cheia, e a barra no topo permite
+minimizar e fechar.
+
+O pacote Debian usa o player da distribuição. O AppImage leva a libmpv e suas bibliotecas junto e
+pode ficar numa pasta da sua conta. Os dois formatos preservam addons, plugins, perfis, Minha Lista,
+histórico, coleções e preferências. O backup JSON permite trazer os dados de outra versão do JOTV.
+Os avisos de atualização identificam o formato instalado antes de escolher o download.
+
+A versão 0.1.0 foi testada em Linux isolado, com vídeo e legenda externa em 720p e 1080p. A validação
+em computador físico, saída HDMI, HDR e áudio multicanal continua pendente. A reprodução de torrent usa o mesmo motor do Windows e ainda não foi exercitada nessa validação.
 
 ## Tudo o que o app faz
 
@@ -256,7 +293,7 @@ Oculto funcionam com o mouse.
 
 - Stremio e Nuvio por e-mail ou QR, importando addons, Minha Lista, progresso e as chaves de debrid salvas na conta
 - Real-Debrid (por código ou chave), TorBox e Premiumize
-- Motor P2P no Android, no Windows e na LG webOS recente, com o vídeo tocando enquanto baixa
+- Motor P2P no Android, no Windows, no Linux e na LG webOS recente, com o vídeo tocando enquanto baixa
 - Na Samsung o P2P é experimental e vem desligado, e sem ele o torrent toca pelo debrid
 - Trazer tudo e painel O que veio mostram o resultado de cada parte importada, com o registro por perfil
 
@@ -291,6 +328,7 @@ Oculto funcionam com o mouse.
 - Celular, tablet e Android TV no mesmo APK, com layout próprio para o controle remoto na TV
 - LG webOS e Samsung Tizen em app próprio, leve e sem framework
 - Windows 10 e 11 em app próprio, com a interface da TV e o player mpv
+- Linux x86_64 em app próprio, com a interface do Windows e player libmpv integrado por OpenGL
 - Navegação inteira pelo controle, com foco sempre visível e retorno ao card de onde você saiu
 - Temas Grafite, Azul e Verde e opção de movimento reduzido (TV)
 - Menus Lateral, Superior e Oculto por perfil, na TV e no computador
@@ -301,7 +339,9 @@ Oculto funcionam com o mouse.
 
 ## Instalação
 
-Todos os arquivos ficam na página de **[Releases](../../releases/latest)**. Não precisa compilar nada.
+Todos os arquivos ficam na página de **[Releases](../../releases)**. Não precisa compilar nada.
+O Linux tem sua própria [release 0.1.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.0).
+As versões atuais de Android, LG, Samsung e Windows estão na [release v1.0.19](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.19).
 
 | Aparelho | Arquivo | Precisa de |
 |---|---|---|
@@ -310,6 +350,8 @@ Todos os arquivos ficam na página de **[Releases](../../releases/latest)**. Nã
 | TV LG | `JOTV-webOS-v*.ipk` | webOS 4 ou mais novo, em modo desenvolvedor |
 | TV Samsung | `JOTV-Tizen-v*.wgt` | Tizen 5.5 ou mais novo (TVs de 2020 em diante), em modo desenvolvedor |
 | Computador | `JOTV-Windows-v*-setup.exe` | Windows 10 ou 11 de 64 bits |
+| Linux Debian ou Ubuntu compatível | `JOTV-Linux-v*-amd64.deb` | x86_64, glibc 2.35 ou mais nova e X11 ou XWayland |
+| Linux portátil | `JOTV-Linux-v*-x86_64.AppImage` | x86_64, glibc 2.35 ou mais nova e X11 ou XWayland |
 
 <details>
 <summary><b>Celular ou tablet Android</b></summary>
@@ -387,6 +429,44 @@ desenvolvedor. Ele não serve para a loja da Samsung.
 </details>
 
 <details>
+<summary><b>Linux</b></summary>
+
+Escolha um dos dois formatos da [release Linux 0.1.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.0).
+
+**Debian ou Ubuntu compatível**
+
+Baixe [JOTV-Linux-v0.1.0-amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.0/JOTV-Linux-v0.1.0-amd64.deb)
+e execute na pasta do arquivo. O instalador busca as dependências da distribuição.
+
+```sh
+sudo apt install ./JOTV-Linux-v0.1.0-amd64.deb
+```
+
+Depois, abra o JOTV pelo menu de aplicativos.
+
+**AppImage portátil**
+
+Baixe [JOTV-Linux-v0.1.0-x86_64.AppImage](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.0/JOTV-Linux-v0.1.0-x86_64.AppImage),
+dê permissão de execução e abra o arquivo.
+
+```sh
+chmod +x ./JOTV-Linux-v0.1.0-x86_64.AppImage
+./JOTV-Linux-v0.1.0-x86_64.AppImage
+```
+
+Se o sistema não tiver FUSE, use a extração temporária do próprio AppImage.
+
+```sh
+APPIMAGE_EXTRACT_AND_RUN=1 ./JOTV-Linux-v0.1.0-x86_64.AppImage
+```
+
+Em uma sessão Wayland, o JOTV usa XWayland, que precisa estar instalado. Faça um backup nas
+Configurações antes de desinstalar ou trocar de aparelho. O backup pode ficar fora da pasta do app.
+As versões Linux têm numeração independente das outras plataformas.
+
+</details>
+
+<details>
 <summary><b>Roku, Apple TV ou outra TV sem Android, webOS ou Tizen</b></summary>
 
 Essas não têm versão própria. Ligue um aparelho com Android TV na entrada HDMI (um Chromecast com
@@ -397,7 +477,7 @@ Google TV, um TV Box Android ou um Fire TV Stick) e instale o APK nele. A TV vir
 ## Para desenvolvedores
 
 Este repositório traz o código do app Android (celular, tablet e Android TV). As versões de LG,
-Samsung e Windows saem como pacote pronto nas Releases.
+Samsung, Windows e Linux saem como pacote pronto nas Releases.
 
 <details>
 <summary><b>Como o app é feito</b></summary>
@@ -493,7 +573,11 @@ O instalador de Windows leva o [mpv](https://mpv.io) como programa separado, que
 sob a GPL. O código do mpv fica em [mpv-player/mpv](https://github.com/mpv-player/mpv) e a build
 usada vem de [zhongfly/mpv-winbuild](https://github.com/zhongfly/mpv-winbuild/releases/tag/2026-10-26-baa3e11d42).
 
+O Linux usa a [libmpv](https://github.com/mpv-player/mpv). O pacote Debian depende da biblioteca da
+distribuição, e o AppImage inclui a biblioteca, suas dependências e os arquivos de licença.
+O código-fonte do pacote Ubuntu fica na [página do mpv no Launchpad](https://launchpad.net/ubuntu/+source/mpv).
+
 O motor de plugins leva o QuickJS e bibliotecas JavaScript de código aberto. As licenças ficam em
 `app/src/main/assets/plugins/LICENSES.txt`.
 
-Para compilar a integra??o Simkl, configure a propriedade Gradle `SIMKL_CLIENT_ID` com o identificador da aplica??o.
+Para compilar a integração Simkl, configure a propriedade Gradle `SIMKL_CLIENT_ID` com o identificador público do aplicativo.
