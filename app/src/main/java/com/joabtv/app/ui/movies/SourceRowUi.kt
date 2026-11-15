@@ -54,11 +54,18 @@ private val EMOJI = Regex(
     "[\\p{So}\\p{Cn}\\uFE0F\\u200D]|[\\uD83C-\\uDBFF\\uDC00-\\uDFFF]+"
 )
 
+// Compilados uma vez só. Cada cartão chama clean e chave várias vezes.
+private val DOTS = Regex("\\s*·\\s*(·\\s*)+")
+private val SPACES = Regex("\\s{2,}")
+private val MARKS = Regex("\\p{M}+")
+private val YEAR = Regex("\\(\\s*\\d{4}\\s*\\)")
+private val NON_ALNUM = Regex("[^A-Za-z0-9]+")
+
 /** Tira emoji e separadores soltos que sobram no meio ("· ·" vira "·"). */
 private fun clean(s: String): String = s
     .replace(EMOJI, " ")
-    .replace(Regex("\\s*·\\s*(·\\s*)+"), " · ")
-    .replace(Regex("\\s{2,}"), " ")
+    .replace(DOTS, " · ")
+    .replace(SPACES, " ")
     .trim()
     .trim('·', '-', '|', ' ')
 
@@ -85,9 +92,9 @@ fun parseSourceLabel(
 
     // Normaliza pra comparar título: sem acento, sem ano entre parênteses, sem pontuação.
     fun chave(t: String) = java.text.Normalizer.normalize(t, java.text.Normalizer.Form.NFD)
-        .replace(Regex("\\p{M}+"), "")
-        .replace(Regex("\\(\\s*\\d{4}\\s*\\)"), " ")
-        .replace(Regex("[^A-Za-z0-9]+"), " ")
+        .replace(MARKS, "")
+        .replace(YEAR, " ")
+        .replace(NON_ALNUM, " ")
         .trim().lowercase()
 
     val tituloChave = chave(mediaTitle)

@@ -197,9 +197,12 @@ data class SourceFacts(
     val lang get() = langOf(label)
     /** Torrent que vai tocar pelo motor do aparelho (com cache no debrid ele vira link direto). */
     val p2p get() = TorrentMagnet.isMagnet(url) && debrid < 2
-    val isUsenet get() = Regex("""\busenet\b|\beasynews\b|\bnzb\b""", RegexOption.IGNORE_CASE).containsMatchIn(label) ||
-        Regex("""^nzb:|^usenet:|\.nzb(\?|$)""", RegexOption.IGNORE_CASE).containsMatchIn(url)
+    val isUsenet get() = USENET_TEXT.containsMatchIn(label) || USENET_URL.containsMatchIn(url)
 }
+
+// Fora da classe para compilar uma vez só. O filtro Usenet lê isto de toda fonte.
+private val USENET_TEXT = Regex("""\busenet\b|\beasynews\b|\bnzb\b""", RegexOption.IGNORE_CASE)
+private val USENET_URL = Regex("""^nzb:|^usenet:|\.nzb(\?|$)""", RegexOption.IGNORE_CASE)
 
 /**
  * Fonte do Assistir. No idioma da primeira da lista (que já vem na ordem dos addons), entre as

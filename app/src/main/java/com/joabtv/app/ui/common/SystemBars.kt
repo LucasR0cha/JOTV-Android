@@ -1,6 +1,8 @@
 package com.joabtv.app.ui.common
 
 import android.app.Activity
+import android.os.Build
+import android.view.WindowManager
 import androidx.compose.foundation.layout.displayCutoutPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
@@ -13,17 +15,24 @@ import androidx.core.view.WindowInsetsControllerCompat
 
 /**
  * Esconde as barras do sistema (status + navegação) enquanto este Composable
- * estiver na composição — modo imersivo fullscreen para o player.
+ * estiver na composição e permite vídeo sob o recorte da câmera.
  * Ao sair (onDispose), restaura as barras.
  *
- * Uso: chamar dentro de uma tela de player fullscreen.
+ * Chamar dentro de uma tela de player fullscreen.
  */
 @Composable
 fun ImmersiveFullscreen() {
     val view = LocalView.current
-    DisposableEffect(Unit) {
+    DisposableEffect(view) {
         val window = (view.context as? Activity)?.window
+        val previousCutout = if (Build.VERSION.SDK_INT >= 28) window?.attributes?.layoutInDisplayCutoutMode else null
         if (window != null) {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= 30)
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
             val controller = WindowInsetsControllerCompat(window, view)
             controller.hide(WindowInsetsCompat.Type.systemBars())
             controller.systemBarsBehavior =
@@ -31,6 +40,9 @@ fun ImmersiveFullscreen() {
         }
         onDispose {
             if (window != null) {
+                if (Build.VERSION.SDK_INT >= 28 && previousCutout != null) window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode = previousCutout
+                }
                 val controller = WindowInsetsControllerCompat(window, view)
                 controller.show(WindowInsetsCompat.Type.systemBars())
             }

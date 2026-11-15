@@ -105,6 +105,12 @@ val Number.rs: TextUnit
 /** Margem lateral das telas na mesma proporção do webOS. */
 val tvPad: Dp @Composable @ReadOnlyComposable get() = 3.4.r
 
+/**
+ * Largura do pôster da TV. A Início e o Descobrir medem por ela. Grade de colunas fixas dividia a largura que sobra
+ * depois do menu e das margens, e com o Tamanho da interface em Grande e o menu Lateral o pôster do Descobrir saía uns 8% menor.
+ */
+val tvPosterWidth: Dp @Composable @ReadOnlyComposable get() = 12.5.r
+
 // ── ROLAGEM DO FOCO (scrollIntoView do focus.js) ────────────────────────────
 
 /**

@@ -22,7 +22,7 @@ class PlayerProgressViewModel @Inject constructor(
     /** Avisa o Trakt (start, pause ou stop). Não faz nada sem conta conectada. */
     fun scrobble(action: String, tmdbId: Int, type: String, season: Int, episode: Int, positionMs: Long, durationMs: Long) {
         if (durationMs <= 0) return
-        trakt.scrobble(action, tmdbId, type, season, episode, positionMs * 100.0 / durationMs)
+        trakt.scrobble(action, tmdbId, type, season, episode, positionMs * 100.0 / durationMs, positionMs, durationMs)
     }
 
     /** Abertura aprendida da série (inicioMs, fimMs). null = ainda não aprendeu. */
@@ -53,6 +53,8 @@ class PlayerProgressViewModel @Inject constructor(
     var sourceTimeoutSec: Int
         get() = prefs.sourceTimeoutSec
         set(v) { prefs.sourceTimeoutSec = v }
+    val autoUpgradeQuality: Boolean get() = prefs.autoUpgradeQuality
+    val debridCachedOnly: Boolean get() = prefs.debridCachedOnly
     var subtitleOn: Boolean
         get() = prefs.subtitleOn
         set(v) { prefs.subtitleOn = v }

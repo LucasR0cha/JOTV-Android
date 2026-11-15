@@ -62,6 +62,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.joabtv.app.data.accounts.Account
+import com.joabtv.app.data.remote.TrackerProvider
+import com.joabtv.app.data.remote.TrackerStatus
+import kotlinx.coroutines.launch
 import com.joabtv.app.data.accounts.ImportPart
 import com.joabtv.app.ui.collections.CollectionsViewModel
 import com.joabtv.app.ui.collections.countOf
@@ -345,44 +348,19 @@ fun SettingsScreen(
                 )
 
                 SettingsSection("Trackers e Sincronização")
-                val simklToken by viewModel.simklToken.collectAsStateWithLifecycle()
-                val wetrakrKey by viewModel.wetrakrKey.collectAsStateWithLifecycle()
-                val publicmetadbKey by viewModel.publicmetadbKey.collectAsStateWithLifecycle()
-                val mdblistKey by viewModel.mdblistKey.collectAsStateWithLifecycle()
-
-                var editTracker by remember { mutableStateOf<Triple<String, String, (String) -> Unit>?>(null) }
-
-                com.joabtv.app.ui.common.SettingsRow(
-                    icon = Icons.Default.Sync,
-                    title = "Simkl",
-                    sub = if (simklToken.isNotBlank()) "Conectado. Sincroniza reprodução de filmes e séries" else "Desconectado. Toque para inserir seu token de acesso Simkl",
-                    trailing = if (simklToken.isNotBlank()) ({ Icon(Icons.Default.CheckCircle, "Conectado", tint = Accent) }) else null,
-                    onClick = { editTracker = Triple("Token do Simkl", simklToken) { viewModel.setSimklToken(it) } },
-                )
-                com.joabtv.app.ui.common.SettingsRow(
-                    icon = Icons.Default.Sync,
-                    title = "WeTrakr",
-                    sub = if (wetrakrKey.isNotBlank()) "Conectado. Chave configurada" else "Desconectado. Toque para inserir sua API key do WeTrakr",
-                    trailing = if (wetrakrKey.isNotBlank()) ({ Icon(Icons.Default.CheckCircle, "Conectado", tint = Accent) }) else null,
-                    onClick = { editTracker = Triple("Chave do WeTrakr", wetrakrKey) { viewModel.setWetrakrKey(it) } },
-                )
-                com.joabtv.app.ui.common.SettingsRow(
-                    icon = Icons.Default.Sync,
-                    title = "PublicMetaDB",
-                    sub = if (publicmetadbKey.isNotBlank()) "Conectado. Chave configurada" else "Desconectado. Toque para inserir sua API key",
-                    trailing = if (publicmetadbKey.isNotBlank()) ({ Icon(Icons.Default.CheckCircle, "Conectado", tint = Accent) }) else null,
-                    onClick = { editTracker = Triple("Chave PublicMetaDB", publicmetadbKey) { viewModel.setPublicmetadbKey(it) } },
-                )
-                com.joabtv.app.ui.common.SettingsRow(
-                    icon = Icons.Default.Sync,
-                    title = "MDBList",
-                    sub = if (mdblistKey.isNotBlank()) "Conectado. Chave configurada" else "Desconectado. Toque para inserir sua API key do MDBList",
-                    trailing = if (mdblistKey.isNotBlank()) ({ Icon(Icons.Default.CheckCircle, "Conectado", tint = Accent) }) else null,
-                    onClick = { editTracker = Triple("Chave do MDBList", mdblistKey) { viewModel.setMdblistKey(it) } },
-                )
-                editTracker?.let { (dialogTitle, current, onSave) ->
-                    TrackerDialog(dialogTitle, current, onSave = { onSave(it); editTracker = null }, onDismiss = { editTracker = null })
+                val trackerStatus by viewModel.trackerStatus.collectAsStateWithLifecycle()
+                var editTracker by remember { mutableStateOf<TrackerProvider?>(null) }
+                TrackerProvider.entries.forEach { provider ->
+                    val status = trackerStatus[provider] ?: TrackerStatus()
+                    com.joabtv.app.ui.common.SettingsRow(
+                        icon = Icons.Default.Sync,
+                        title = provider.label,
+                        sub = if (status.busy) "Verificando conexão…" else status.message,
+                        trailing = if (status.connected) ({ Icon(Icons.Default.CheckCircle, "Conexão verificada", tint = Accent) }) else null,
+                        onClick = { editTracker = provider },
+                    )
                 }
+                editTracker?.let { provider -> TrackerDialog(provider, viewModel) { editTracker = null } }
 
                 SettingsSection("Aparência")
                 val appearance by viewModel.appearance.collectAsStateWithLifecycle()
@@ -535,6 +513,16 @@ fun SettingsScreen(
                 } // !me.kids (Aparelho + TMDB)
 
                 SettingsSection("Biblioteca")
+                var backupOpen by remember { mutableStateOf(false) }
+                if (backupOpen) {
+                    BackupDialog(viewModel = viewModel, onDismiss = { backupOpen = false })
+                }
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Sync,
+                    title = "Backup e restauração",
+                    sub = "Arquivo JSON ou transferência direta pelo Wi-Fi, sem servidor",
+                    onClick = { backupOpen = true },
+                )
                 var confirmClear by remember { mutableStateOf(false) }
                 val context = androidx.compose.ui.platform.LocalContext.current
                 com.joabtv.app.ui.common.SettingsRow(
@@ -557,6 +545,8 @@ fun SettingsScreen(
                     },
                     dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancelar", color = TextSecondary) } },
                 )
+                SettingsSection("Sobre")
+                AppUpdateSettingsRow()
                 below?.let { Spacer(Modifier.height(18.dp)); it() }
             }
         }
@@ -709,6 +699,7 @@ private fun TraktSection(viewModel: SettingsViewModel) {
     val user by viewModel.traktUser.collectAsStateWithLifecycle()
     val busy by viewModel.traktBusy.collectAsStateWithLifecycle()
     val code by viewModel.traktCode.collectAsStateWithLifecycle()
+    var confirmDisconnect by remember { mutableStateOf(false) }
     Text(
         if (user == null) "Junta a Minha Lista, o ponto onde parou e os episódios vistos com o celular, a TV e o site."
         else "Conectado${if (user.isNullOrBlank()) "" else " como $user"}. Sincroniza ao abrir a Início.",
@@ -722,9 +713,19 @@ private fun TraktSection(viewModel: SettingsViewModel) {
             onClick = { if (user == null) viewModel.traktConnect() else viewModel.traktSync() },
         )
         if (user != null && busy == null) {
-            com.joabtv.app.ui.common.JoabButton("Desconectar", viewModel::traktLogout, compact = true)
+            com.joabtv.app.ui.common.JoabButton("Desconectar", { confirmDisconnect = true }, compact = true)
         }
     }
+    if (confirmDisconnect) AlertDialog(
+        onDismissRequest = { confirmDisconnect = false },
+        containerColor = BackgroundCard,
+        title = { Text("Desconectar do Trakt?", color = TextPrimary, fontWeight = FontWeight.ExtraBold) },
+        text = { Text("O que já foi sincronizado continua neste aparelho.", color = TextSecondary) },
+        confirmButton = {
+            TextButton(onClick = { viewModel.traktLogout(); confirmDisconnect = false }) { Text("Desconectar", color = DangerText) }
+        },
+        dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text("Cancelar", color = TextSecondary) } },
+    )
     code?.let { c ->
         AlertDialog(
             onDismissRequest = viewModel::traktCancel,
@@ -838,18 +839,74 @@ private fun PlatformOption(
 }
 
 @Composable
-private fun TrackerDialog(title: String, current: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
-    var text by remember { mutableStateOf(current) }
+internal fun TrackerDialog(provider: TrackerProvider, viewModel: SettingsViewModel, onDismiss: () -> Unit) {
+    val current = remember(provider) { viewModel.trackerToken(provider) }
+    var text by remember(provider) { mutableStateOf(current) }
+    var clientId by remember(provider) { mutableStateOf(viewModel.trackerClientId(provider)) }
+    val needsSetup = remember(provider) { clientId.isBlank() }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var deviceCode by remember { mutableStateOf<com.joabtv.app.data.remote.MultiTrackerService.DeviceCode?>(null) }
+    var confirmDisconnect by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val states by viewModel.trackerStatus.collectAsStateWithLifecycle()
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val tv = com.joabtv.app.ui.common.LocalIsTv.current
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = BackgroundCard,
-        title = { Text(title, color = TextPrimary, fontWeight = FontWeight.Bold) },
+        title = { Text(provider.label, color = TextPrimary, fontWeight = FontWeight.Bold) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Cole seu token ou chave da API para sincronizar em todos os aparelhos.", color = TextSecondary, fontSize = 14.sp)
-                OutlinedTextField(
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (deviceCode == null) Text(if (provider.needsClientId) "Entre com um código no celular. A conexão só é salva depois que o serviço aceitar."
+                    else "Gere uma chave na sua conta e cole abaixo. A conexão só é salva depois que o serviço aceitar.", color = TextSecondary)
+                if (provider.needsClientId) {
+                    if (needsSetup) {
+                    Text(if (provider == TrackerProvider.SIMKL) "A integração precisa do ID de um aplicativo Simkl AUTH V2."
+                        else "Use o ID do aplicativo registrado no WeTrakr. A chave de aplicativo e o token de usuário são diferentes.", color = TextSecondary)
+                    OutlinedTextField(value = clientId, onValueChange = { clientId = it }, enabled = !busy,
+                        label = { Text("ID do aplicativo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    }
+                    Button(enabled = !busy && clientId.isNotBlank(), onClick = {
+                        busy = true
+                        error = null
+                        deviceCode = null
+                        scope.launch {
+                            try {
+                                val code = viewModel.startTrackerLogin(provider, clientId)
+                                deviceCode = code
+                                if (viewModel.waitTrackerLogin(provider, code)) onDismiss()
+                                else error = states[provider]?.message ?: "Não foi possível autorizar o código"
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                            catch (_: Exception) { error = if (needsSetup) "Não foi possível gerar o código. Confira o ID do aplicativo e tente novamente"
+                                else "Não foi possível gerar o código. Confira a conexão e tente novamente" }
+                            finally { busy = false }
+                        }
+                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                        Text(if (busy) "Aguardando autorização…" else "Entrar com código")
+                    }
+                }
+                deviceCode?.let { code ->
+                    if (tv) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        QrCode(code.url, Modifier.size(144.dp), "Código para conectar ${provider.label}")
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Escaneie com o celular", color = TextPrimary)
+                            Text(code.code, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                            Text(if (provider == TrackerProvider.SIMKL) "Ou abra simkl.com/pin e digite o código"
+                                else "Ou abra wetrakr.com/activate e digite o código", color = TextSecondary)
+                        }
+                    } else {
+                        Text(code.code, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                        TextButton(onClick = { uriHandler.openUri(code.url) }) { Text("Abrir página de autorização") }
+                    }
+                    Text("Fechar esta janela cancela a espera.", color = TextSecondary)
+                }
+                if (!provider.needsClientId) OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
+                    enabled = !busy,
+                    label = { Text(if (provider.needsClientId) "Token de acesso (opcional com código)" else "Chave da API") },
+                    visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = Accent,
@@ -859,17 +916,38 @@ private fun TrackerDialog(title: String, current: String, onSave: (String) -> Un
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                error?.let { Text(it, color = Danger) }
+                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(text.trim()) }) { Text("Salvar", color = Accent, fontWeight = FontWeight.Bold) }
+            if (!provider.needsClientId) TextButton(enabled = !busy && text.isNotBlank(), onClick = {
+                busy = true
+                error = null
+                scope.launch {
+                    try {
+                        if (viewModel.connectTracker(provider, text, clientId)) onDismiss()
+                        else error = states[provider]?.message ?: "A credencial não foi aceita"
+                    } finally { busy = false }
+                }
+            }) { Text(if (busy) "Verificando…" else "Verificar e conectar", fontWeight = FontWeight.Bold) }
         },
         dismissButton = {
-            if (current.isNotBlank()) {
-                TextButton(onClick = { onSave("") }) { Text("Desconectar", color = Danger) }
-            } else {
-                TextButton(onClick = onDismiss) { Text("Cancelar", color = TextSecondary) }
+            Row {
+                if (current.isNotBlank()) TextButton(enabled = !busy, onClick = { confirmDisconnect = true }) { Text("Desconectar", color = Danger) }
+                TextButton(onClick = onDismiss) { Text(if (busy) "Cancelar" else "Fechar", color = TextSecondary) }
             }
         },
+    )
+    if (confirmDisconnect) AlertDialog(
+        onDismissRequest = { confirmDisconnect = false },
+        containerColor = BackgroundCard,
+        title = { Text("Desconectar?", color = TextPrimary, fontWeight = FontWeight.ExtraBold) },
+        text = { Text(if (provider.needsClientId) "Será necessário autorizar um novo código para sincronizar."
+            else "Será necessário informar a chave novamente para sincronizar.", color = TextSecondary) },
+        confirmButton = {
+            TextButton(onClick = { confirmDisconnect = false; viewModel.disconnectTracker(provider); onDismiss() }) { Text("Desconectar", color = Danger) }
+        },
+        dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text("Cancelar", color = TextSecondary) } },
     )
 }

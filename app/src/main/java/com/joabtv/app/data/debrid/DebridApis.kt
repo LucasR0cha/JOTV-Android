@@ -216,6 +216,29 @@ internal class RealDebridApi(private val http: DebridHttp) {
 // ── TorBox ──────────────────────────────────────────────────────────────────────
 
 internal class TorBoxApi(private val http: DebridHttp) {
+    fun resolveUsenet(token: String, link: String, season: Int, episode: Int): DebridResolve {
+        val created = http.multipart("$BASE/usenet/createusenetdownload", listOf("link" to link, "add_only_if_cached" to "true"), token)
+        val data = created.json()
+        if (created.code == 401 || created.code == 403) return DebridResolve.Failed("Conecte o TorBox novamente")
+        val id = data?.optJSONObject("data")?.let { it.optString("usenet_id").ifBlank { it.optString("id") } }.orEmpty()
+        if (id.isBlank()) return if (created.code == 409 || data?.optString("error").orEmpty().contains("cache", true) || data?.optString("detail").orEmpty().contains("cache", true))
+            DebridResolve.NotCached else DebridResolve.Failed("O TorBox não aceitou o arquivo NZB")
+        val raw = http.get("$BASE/usenet/mylist?id=$id&bypass_cache=true", token).json()?.opt("data")
+        val download = when (raw) { is JSONObject -> raw; is JSONArray -> raw.optJSONObject(0); else -> null }
+            ?: return DebridResolve.Failed("O TorBox não encontrou os arquivos do NZB")
+        val array = download.optJSONArray("files") ?: JSONArray()
+        val files = (0 until array.length()).mapNotNull { i ->
+            val file = array.optJSONObject(i) ?: return@mapNotNull null
+            val fileId = file.optInt("id", i)
+            RemoteFile(fileId.toString(), TorrentFile(fileId, file.optString("name").ifBlank { file.optString("short_name") }, file.optLong("size")))
+        }
+        val selected = pickRemote(files, TorrentSpec("0".repeat(40), emptyList()), true, season, episode)
+            ?: return DebridResolve.Failed("O NZB não contém um vídeo compatível")
+        val response = http.get("$BASE/usenet/requestdl?token=$token&usenet_id=$id&file_id=${selected.serviceId}&zip_link=false&redirect=false", token)
+        val url = response.json()?.optString("data").orEmpty()
+        return if (response.ok && url.startsWith("http")) DebridResolve.Ok(url, DebridProvider.TORBOX)
+            else DebridResolve.Failed("O TorBox não liberou o vídeo do NZB")
+    }
     companion object { const val BASE = "https://api.torbox.app/v1/api" }
 
     fun user(token: String): Pair<String, Long>? {

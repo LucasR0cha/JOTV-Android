@@ -26,10 +26,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import com.joabtv.app.ui.common.DolbyIcon
 import com.joabtv.app.ui.theme.*
@@ -42,10 +44,12 @@ internal fun TouchPlayerControls(
     isPlaying: Boolean, position: Long, duration: Long, buffered: Long, videoUrl: String,
     onToggle: () -> Unit, onBack: () -> Unit, onForward: () -> Unit, onSeek: (Long) -> Unit,
     actions: List<PlayerChipItem>, focusedIndex: Int,
+    onControlsHeight: (Dp) -> Unit = {},
 ) {
     var more by remember { mutableStateOf(false) }
     var controlsHeight by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
     val font = density.fontScale.coerceAtLeast(1f)
     val options = actions.withIndex().filter { !it.value.main }
     val optionState = rememberLazyListState()
@@ -54,18 +58,19 @@ internal fun TouchPlayerControls(
         if (index >= 0 && optionState.layoutInfo.visibleItemsInfo.none { it.index == index }) optionState.animateScrollToItem(index)
     }
     BoxWithConstraints(Modifier.fillMaxSize().background(Brush.verticalGradient(
-        0f to Color.Black.copy(alpha = .72f), .30f to Color.Black.copy(alpha = .72f),
-        .46f to Color.Transparent, 1f to Color.Black.copy(alpha = .94f),
-    )).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))) {
+        0f to Color.Black.copy(alpha = .5f), .24f to Color.Transparent, 1f to Color.Transparent,
+    ))) {
+        val safeArea = WindowInsets.safeDrawing.asPaddingValues()
+        val contentWidth = maxWidth - safeArea.calculateLeftPadding(layoutDirection) - safeArea.calculateRightPadding(layoutDirection)
         val landscape = maxWidth > maxHeight
         val compact = maxHeight < 360.dp || maxHeight.value / font < 280f
-        val singleRow = landscape && maxWidth.value / font >= 600f && !compact
+        val singleRow = landscape && contentWidth.value / font >= 600f && !compact
         val optionRow = !singleRow && !compact
         val showMore = !singleRow && !optionRow && options.isNotEmpty()
-        val side = if (maxWidth >= 600.dp) 24.dp else 16.dp
+        val side = if (contentWidth >= 600.dp) 24.dp else 16.dp
         val times = formatTime(position) + " / " + if (duration > 0) formatTime(duration) else "AO VIVO"
         val estimatedTimeWidth = with(density) { 12.sp.toDp() } * (times.length * .6f)
-        val timeSeparate = maxWidth - side * 2 < 180.dp + (if (showMore) 56.dp else 0.dp) + estimatedTimeWidth
+        val timeSeparate = contentWidth - side * 2 < 180.dp + (if (showMore) 56.dp else 0.dp) + estimatedTimeWidth
         val timeHeight = if (timeSeparate) with(density) { 18.sp.toDp() } + 4.dp else 0.dp
         val fixedHeight = 56.dp + 48.dp + 20.dp + timeHeight + (if (optionRow) 56.dp else 0.dp)
         val topReserve = 64.dp + WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
@@ -81,11 +86,11 @@ internal fun TouchPlayerControls(
         val controlsTop = (1f - controlsHeight / with(density) { maxHeight.toPx() }.coerceAtLeast(1f)).coerceIn(0f, 1f)
         Box(Modifier.matchParentSize().background(Brush.verticalGradient(
             0f to Color.Transparent, (controlsTop - .14f).coerceAtLeast(0f) to Color.Transparent,
-            controlsTop to Color.Black.copy(alpha = .78f), 1f to Color.Black.copy(alpha = .94f),
+            controlsTop to Color.Black.copy(alpha = .58f), 1f to Color.Black.copy(alpha = .86f),
         )))
         if (maxHeight.value / font >= 340f) Column(
             Modifier.align(Alignment.TopEnd)
-                .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top))
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
                 .padding(top = 66.dp, end = side), horizontalAlignment = Alignment.End,
         ) {
             Text(clock.substringBefore('·').trim(), color = Color.White, fontSize = 16.sp,
@@ -94,8 +99,8 @@ internal fun TouchPlayerControls(
             if (end.isNotBlank()) Text(end, color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp, maxLines = 1)
         }
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-            .onSizeChanged { controlsHeight = it.height.toFloat() }
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+            .onSizeChanged { controlsHeight = it.height.toFloat(); onControlsHeight(with(density) { it.height.toDp() }) }
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
             .padding(horizontal = side, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (metadataHeight >= titleLine) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(title, color = Color.White, fontSize = 22.sp, lineHeight = 26.sp,

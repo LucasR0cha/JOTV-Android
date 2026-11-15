@@ -61,6 +61,10 @@ class MinhaListaViewModel @Inject constructor(
         viewModelScope.launch { library.removePlayback(tmdbId, type) }
     }
 
+    fun completeContinue(item: MovieHistoryEntity) {
+        viewModelScope.launch { library.completePlayback(item.tmdbId, item.type, item.lastEpisode) }
+    }
+
     /** Tira um título salvo da Minha Lista (segurar no card do grid). */
     fun removeFromWatchlist(tmdbId: Int, type: String) {
         viewModelScope.launch { library.removeFromList(tmdbId, type) }

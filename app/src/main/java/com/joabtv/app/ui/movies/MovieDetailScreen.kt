@@ -6,7 +6,9 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -24,6 +26,9 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.PlaylistAddCheck
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Download
@@ -48,6 +53,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -100,6 +106,10 @@ fun MovieDetailScreen(
     var trailerExo by remember { mutableStateOf<com.joabtv.app.data.remote.YoutubeTrailer.TrailerStream?>(null) }
     var trailerLoading by remember { mutableStateOf(false) }
     val detailScope = rememberCoroutineScope()
+    var episodeOptions by remember(item.tmdbId) { mutableStateOf<EpisodeItem?>(null) }
+    var episodeBusy by remember(item.tmdbId) { mutableStateOf(false) }
+    var episodeError by remember(item.tmdbId) { mutableStateOf<String?>(null) }
+    var episodeJob by remember(item.tmdbId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     // Foco inicial (TV): botão Assistir/Continuar já vem selecionado no D-pad.
     val primaryFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     val detailList = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -160,6 +170,53 @@ fun MovieDetailScreen(
     fun dl(url: String): (() -> Unit)? =
         if (viewModel.isDownloadable(url)) ({ viewModel.downloadSource(url) }) else null
 
+    episodeOptions?.let { ep ->
+        fun updateEpisode(action: suspend () -> Unit) {
+            if (episodeBusy) return
+            episodeBusy = true
+            episodeError = null
+            episodeJob = detailScope.launch {
+                try { action(); episodeOptions = null }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { episodeError = "Não foi possível atualizar os episódios. Confira a conexão e tente novamente" }
+                finally { episodeBusy = false; episodeJob = null }
+            }
+        }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!episodeBusy) { episodeOptions = null; episodeError = null } },
+            containerColor = BackgroundCard,
+            title = { Text(ep.name.ifBlank { "Episódio ${ep.episodeNumber}" }, color = TextPrimary) },
+            text = {
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                    if (ep.stillUrl.isNotBlank()) AsyncImage(
+                        model = ep.stillUrl, contentDescription = null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 140.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)).padding(bottom = 8.dp),
+                    )
+                    Text("T${ep.seasonNumber} E${ep.episodeNumber}", color = TextSecondary)
+                    @Composable fun Option(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, run: () -> Unit) {
+                        androidx.compose.material3.TextButton(onClick = run, enabled = !episodeBusy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                            Icon(icon, contentDescription = null, tint = if (episodeBusy) TextSecondary else TextPrimary)
+                            Spacer(Modifier.width(12.dp))
+                            Text(label, modifier = Modifier.weight(1f), color = if (episodeBusy) TextSecondary else TextPrimary)
+                        }
+                    }
+                    Option("Marcar como assistido", Icons.Default.CheckCircle) {
+                        updateEpisode { viewModel.setEpisodeViewed(ep.seasonNumber, ep.episodeNumber) }
+                    }
+                    Option("Marcar anteriores como assistidos", Icons.Default.DoneAll) { updateEpisode { viewModel.markEpisodeRange(ep, true) } }
+                    Option("Marcar temporada como assistida", Icons.Default.PlaylistAddCheck) { updateEpisode { viewModel.markEpisodeRange(ep, false) } }
+                    if (episodeBusy) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text("Salvando…", color = TextSecondary)
+                    }
+                    episodeError?.let { Text(it, color = LiveRed) }
+                }
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = {
+                if (episodeBusy) episodeJob?.cancel() else { episodeOptions = null; episodeError = null }
+            }) { Text(if (episodeBusy) "Cancelar" else "Fechar") } },
+        )
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -582,11 +639,13 @@ fun MovieDetailScreen(
                     ) {
                         SourceList(
                             streams = state.stremioStreams,
-                            facts = state.movieFacts(),
+                            facts = remember(state.stremioStreams, state.probes, state.debridCached, state.runtimeMin) { state.movieFacts() },
                             debridTag = state.debridTag,
                             mediaTitle = state.item?.title.orEmpty(),
                             onPlay = { playStremio(it) },
                             onDownload = { dl(it.url) },
+                            loading = state.stremioLoading,
+                            scrolling = detailList.isScrollInProgress,
                         )
                         if (state.stremioLoading) {
                             Text(
@@ -640,6 +699,7 @@ fun MovieDetailScreen(
                         },
                         // (A) tocar o card abre o painel de fontes/servidores do episódio
                         onSelect = { viewModel.selectEpisode(ep.seasonNumber, ep.episodeNumber) },
+                        onOptions = { episodeOptions = ep },
                     )
                 }
 
@@ -726,7 +786,7 @@ fun MovieDetailScreen(
                 episode = episode,
                 onReload = { viewModel.selectEpisode(season, episode) },
                 stremioStreams = state.episodeStremioStreams,
-                facts = state.episodeFacts(),
+                facts = remember(state.episodeStremioStreams, state.probes, state.debridCached) { state.episodeFacts() },
                 debridTag = state.debridTag,
                 stremioLoading = state.episodeStremioLoading,
                 onDismiss = { viewModel.clearSelectedEpisode() },
@@ -920,6 +980,7 @@ private fun EpisodeServersSheet(
                     onPlay = onPlayStremio,
                     onDownload = { s -> if (isDownloadable(s.url)) ({ onDownloadStremio(s) }) else null },
                     debridTag = debridTag,
+                    loading = stremioLoading,
                 )
                 if (stremioLoading) {
                     Text(
@@ -967,76 +1028,134 @@ internal fun SourceList(
     cols: Int = if (com.joabtv.app.ui.common.isWideLayout()) 2 else 1,
     debridTag: String = "",
     television: Boolean = false,
+    /** Ainda há addon respondendo. A ordem de prioridade só vale quando vira false. */
+    loading: Boolean = false,
+    /** A página está rolando agora. Adia a ordem do fim da busca até parar. */
+    scrolling: Boolean = false,
 ) {
     if (television) {
-        com.joabtv.app.ui.tv.TvScaled { SourceList(streams, facts, mediaTitle, onPlay, onDownload, cols, debridTag) }
+        com.joabtv.app.ui.tv.TvScaled { SourceList(streams, facts, mediaTitle, onPlay, onDownload, cols, debridTag, loading = loading, scrolling = scrolling) }
         return
     }
     var filter by remember { mutableStateOf("all") }
     var addonFilter by remember { mutableStateOf("all") }
     var showWrong by remember { mutableStateOf(false) }
     var limit by remember(filter, addonFilter, showWrong) { mutableIntStateOf(24) }
+    // Ordem estável dos cartões e das pílulas (ver StableOrder). gen muda quando a lista recomeça.
+    val order = remember { StableOrder() }
+    val chipOrder = remember { StableKeys() }
+    var gen by remember { mutableIntStateOf(0) }
+    fun touchList() { order.touch(); chipOrder.touch() }
+    // Filtro escolhido pela pessoa. A lista recomeça e ela já conta como quem mexeu.
+    fun restart() { order.reset(); chipOrder.reset(); touchList(); gen++ }
+    // Toque ou foco D-pad em qualquer parte da lista. Só observa, o evento segue para o cartão.
+    val touchMod = Modifier
+        .pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                    if (e.type == androidx.compose.ui.input.pointer.PointerEventType.Press) touchList()
+                }
+            }
+        }
+        .onFocusChanged { if (it.hasFocus) touchList() }
     val groups = remember(streams) { groupReleases(streams) }
-    val byUrl = facts.associateBy { it.url }
+    val byUrl = remember(facts) { facts.associateBy { it.url } }
     fun fact(s: com.joabtv.app.data.remote.StremioStream) = byUrl[s.url]
         ?: com.joabtv.app.data.remote.SourceFacts(s.url, s.addon, s.releaseText.ifBlank { s.label }, s.qualityRank)
-    val wrongCount = groups.count { g -> g.members.all { fact(it).wrongTitle } }
-    val visible = groups.filter { g -> showWrong || g.members.any { !fact(it).wrongTitle } }
-    val counts = SRC_FILTERS.associate { (k, _, fn) -> k to visible.count { g -> g.members.any { fn(fact(it)) } } }
-    val predicate = SRC_FILTERS.firstOrNull { it.first == filter }?.third ?: { true }
-    val filtered = visible.filter { g ->
-        g.members.any { predicate(fact(it)) } && (addonFilter == "all" || g.members.any { it.addon == addonFilter })
+    fun wrong(g: ReleaseGroup) = g.members.all { fact(it).wrongTitle }
+    // Contagens e filtros só refazem quando o dado muda, não a cada recomposição.
+    val wrongCount = remember(groups, byUrl) { groups.count(::wrong) }
+    val visible = remember(groups, byUrl, showWrong) { groups.filter { g -> showWrong || !wrong(g) } }
+    val counts = remember(visible, byUrl) {
+        SRC_FILTERS.associate { (k, _, fn) -> k to visible.count { g -> g.members.any { fn(fact(it)) } } }
+    }
+    // As de outro filme entram aqui. Quem decide se aparecem é a ordem estável, que deixa no lugar a que já estava na tela.
+    val filtered = remember(groups, byUrl, filter, addonFilter) {
+        val predicate = SRC_FILTERS.firstOrNull { it.first == filter }?.third ?: { true }
+        groups.filter { g -> g.members.any { predicate(fact(it)) } && (addonFilter == "all" || g.members.any { it.addon == addonFilter }) }
+    }
+    val res = remember(filtered, byUrl, showWrong, limit, loading, scrolling, gen) {
+        // Lista vazia é busca nova (outro episódio ou recarga). Começa do zero.
+        if (streams.isEmpty()) { order.reset(); chipOrder.reset() }
+        // A versão que o Assistir escolhe. Abre a lista no fim da busca se a pessoa não mexeu.
+        val best = if (groups.size > 1) facts.getOrNull(com.joabtv.app.data.remote.bestIndex(facts))?.url else null
+        order.update(
+            filtered, limit, loading = loading, busy = scrolling,
+            hide = { g -> !showWrong && wrong(g) },
+            off = { fact(it).dead || fact(it).wrongTitle },
+            first = { g -> best != null && g.members.any { it.url == best } },
+        )
     }
     if (groups.isNotEmpty()) Text("${groups.size} versões em ${streams.size} fontes", color = TextTertiary, fontSize = 13.sp)
     val uniqueAddons = remember(visible) {
         visible.flatMap { g -> g.members.mapNotNull { it.addon.takeIf { a -> a.isNotBlank() } } }.distinct()
     }
-    if (groups.size > 4 || wrongCount > 0 || uniqueAddons.size > 1) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Pílulas na ordem canônica. A ordem estável põe a nova no fim e arruma quando a busca termina.
+    val chips = buildList<Triple<String, String, Boolean>> {
         if (groups.size > 4) SRC_FILTERS.forEach { (key, name, _) ->
             val n = counts[key] ?: 0
-            if (key == "all" || n > 0) SeasonChip("$name $n", filter == key) { filter = key }
+            if (key == "all" || n > 0) add(Triple("f:$key", "$name $n", filter == key))
         }
-        if (uniqueAddons.size > 1) {
-            uniqueAddons.forEach { adn ->
-                val count = visible.count { g -> g.members.any { it.addon == adn } }
-                if (count > 0) {
-                    val isSel = addonFilter == adn
-                    SeasonChip("$adn $count", isSel) {
-                        addonFilter = if (isSel) "all" else adn
+        if (uniqueAddons.size > 1) uniqueAddons.forEach { adn ->
+            val count = visible.count { g -> g.members.any { it.addon == adn } }
+            if (count > 0) add(Triple("a:$adn", "$adn $count", addonFilter == adn))
+        }
+        if (wrongCount > 0) add(Triple("wrong", if (showWrong) "Ocultar outro filme ($wrongCount)" else "Mostrar todas ($wrongCount de outro filme)", showWrong))
+    }
+    val chipKeys = chips.map { it.first }
+    val chipOrdered = remember(chipKeys, loading, scrolling, gen) { chipOrder.update(chipKeys, loading, scrolling) }
+    val chipBy = chips.associateBy { it.first }
+    if (groups.size > 4 || wrongCount > 0 || uniqueAddons.size > 1) Row(touchMod.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        chipOrdered.forEach { k ->
+            val (_, label, selected) = chipBy[k] ?: return@forEach
+            androidx.compose.runtime.key(k) {
+                SeasonChip(label, selected) {
+                    when {
+                        k.startsWith("f:") -> filter = k.removePrefix("f:")
+                        k.startsWith("a:") -> k.removePrefix("a:").let { adn -> addonFilter = if (addonFilter == adn) "all" else adn }
+                        else -> showWrong = !showWrong
                     }
+                    restart()
                 }
             }
         }
-        if (wrongCount > 0) SeasonChip(if (showWrong) "Ocultar outro filme ($wrongCount)" else "Mostrar todas ($wrongCount de outro filme)", showWrong) { showWrong = !showWrong }
     }
-    val best = facts.getOrNull(com.joabtv.app.data.remote.bestIndex(facts))?.url
-    val page = pageOf(filtered, limit)
-    page.chunked(cols.coerceAtLeast(1)).forEach { row ->
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            row.forEach { group ->
-                val source = group.members.firstOrNull { !fact(it).dead && !fact(it).wrongTitle } ?: group.lead
-                val f = fact(source)
-                var info = releaseInfo(source, mediaTitle, group.members.map { it.addon }.distinct())
-                if (source.qualityRank == 0 && (f.probe?.height ?: 0) > 0) info = info.copy(quality = com.joabtv.app.data.remote.heightLabel(f.probe!!.height))
-                val note = when { f.wrongTitle -> "Parece ser outro filme com nome parecido"; f.dead -> "Não respondeu no teste agora"; else -> null }
-                val (tag, color) = when {
-                    f.wrongTitle -> "OUTRO" to LiveRed
-                    f.debrid >= 2 -> debridTag.ifBlank { "DEBRID" } to Ok
-                    f.p2p -> "P2P" to TextSecondary
-                    else -> "" to TextTertiary
-                }
-                Box(Modifier.weight(1f)) {
-                    androidx.compose.runtime.key(source.url) {
-                        SourceCard(info, tag, color, onClick = { onPlay(source) }, onDownload = onDownload(source), note = note,
-                            suggested = group.members.any { it.url == best })
+    val featured = order.featured
+    res.list.chunked(cols.coerceAtLeast(1)).forEach { row ->
+        androidx.compose.runtime.key(row.first().id) {
+            Row(touchMod.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                row.forEach { shownRelease ->
+                    androidx.compose.runtime.key(shownRelease.id) {
+                        val group = shownRelease.group
+                        val source = shownRelease.lead
+                        val f = fact(source)
+                        val height = f.probe?.height ?: 0
+                        val providers = group.members.map { it.addon }.distinct()
+                        // Texto do cartão só refaz quando a fonte, os addons ou a resolução medida mudam.
+                        val info = remember(source, providers, mediaTitle, height) {
+                            val i = releaseInfo(source, mediaTitle, providers)
+                            if (source.qualityRank == 0 && height > 0) i.copy(quality = com.joabtv.app.data.remote.heightLabel(height)) else i
+                        }
+                        val note = when { f.wrongTitle -> "Parece ser outro filme com nome parecido"; f.dead -> "Não respondeu no teste agora"; else -> null }
+                        val (tag, color) = when {
+                            f.wrongTitle -> "OUTRO" to LiveRed
+                            f.debrid >= 2 -> debridTag.ifBlank { "DEBRID" } to Ok
+                            f.p2p -> "P2P" to TextSecondary
+                            else -> "" to TextTertiary
+                        }
+                        Box(Modifier.weight(1f)) {
+                            SourceCard(info, tag, color, onClick = { onPlay(source) }, onDownload = onDownload(source), note = note,
+                                suggested = shownRelease.id == featured)
+                        }
                     }
                 }
+                repeat(cols.coerceAtLeast(1) - row.size) { Spacer(Modifier.weight(1f)) }
             }
-            repeat(cols.coerceAtLeast(1) - row.size) { Spacer(Modifier.weight(1f)) }
         }
     }
-    if (filtered.size > page.size) com.joabtv.app.ui.common.JoabButton("Mostrar mais (${filtered.size - page.size})", { limit += 24 })
-    if (filtered.isEmpty() && streams.isNotEmpty()) Text(
+    if (res.rest > 0) com.joabtv.app.ui.common.JoabButton("Mostrar mais (${res.rest})", { touchList(); limit += 24 })
+    if (res.list.isEmpty() && streams.isNotEmpty()) Text(
         if (wrongCount > 0 && !showWrong) "As fontes encontradas parecem ser de outro filme. Use Mostrar todas para conferir."
         else "Nenhuma versão neste filtro.", color = TextSecondary, fontSize = 13.sp,
     )
@@ -1261,7 +1380,7 @@ private fun SourceEmptyState() {
 }
 
 // ── Episode row card ────────────────────────────────────────────────────────
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun EpisodeRowCard(
     episode: EpisodeItem,
@@ -1270,6 +1389,7 @@ private fun EpisodeRowCard(
     modifier: Modifier = Modifier,
     onPlay: () -> Unit,
     onSelect: () -> Unit,
+    onOptions: () -> Unit,
 ) {
     val rowSrc = remember { MutableInteractionSource() }
     val config = androidx.compose.ui.platform.LocalConfiguration.current
@@ -1290,7 +1410,7 @@ private fun EpisodeRowCard(
             .background(BackgroundCard)
             .border(1.dp, cardBorder, RoundedCornerShape(16.dp))
             // (A) tocar o card abre o painel de fontes/servidores do episódio
-            .clickable(interactionSource = rowSrc, indication = androidx.compose.foundation.LocalIndication.current, onClick = onSelect)
+            .combinedClickable(interactionSource = rowSrc, indication = androidx.compose.foundation.LocalIndication.current, onClick = onSelect, onLongClick = onOptions, onLongClickLabel = "Opções do episódio")
             .padding(10.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),

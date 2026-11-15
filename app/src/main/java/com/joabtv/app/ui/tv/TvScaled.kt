@@ -21,7 +21,16 @@ fun TvScaled(content: @Composable () -> Unit) {
     val scale = tvScaledFactor()
     // Margem calculada antes da troca de escala, em rem da tela real.
     val inset = 3.r
-    CompositionLocalProvider(LocalDensity provides Density(scale, d.fontScale)) {
+    val config = LocalConfiguration.current
+    val normalized = androidx.compose.runtime.remember(config, scale, d.density) {
+        android.content.res.Configuration(config).apply {
+            screenWidthDp = (config.screenWidthDp * d.density / scale).toInt()
+            screenHeightDp = (config.screenHeightDp * d.density / scale).toInt()
+            smallestScreenWidthDp = minOf(screenWidthDp, screenHeightDp)
+            fontScale = 1f
+        }
+    }
+    CompositionLocalProvider(LocalDensity provides Density(scale, 1f), LocalConfiguration provides normalized) {
         TvScrollArea(inset = with(d) { inset.toPx() }.let { px -> androidx.compose.ui.unit.Dp(px / scale) }) {
             TvText(content)
         }

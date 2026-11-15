@@ -187,7 +187,9 @@ fun PluginsScreen(onBack: () -> Unit, onAddons: () -> Unit, onLive: () -> Unit, 
         PluginMenuItem("Subir prioridade do repositório") { repository.move(r.url, null, -1) }, PluginMenuItem("Descer prioridade do repositório") { repository.move(r.url, null, 1) },
         PluginMenuItem("Remover repositório") { remove = r }, PluginMenuItem(r.url, r.description, enabled = false)
     )) { repo = null } }
+    var confirmCacheClear by remember { mutableStateOf(false) }
     remove?.let { r -> AlertDialog(onDismissRequest = { remove = null }, title = { Text("Remover ${r.name}?") }, text = { Text("Os provedores e as configurações deste repositório serão removidos deste perfil.") }, confirmButton = { TextButton(onClick = { repository.remove(r.url); remove = null }) { Text("Remover") } }, dismissButton = { TextButton(onClick = { remove = null }) { Text("Cancelar") } }, containerColor = BackgroundCard, titleContentColor = TextPrimary, textContentColor = TextSecondary) }
+    if (confirmCacheClear) AlertDialog(onDismissRequest = { confirmCacheClear = false }, title = { Text("Limpar cache dos provedores?") }, text = { Text("Os arquivos em cache serão apagados e baixados de novo quando precisar.") }, confirmButton = { TextButton(onClick = { confirmCacheClear = false; viewModel.perform("cache") { repository.clearCache(); "Cache dos provedores limpo." } }) { Text("Limpar", color = DangerText) } }, dismissButton = { TextButton(onClick = { confirmCacheClear = false }) { Text("Cancelar") } }, containerColor = BackgroundCard, titleContentColor = TextPrimary, textContentColor = TextSecondary)
     choice?.let { menu ->
         val items = when (menu) {
             "repos" -> listOf(PluginMenuItem("Todos", selected = selectedRepo.isBlank()) { selectedRepo = "" }) + state.repos.map { r -> PluginMenuItem(r.name, selected = selectedRepo == r.url) { selectedRepo = r.url } }
@@ -201,7 +203,7 @@ fun PluginsScreen(onBack: () -> Unit, onAddons: () -> Unit, onLive: () -> Unit, 
                 PluginMenuItem(if (state.autoUpdate) "Desativar atualização automática" else "Ativar atualização automática", "Conferir a lista uma vez por dia.") { repository.configure(autoUpdate = !state.autoUpdate) },
                 PluginMenuItem("Tempo máximo por provedor", "${state.timeout / 1000} segundos") { choice = "timeout" },
                 PluginMenuItem("Provedores simultâneos", state.concurrency.toString()) { choice = "concurrency" },
-                PluginMenuItem("Limpar cache dos provedores", "Os arquivos serão baixados novamente quando necessário.") { viewModel.perform("cache") { repository.clearCache(); "Cache dos provedores limpo." } },
+                PluginMenuItem("Limpar cache dos provedores", "Os arquivos serão baixados novamente quando necessário.") { confirmCacheClear = true },
                 PluginMenuItem("Exportar backup sem senhas") { createBackup.launch("JOTV-plugins.json") },
                 PluginMenuItem("Importar arquivo de backup") { importBackup.launch(arrayOf("application/json", "text/plain")) },
                 PluginMenuItem("Colar backup JSON") { pastedBackup = true }, PluginMenuItem("Gerenciar repositórios") { choice = "manage" }

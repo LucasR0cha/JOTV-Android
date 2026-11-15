@@ -87,6 +87,7 @@ private fun TvDetailScreenBody(
     val primary = rememberDetailPrimary(item, state, viewModel, onPlayEpisode, onPlayDirect)
     val isSeries = item.type == MediaType.SERIES
     val scope = rememberCoroutineScope()
+    var episodeOptions by remember(item.tmdbId) { mutableStateOf<com.joabtv.app.domain.model.EpisodeItem?>(null) }
     val list = rememberLazyListState()
 
     // O catálogo às vezes traz o texto que o detalhe em português não tem, então vale o primeiro preenchido.
@@ -210,7 +211,7 @@ private fun TvDetailScreenBody(
                     }
 
                     if (isSeries) item(key = "eps") {
-                        TvEpisodes(state, item, onPlayEpisode, onPlayDirect, viewModel::selectEpisode)
+                        TvEpisodes(state, item, onPlayEpisode, onPlayDirect, viewModel::selectEpisode, onOptions = { episodeOptions = it })
                     } else item(key = "sources") {
                         Column(Modifier.fillMaxWidth()) {
                             Row(
@@ -232,7 +233,7 @@ private fun TvDetailScreenBody(
                             ) {
                                 SourceList(
                                     streams = state.stremioStreams,
-                                    facts = state.movieFacts(),
+                                    facts = remember(state.stremioStreams, state.probes, state.debridCached, state.runtimeMin) { state.movieFacts() },
                                     mediaTitle = state.item?.title.orEmpty(),
                                     onPlay = { s ->
                                         viewModel.recordPlayback()
@@ -241,6 +242,8 @@ private fun TvDetailScreenBody(
                                     onDownload = { null },
                                     cols = 2,
                                     television = true,
+                                    loading = state.stremioLoading,
+                                    scrolling = list.isScrollInProgress,
                                 )
                             }
                             when {
@@ -280,6 +283,13 @@ private fun TvDetailScreenBody(
         }
 
         // Fontes do episódio no painel lateral (segurar OK no episódio).
+        episodeOptions?.let { ep ->
+            TvEpisodeOptions(
+                episode = ep, viewModel = viewModel,
+                onSources = { episodeOptions = null; viewModel.selectEpisode(ep.seasonNumber, ep.episodeNumber) },
+                onDismiss = { episodeOptions = null },
+            )
+        }
         state.selectedEpisode?.let { (season, episode) ->
             val ep = state.seasons[season]?.firstOrNull { it.episodeNumber == episode }
             TvSourcePanel(
@@ -289,7 +299,7 @@ private fun TvDetailScreenBody(
             ) {
                 SourceList(
                     streams = state.episodeStremioStreams,
-                    facts = state.episodeFacts(),
+                    facts = remember(state.episodeStremioStreams, state.probes, state.debridCached) { state.episodeFacts() },
                     mediaTitle = "",
                     onPlay = { s ->
                         viewModel.clearSelectedEpisode()
@@ -302,6 +312,7 @@ private fun TvDetailScreenBody(
                     onDownload = { null },
                     cols = 1,
                     television = true,
+                    loading = state.episodeStremioLoading,
                 )
                 when {
                     state.episodeStremioLoading -> TvSpinner("Buscando fontes")
@@ -331,6 +342,7 @@ private fun TvEpisodes(
     onPlayEpisode: (Int, Int, Int, Int) -> Unit,
     onPlayDirect: (String, Long, String, List<MoviePlayerSource>, Int, Int, Int) -> Unit,
     onSelect: (Int, Int) -> Unit,
+    onOptions: (com.joabtv.app.domain.model.EpisodeItem) -> Unit,
 ) {
     val season = state.selectedSeason
     val eps = state.seasons[season]
@@ -365,12 +377,12 @@ private fun TvEpisodes(
                     onClick = {
                         onSelect(ep.seasonNumber, ep.episodeNumber)
                     },
-                    onLongClick = { onSelect(ep.seasonNumber, ep.episodeNumber) },
+                    onLongClick = { onOptions(ep) },
                 )
             }
         }
         Text(
-            "OK no episódio para ver as fontes", color = TextTertiary, fontSize = 0.95.rs,
+            "OK para ver as fontes. Segure OK para opções", color = TextTertiary, fontSize = 0.95.rs,
             modifier = Modifier.padding(horizontal = tvPad).offset(y = (-0.4).r),
         )
     }

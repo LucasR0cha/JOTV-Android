@@ -23,6 +23,22 @@ data class SkipSegments(
     val postCredits: SkipSegment? = null,
 )
 
+internal fun mergeSkipSegments(list: List<SkipSegments?>, durationSec: Double): SkipSegments {
+    val duration = (durationSec * 1000).toLong().takeIf { durationSec.isFinite() && it > 0 }
+    fun bounded(segment: SkipSegment?): SkipSegment? = segment?.let {
+        val end = minOf(it.end, duration ?: it.end)
+        if (end - it.start >= 3000) SkipSegment(it.start, end) else null
+    }
+    val sources = list.filterNotNull().filter { source ->
+        duration == null || listOf(source.recap, source.intro, source.outro, source.postCredits).filterNotNull().none { it.end > duration + 5000 }
+    }.map { source -> SkipSegments(bounded(source.recap), bounded(source.intro), bounded(source.outro), bounded(source.postCredits)) }
+    val post = sources.firstNotNullOfOrNull { it.postCredits }
+    val outro = sources.firstNotNullOfOrNull { source -> source.outro?.let { segment ->
+        bounded(if (post != null) segment.copy(end = minOf(segment.end, post.start)) else segment)
+    } }
+    return SkipSegments(sources.firstNotNullOfOrNull { it.recap }, sources.firstNotNullOfOrNull { it.intro }, outro, post)
+}
+
 @Singleton
 class SkipSegmentsService @Inject constructor() {
     private val client = OkHttpClient.Builder()
@@ -40,6 +56,7 @@ class SkipSegmentsService @Inject constructor() {
 
     private fun ms(o: JSONObject?): SkipSegment? {
         if (o == null) return null
+        if (o.optString("match") == "out-of-range") return null
         if (o.has("start_ms") && o.has("end_ms")) {
             return seg(o.optDouble("start_ms"), o.optDouble("end_ms"))
         }
@@ -92,68 +109,19 @@ class SkipSegmentsService @Inject constructor() {
         )
     }
 
-    private fun norm(t: String): String = t.lowercase().replace(Regex("[^a-z0-9]"), "")
-
-    private suspend fun fromAnimeSkip(title: String, isSeries: Boolean, episode: Int, durationSec: Double): SkipSegments? {
+    private suspend fun fromAnimeSkip(title: String, isSeries: Boolean, season: Int, episode: Int, durationSec: Double): SkipSegments? {
         if (!isSeries || title.isBlank() || episode <= 0) return null
-        val gql = "query(\$s:String!){searchShows(search:\$s,limit:5){name episodes{number timestamps{at type{name}}}}}"
+        val gql = "query(\$s:String!){searchShows(search:\$s,limit:5){name originalName episodes{id season number baseDuration}}}"
         val body = JSONObject().put("query", gql).put("variables", JSONObject().put("s", title)).toString()
         val headers = mapOf("X-Client-ID" to "ZGfO0sMF3eCwLYf8yMSCJjlynwNGRXWE")
         val j = getJson("https://api.anime-skip.com/graphql", headers, body) ?: return null
         val shows = j.optJSONObject("data")?.optJSONArray("searchShows") ?: return null
-        val want = norm(title)
-        var show: JSONObject? = null
-        for (i in 0 until shows.length()) {
-            val s = shows.optJSONObject(i) ?: continue
-            if (norm(s.optString("name")) == want) { show = s; break }
-        }
-        if (show == null) return null
-        val eps = show.optJSONArray("episodes") ?: return null
-        var epObj: JSONObject? = null
-        for (i in 0 until eps.length()) {
-            val e = eps.optJSONObject(i) ?: continue
-            if (e.optInt("number") == episode) {
-                if (epObj == null || (e.optJSONArray("timestamps")?.length() ?: 0) > (epObj.optJSONArray("timestamps")?.length() ?: 0)) {
-                    epObj = e
-                }
-            }
-        }
-        val ts = epObj?.optJSONArray("timestamps") ?: return null
-        if (ts.length() == 0) return null
-        data class TsItem(val at: Double, val name: String)
-        val items = mutableListOf<TsItem>()
-        for (i in 0 until ts.length()) {
-            val t = ts.optJSONObject(i) ?: continue
-            items += TsItem(t.optDouble("at"), t.optJSONObject("type")?.optString("name").orEmpty().lowercase())
-        }
-        items.sortBy { it.at }
-        var recap: SkipSegment? = null
-        var intro: SkipSegment? = null
-        var outro: SkipSegment? = null
-        for (i in 0 until items.size) {
-            val curr = items[i]
-            val nextAt = items.getOrNull(i + 1)?.at ?: (curr.at + 90.0)
-            val a = curr.at * 1000.0
-            val b = nextAt * 1000.0
-            if (curr.name.contains("recap")) recap = recap ?: seg(a, b)
-            else if (curr.name.contains("intro") || curr.name.contains("opening")) intro = intro ?: seg(a, b)
-            else if (curr.name.contains("credit") || curr.name.contains("ending")) outro = outro ?: seg(a, if (durationSec > 0) maxOf(b, durationSec * 1000.0) else b)
-        }
-        return SkipSegments(recap, intro, outro, null)
-    }
-
-    private fun merge(list: List<SkipSegments?>): SkipSegments {
-        var recap: SkipSegment? = null
-        var intro: SkipSegment? = null
-        var outro: SkipSegment? = null
-        var postCredits: SkipSegment? = null
-        list.filterNotNull().forEach { s ->
-            if (recap == null && s.recap != null) recap = s.recap
-            if (intro == null && s.intro != null) intro = s.intro
-            if (outro == null && s.outro != null) outro = s.outro
-            if (postCredits == null && s.postCredits != null) postCredits = s.postCredits
-        }
-        return SkipSegments(recap, intro, outro, postCredits)
+        val candidate = selectAnimeEpisode(shows, title, season, episode, durationSec) ?: return null
+        val id = candidate.optString("id").takeIf { it.isNotBlank() } ?: return null
+        val detailQuery = "query(\$e:ID!){findEpisode(episodeId:\$e){baseDuration timestamps{at type{name}}}}"
+        val detailBody = JSONObject().put("query", detailQuery).put("variables", JSONObject().put("e", id)).toString()
+        val detail = getJson("https://api.anime-skip.com/graphql", headers, detailBody)?.optJSONObject("data")?.optJSONObject("findEpisode") ?: return null
+        return animeSkipSegments(detail, durationSec)
     }
 
     suspend fun get(
@@ -164,14 +132,14 @@ class SkipSegmentsService @Inject constructor() {
         episode: Int,
         durationSec: Double = 0.0,
     ): SkipSegments = coroutineScope {
-        val key = "$imdb|$title|${if (isSeries) "$season:$episode" else "movie"}|${(durationSec / 60).toLong()}"
+        val key = "$imdb|$title|${if (isSeries) "$season:$episode" else "movie"}|${kotlin.math.round(durationSec).toLong()}"
         cache[key]?.let { return@coroutineScope it }
 
         val a = async { fromIntroDb(imdb, isSeries, season, episode) }
         val b = async { fromSkipDb(imdb, isSeries, season, episode, durationSec) }
-        val c = async { fromAnimeSkip(title, isSeries, episode, durationSec) }
+        val c = async { fromAnimeSkip(title, isSeries, season, episode, durationSec) }
 
-        val res = merge(listOf(a.await(), b.await(), c.await()))
+        val res = mergeSkipSegments(listOf(a.await(), b.await(), c.await()), durationSec)
         if (res.recap != null || res.intro != null || res.outro != null || res.postCredits != null) {
             cache[key] = res
         }

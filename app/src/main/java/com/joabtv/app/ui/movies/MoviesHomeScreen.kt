@@ -391,6 +391,8 @@ private fun HomeSectionsTab(
 ) {
     val listState = rememberLazyListState()
     val collections by viewModel.collectionsFlow.collectAsStateWithLifecycle()
+    var pendingRemoveContinue by remember { mutableStateOf<MovieItem?>(null) }
+    var continueOptions by remember { mutableStateOf<MovieItem?>(null) }
     val loadMore by remember {
         derivedStateOf {
             val li = listState.layoutInfo
@@ -438,7 +440,7 @@ private fun HomeSectionsTab(
             val custom = row.title
             when (row.system) {
                 SystemRow.CONTINUE -> if (state.continueWatching.isNotEmpty()) item(key = row.key) {
-                    ContinueRow(row.displayTitle, state, onItemClick)
+                    ContinueRow(row.displayTitle, state, onItemClick, onRemove = { continueOptions = it })
                 }
                 SystemRow.NEW_EPISODES -> if (state.newEpisodes.isNotEmpty()) item(key = row.key) {
                     SectionRow(
@@ -504,6 +506,25 @@ private fun HomeSectionsTab(
             )
         }
     }
+    continueOptions?.let { item ->
+        val episode = state.continueEpisode[item.tmdbId].orEmpty()
+        com.joabtv.app.ui.common.ContinueOptionsDialog(
+            title = item.title, episode = episode,
+            imageUrl = state.continueArtwork[com.joabtv.app.data.local.posterKey(item)]?.imageUrl.orEmpty().ifBlank { item.backdropUrl },
+            canMark = item.type != MediaType.SERIES || Regex("T\\d+:E\\d+", RegexOption.IGNORE_CASE).matches(episode),
+            onDetails = { continueOptions = null; onItemClick(item) },
+            onMark = { continueOptions = null; viewModel.completeContinue(item, episode) },
+            onRemove = { continueOptions = null; pendingRemoveContinue = item },
+            onDismiss = { continueOptions = null },
+        )
+    }
+    pendingRemoveContinue?.let { item ->
+        ConfirmContinueRemoveDialog(
+            item = item,
+            onConfirm = { viewModel.removeFromContinue(item.tmdbId, item.type); pendingRemoveContinue = null },
+            onDismiss = { pendingRemoveContinue = null },
+        )
+    }
 }
 
 /** Selo do destaque. Em alta do JOTV usa o selo de sempre, outra fonte mostra o nome da fileira. */
@@ -547,19 +568,49 @@ private fun HeroTitle(title: String, compact: Boolean = false) {
 }
 
 @Composable
-private fun ContinueRow(title: String, state: MoviesHomeViewModel.UiState, onItemClick: (MovieItem) -> Unit) {
+private fun ContinueRow(
+    title: String,
+    state: MoviesHomeViewModel.UiState,
+    onItemClick: (MovieItem) -> Unit,
+    onRemove: (MovieItem) -> Unit,
+) {
     Column {
-        com.joabtv.app.ui.common.SectionHeader(title)
+        com.joabtv.app.ui.common.SectionHeader(
+            title = title,
+            action = {
+                Text(
+                    "Segure para opções",
+                    color = TextTertiary,
+                    fontSize = 12.sp,
+                    fontFamily = ManropeFontFamily,
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+            },
+        )
         LazyRow(contentPadding = PaddingValues(horizontal = com.joabtv.app.ui.common.pagePadding()),
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(state.continueWatching, key = { com.joabtv.app.data.local.posterKey(it) }) { item ->
                 com.joabtv.app.ui.common.ContinueCard(item, { onItemClick(item) },
                     artwork = state.continueArtwork[com.joabtv.app.data.local.posterKey(item)],
                     progress = state.continueProgress[item.tmdbId], remaining = state.continueRemaining[item.tmdbId],
-                    episode = state.continueEpisode[item.tmdbId].orEmpty())
+                    episode = state.continueEpisode[item.tmdbId].orEmpty(),
+                    onLongClick = { onRemove(item) })
             }
         }
     }
+}
+
+@Composable
+private fun ConfirmContinueRemoveDialog(item: MovieItem, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Remover de Continuar assistindo?") },
+        text = { Text(item.title) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("Remover", color = LiveRed) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+    )
 }
 
 /**

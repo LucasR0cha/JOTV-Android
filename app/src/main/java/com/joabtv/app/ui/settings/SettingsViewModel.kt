@@ -21,6 +21,10 @@ class SettingsViewModel @Inject constructor(
     private val trakt: com.joabtv.app.data.remote.TraktService,
     private val library: com.joabtv.app.data.repository.LibraryRepository,
     private val hub: com.joabtv.app.data.accounts.AccountsHub,
+    private val backupRepo: com.joabtv.app.data.backup.AppBackupRepository,
+    private val lanBackup: com.joabtv.app.data.backup.LanBackupServer,
+    private val trackers: com.joabtv.app.data.remote.MultiTrackerService,
+    private val trackerSync: com.joabtv.app.data.remote.TrackerSyncService,
 ) : ViewModel() {
 
     // ── Seu catálogo (os cinco cartões do topo) ──
@@ -180,6 +184,21 @@ class SettingsViewModel @Inject constructor(
     fun setDebridCachedOnly(v: Boolean) { platformPrefs.debridCachedOnly = v; _debridCachedOnly.value = v }
 
     // Trackers e sincronização de reprodução
+    val trackerStatus = trackers.status
+    fun trackerClientId(provider: com.joabtv.app.data.remote.TrackerProvider) = trackers.clientId(provider)
+    fun trackerToken(provider: com.joabtv.app.data.remote.TrackerProvider) = trackers.savedToken(provider)
+    suspend fun connectTracker(provider: com.joabtv.app.data.remote.TrackerProvider, token: String, clientId: String): Boolean {
+        if (!trackers.connect(provider, token, clientId)) return false
+        trackerSync.syncInBackground(provider)
+        return true
+    }
+    fun disconnectTracker(provider: com.joabtv.app.data.remote.TrackerProvider) = trackers.disconnect(provider)
+    suspend fun startTrackerLogin(provider: com.joabtv.app.data.remote.TrackerProvider, clientId: String) = trackers.startLogin(provider, clientId)
+    suspend fun waitTrackerLogin(provider: com.joabtv.app.data.remote.TrackerProvider, code: com.joabtv.app.data.remote.MultiTrackerService.DeviceCode): Boolean {
+        if (!trackers.waitLogin(provider, code)) return false
+        trackerSync.syncInBackground(provider)
+        return true
+    }
     private val _simklToken = MutableStateFlow(platformPrefs.simklToken)
     val simklToken: StateFlow<String> = _simklToken.asStateFlow()
     fun setSimklToken(v: String) { platformPrefs.simklToken = v; _simklToken.value = v }
@@ -216,5 +235,139 @@ class SettingsViewModel @Inject constructor(
     fun setTmdbApiKey(key: String) {
         platformPrefs.customTmdbApiKey = key
         _customTmdbApiKey.value = platformPrefs.customTmdbApiKey
+    }
+
+    // ── Backup e transferência sem servidor ──
+    val lanInfo: StateFlow<com.joabtv.app.data.backup.LanBackupInfo?> = lanBackup.info
+    val lanReceivedJson: StateFlow<String?> = lanBackup.receivedJson
+
+    private val _backupBusy = MutableStateFlow<String?>(null)
+    val backupBusy: StateFlow<String?> = _backupBusy.asStateFlow()
+
+    private val _backupPreview = MutableStateFlow<com.joabtv.app.data.backup.BackupPreview?>(null)
+    val backupPreview: StateFlow<com.joabtv.app.data.backup.BackupPreview?> = _backupPreview.asStateFlow()
+
+    private val _backupMessage = MutableStateFlow<String?>(null)
+    val backupMessage: StateFlow<String?> = _backupMessage.asStateFlow()
+
+    fun clearBackupMessage() { _backupMessage.value = null }
+    fun clearBackupPreview() { _backupPreview.value = null }
+    fun clearLanReceived() { lanBackup.clearReceived() }
+    fun suggestedBackupFilename(): String = backupRepo.suggestedFilename()
+    fun generateQrBitmap(url: String) = lanBackup.generateQr(url)
+
+    suspend fun exportBackupJson(includeSecrets: Boolean): String = backupRepo.exportJson(includeSecrets)
+
+    fun exportToDownloads(includeSecrets: Boolean) {
+        if (_backupBusy.value != null) return
+        viewModelScope.launch {
+            _backupBusy.value = "Exportando…"
+            try {
+                val json = backupRepo.exportJson(includeSecrets)
+                val res = backupRepo.saveToDownloads(backupRepo.suggestedFilename(), json)
+                _backupMessage.value = res.fold(
+                    onSuccess = { "Backup salvo em $it" },
+                    onFailure = { it.message ?: "Não foi possível salvar o backup." },
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { _backupMessage.value = "Não foi possível preparar o backup. Tente novamente" }
+            finally { _backupBusy.value = null }
+        }
+    }
+
+    fun inspectBackupText(text: String) {
+        backupRepo.inspect(text).fold(
+            onSuccess = { _backupPreview.value = it },
+            onFailure = { _backupMessage.value = it.message ?: "Arquivo de backup inválido." },
+        )
+    }
+
+    fun confirmRestore(restoreSecrets: Boolean = true) {
+        val preview = _backupPreview.value ?: return
+        if (_backupBusy.value != null) return
+        _backupPreview.value = null
+        viewModelScope.launch {
+            _backupBusy.value = "Restaurando…"
+            val res = backupRepo.importJson(preview.rawText, restoreSecrets)
+            _backupBusy.value = null
+            res.fold(
+                onSuccess = { s ->
+                    reloadStateAfterRestore()
+                    val base = "Backup restaurado (${s.addons} addons, ${s.history} progresso, ${s.watchlist} na lista)"
+                    _backupMessage.value = if (s.pluginErrors > 0) "$base com ${s.pluginErrors} falha de plugin" else base
+                },
+                onFailure = { e ->
+                    _backupMessage.value = e.message ?: "Falha ao restaurar o backup."
+                },
+            )
+        }
+    }
+
+    fun startLanBackupServer(includeSecrets: Boolean) {
+        if (_backupBusy.value != null) return
+        viewModelScope.launch {
+            _backupBusy.value = "Abrindo Wi-Fi…"
+            runCatching {
+                val json = backupRepo.exportJson(includeSecrets)
+                lanBackup.start(json)
+            }.onFailure { e ->
+                _backupMessage.value = e.message ?: "Não foi possível abrir o servidor Wi-Fi."
+            }
+            _backupBusy.value = null
+        }
+    }
+
+    fun stopLanBackupServer() { lanBackup.stop() }
+
+    fun pullLanBackup(host: String, pin: String) {
+        if (_backupBusy.value != null) return
+        viewModelScope.launch {
+            _backupBusy.value = "Buscando no Wi-Fi…"
+            lanBackup.pullFrom(host, pin).fold(
+                onSuccess = { json -> inspectBackupText(json) },
+                onFailure = { e -> _backupMessage.value = e.message ?: "Não foi possível buscar pelo Wi-Fi." },
+            )
+            _backupBusy.value = null
+        }
+    }
+
+    fun pushLanBackup(host: String, pin: String, includeSecrets: Boolean) {
+        if (_backupBusy.value != null) return
+        viewModelScope.launch {
+            _backupBusy.value = "Enviando no Wi-Fi…"
+            val json = backupRepo.exportJson(includeSecrets)
+            lanBackup.pushTo(host, pin, json).fold(
+                onSuccess = { _backupMessage.value = "Backup enviado para $host" },
+                onFailure = { e -> _backupMessage.value = e.message ?: "Falha ao enviar pelo Wi-Fi." },
+            )
+            _backupBusy.value = null
+        }
+    }
+
+    fun notifyBackupMessage(msg: String) { _backupMessage.value = msg }
+
+    private fun reloadStateAfterRestore() {
+        _audio.value = platformPrefs.audioPref
+        _maxQuality.value = platformPrefs.maxQuality
+        _subOn.value = platformPrefs.subtitleOn
+        _subLang.value = platformPrefs.subLang
+        _subSize.value = platformPrefs.subSize
+        _subBg.value = platformPrefs.subBg
+        _autoSwitch.value = platformPrefs.autoSwitchSources
+        _sourceTimeout.value = platformPrefs.sourceTimeoutSec
+        _autoUpgrade.value = platformPrefs.autoUpgradeQuality
+        _debridCachedOnly.value = platformPrefs.debridCachedOnly
+        _simklToken.value = platformPrefs.simklToken
+        _wetrakrKey.value = platformPrefs.wetrakrKey
+        _publicmetadbKey.value = platformPrefs.publicmetadbKey
+        _mdblistKey.value = platformPrefs.mdblistKey
+        _customTmdbApiKey.value = platformPrefs.customTmdbApiKey
+        _traktUser.value = trakt.user()
+        refreshCatalog()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        lanBackup.stop()
     }
 }

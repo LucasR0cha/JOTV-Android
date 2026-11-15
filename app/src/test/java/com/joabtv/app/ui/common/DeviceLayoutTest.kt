@@ -13,7 +13,9 @@ class DeviceLayoutTest {
         leanback: Boolean = false,
         televisionFeature: Boolean = false,
         fontScale: Float = 1f,
-    ) = resolveDeviceLayout(mode, televisionMode, leanback, televisionFeature, width, height, fontScale)
+        touchscreen: Boolean = true,
+        desktop: Boolean = false,
+    ) = resolveDeviceLayout(mode, televisionMode, leanback, televisionFeature, width, height, fontScale, touchscreen, desktop)
 
     @Test fun modoTelevisaoUsaControleRemoto() {
         assertEquals(DeviceLayout.TV, layout(televisionMode = true))
@@ -69,9 +71,9 @@ class DeviceLayoutTest {
         )
     }
 
-    @Test fun modoTvEmCelularPequenoAdaptaParaToque() {
+    @Test fun modoTvEmCelularEmPeAdaptaParaToque() {
         assertEquals(DeviceLayout.PHONE, layout(mode = PlatformMode.TV))
-        assertEquals(DeviceLayout.PHONE, layout(873, 393, PlatformMode.TV))
+        assertEquals(DeviceLayout.TV, layout(873, 393, PlatformMode.TV))
     }
 
     @Test fun modoTvUsaTvQuandoAJanelaComporta() {
@@ -79,8 +81,27 @@ class DeviceLayoutTest {
         assertEquals(DeviceLayout.TV, layout(960, 540, PlatformMode.TV))
     }
 
-    @Test fun fonteAmpliadaPodePedirLayoutDeToque() {
-        assertEquals(DeviceLayout.TABLET, layout(1280, 800, PlatformMode.TV, fontScale = 2f))
+    @Test fun fonteDoSistemaNaoDesativaOModoTvEscolhido() {
+        assertEquals(DeviceLayout.TV, layout(1280, 800, PlatformMode.TV, fontScale = 2f))
+    }
+
+    @Test fun forcarTvFuncionaMesmoComDpiMuitoAlto() {
+        for ((width, height) in listOf(320 to 180, 480 to 270, 640 to 360, 960 to 540)) {
+            assertEquals(DeviceLayout.TV, layout(width, height, PlatformMode.TV, fontScale = 3f))
+        }
+    }
+
+    @Test fun boxSemTouchOuIdentificacaoDeTvUsaLayoutDeControle() {
+        assertEquals(DeviceLayout.TV, layout(1920, 1080, touchscreen = false))
+        assertEquals(DeviceLayout.TV, layout(480, 270, touchscreen = false, fontScale = 2f))
+    }
+
+    @Test fun computadorSemTouchContinuaComInterfaceDeTablet() {
+        assertEquals(DeviceLayout.TABLET, layout(1280, 800, touchscreen = false, desktop = true))
+    }
+
+    @Test fun escolhaManualDeToqueTemPrioridadeNaBox() {
+        assertEquals(DeviceLayout.TABLET, layout(1280, 720, PlatformMode.PHONE, touchscreen = false))
     }
 
     @Test fun tvFisicaMantemControleRemotoEmResolucaoBaixa() {

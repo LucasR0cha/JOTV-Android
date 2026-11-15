@@ -42,6 +42,7 @@ fun DebridScreen(onBack: () -> Unit, viewModel: DebridViewModel = hiltViewModel(
     val st by viewModel.ui.collectAsStateWithLifecycle()
     val pad = com.joabtv.app.ui.common.pagePadding()
     val context = LocalContext.current
+    var pendingDisconnect by remember { mutableStateOf<DebridProvider?>(null) }
     // Só abre link web. O endereço vem da resposta do serviço e não deve abrir outro tipo de app.
     fun open(url: String) = runCatching {
         if (!url.startsWith("https://", true) && !url.startsWith("http://", true)) return@runCatching
@@ -101,7 +102,7 @@ fun DebridScreen(onBack: () -> Unit, viewModel: DebridViewModel = hiltViewModel(
                         onKey = { viewModel.connectKey(p, it) },
                         onDevice = { viewModel.startDevice(p) },
                         onUse = { viewModel.setPreferred(p) },
-                        onDisconnect = { viewModel.disconnect(p) },
+                        onDisconnect = { pendingDisconnect = p },
                         onOpenKeyPage = { open(p.keyPage) },
                     )
                 }
@@ -138,6 +139,19 @@ fun DebridScreen(onBack: () -> Unit, viewModel: DebridViewModel = hiltViewModel(
                 below?.let { b -> item { Spacer(Modifier.height(8.dp)); b() } }
             }
         }
+    }
+
+    pendingDisconnect?.let { p ->
+        AlertDialog(
+            onDismissRequest = { pendingDisconnect = null },
+            containerColor = BackgroundCard,
+            title = { Text("Desconectar ${p.label}?", color = TextPrimary, fontWeight = FontWeight.ExtraBold) },
+            text = { Text("Será necessário autenticar novamente para usar este serviço.", color = TextSecondary) },
+            confirmButton = {
+                TextButton(onClick = { viewModel.disconnect(p); pendingDisconnect = null }) { Text("Desconectar", color = DangerText) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDisconnect = null }) { Text("Cancelar", color = TextSecondary) } },
+        )
     }
 
     st.device?.let { d ->

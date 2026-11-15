@@ -9,11 +9,17 @@ interface WatchedEpisodeDao {
     @Query("SELECT * FROM watched_episodes WHERE profileId = :profileId AND seriesTmdbId = :seriesTmdbId ORDER BY season, episode")
     fun getForSeries(profileId: String, seriesTmdbId: Int): Flow<List<WatchedEpisodeEntity>>
 
+    @Query("SELECT * FROM watched_episodes WHERE profileId = :profileId")
+    suspend fun getAll(profileId: String): List<WatchedEpisodeEntity>
+
     @Query("SELECT EXISTS(SELECT 1 FROM watched_episodes WHERE profileId = :profileId AND seriesTmdbId = :seriesTmdbId AND season = :season AND episode = :episode)")
     suspend fun isWatched(profileId: String, seriesTmdbId: Int, season: Int, episode: Int): Boolean
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun markWatched(entity: WatchedEpisodeEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun markWatchedBatch(entities: List<WatchedEpisodeEntity>)
 
     @Query("DELETE FROM watched_episodes WHERE profileId = :profileId AND seriesTmdbId = :seriesTmdbId AND season = :season AND episode = :episode")
     suspend fun unmark(profileId: String, seriesTmdbId: Int, season: Int, episode: Int)

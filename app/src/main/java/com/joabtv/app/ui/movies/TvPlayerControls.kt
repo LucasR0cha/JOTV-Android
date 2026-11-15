@@ -20,6 +20,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,7 +45,9 @@ internal fun TvPlayerControls(
     onSeekTo: (Long) -> Unit,
     actions: List<PlayerChipItem>,
     focusedIndex: Int,
+    onControlsHeight: (Dp) -> Unit = {},
 ) {
+    val density = LocalDensity.current
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
         0f to Color.Black.copy(alpha = .45f), .23f to Color.Transparent,
         .48f to Color.Transparent, 1f to Color.Black.copy(alpha = .94f),
@@ -54,7 +58,9 @@ internal fun TvPlayerControls(
             val end = clock.substringAfter('·', "").trim().replaceFirst("termina", "Termina")
             if (end.isNotBlank()) Text(end, color = TextSecondary, fontSize = 1.rs, modifier = Modifier.padding(top = .3.r))
         }
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 4.r, vertical = 2.4.r)) {
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+            .onSizeChanged { onControlsHeight(with(density) { it.height.toDp() }) }
+            .padding(horizontal = 4.r, vertical = 2.4.r)) {
             Text(title, color = Color.White, fontSize = 3.rs, lineHeight = 3.36.rs, letterSpacing = (-.09).rs,
                 fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(.7f))

@@ -22,11 +22,15 @@ internal fun resolveDeviceLayout(
     widthDp: Int,
     heightDp: Int,
     fontScale: Float = 1f,
+    touchscreen: Boolean = true,
+    desktop: Boolean = false,
 ): DeviceLayout {
     val hardwareTv = televisionMode || leanback || televisionFeature
-    val textScale = fontScale.coerceAtLeast(1f)
-    val tvFits = widthDp / textScale >= 960 && heightDp / textScale >= 540
-    if ((mode != PlatformMode.PHONE && hardwareTv) || (mode == PlatformMode.TV && tvFits)) return DeviceLayout.TV
+    val landscape = widthDp >= heightDp
+    // Algumas TV boxes usam Android de tablet sem anunciar os recursos de TV.
+    val remoteOnlyDisplay = !touchscreen && !desktop && landscape
+    val television = hardwareTv || remoteOnlyDisplay || (mode == PlatformMode.TV && landscape)
+    if (mode != PlatformMode.PHONE && television) return DeviceLayout.TV
 
     return if (widthDp >= 600 && heightDp >= 480) DeviceLayout.TABLET else DeviceLayout.PHONE
 }
@@ -45,9 +49,19 @@ fun currentDeviceLayout(mode: PlatformMode): DeviceLayout {
             context.packageManager.hasSystemFeature(PackageManager.FEATURE_TELEVISION),
         )
     }
+    val features = remember(context) {
+        context.packageManager.let { manager ->
+            manager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN) to
+                (manager.hasSystemFeature("android.hardware.type.pc") ||
+                    manager.hasSystemFeature(PackageManager.FEATURE_WATCH) ||
+                    manager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE))
+        }
+    }
     return resolveDeviceLayout(
         mode, tvSignals.first, tvSignals.second, tvSignals.third,
         configuration.screenWidthDp, configuration.screenHeightDp,
         configuration.fontScale,
+        touchscreen = features.first,
+        desktop = features.second,
     )
 }

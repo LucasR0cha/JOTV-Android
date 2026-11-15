@@ -222,6 +222,8 @@ private fun TvHomeScreenBody(
             return@Box
         }
         BoxWithConstraints(Modifier.fillMaxSize()) {
+            var pendingRemoveContinue by remember { mutableStateOf<MovieItem?>(null) }
+            var continueOptions by remember { mutableStateOf<MovieItem?>(null) }
             val pageTop = 32.r.coerceAtMost(maxHeight * .5f)
             val pageHeight = maxHeight - pageTop
             // A área das fileiras começa acima dos botões do destaque (cada fileira é uma página
@@ -299,9 +301,36 @@ private fun TvHomeScreenBody(
                     contentPadding = PaddingValues(bottom = if (peekLayout) peek else 0.r),
                 ) {
                     homeRails(state, viewModel, onItemClick, onFocus = { pendingFocus.value = it }, onTrailer = ::playCard,
+                        onRemoveContinue = { continueOptions = it },
                         collections = collections, onFolderClick = onFolderClick,
                         pageHeight = if (peekLayout) Dp.Unspecified else pageHeight, onPageContentHeight = { railContentHeight = it })
                 }
+            }
+            continueOptions?.let { item ->
+                val episode = state.continueEpisode[item.tmdbId].orEmpty()
+                TvContinueOptions(
+                    title = item.title, episode = episode,
+                    canMark = item.type != MediaType.SERIES || Regex("T\\d+:E\\d+", RegexOption.IGNORE_CASE).matches(episode),
+                    onDetails = { continueOptions = null; onItemClick(item) },
+                    onMark = { continueOptions = null; viewModel.completeContinue(item, episode) },
+                    onRemove = { continueOptions = null; pendingRemoveContinue = item },
+                    onDismiss = { continueOptions = null },
+                )
+            }
+            pendingRemoveContinue?.let { item ->
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { pendingRemoveContinue = null },
+                    title = { Text("Remover de Continuar assistindo?") },
+                    text = { Text(item.title) },
+                    confirmButton = {
+                        TvButton("Remover", {
+                            viewModel.removeFromContinue(item.tmdbId, item.type)
+                            pendingRemoveContinue = null
+                        }, primary = true)
+                    },
+                    dismissButton = { TvButton("Cancelar", { pendingRemoveContinue = null }) },
+                    containerColor = BackgroundCard,
+                )
             }
         }
         trailer?.let { st ->
@@ -557,6 +586,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.homeRails(
     onItemClick: (MovieItem) -> Unit,
     onFocus: (MovieItem) -> Unit,
     onTrailer: (MoviesHomeViewModel.TrailerCard) -> Unit,
+    onRemoveContinue: (MovieItem) -> Unit,
     collections: List<MediaCollection>,
     onFolderClick: (String, String) -> Unit,
     pageHeight: Dp,
@@ -565,12 +595,19 @@ private fun androidx.compose.foundation.lazy.LazyListScope.homeRails(
     state.layout.forEach { row ->
         when (row.system) {
             SystemRow.CONTINUE -> if (state.continueWatching.isNotEmpty()) item(key = row.key) {
-                TvRail(row.displayTitle, preserveColumnOnVertical = true, pageHeight = pageHeight, onPageContentHeight = onPageContentHeight) {
+                TvRail(
+                    row.displayTitle,
+                    trailing = { Text("Segure OK para opções", color = TextTertiary, fontSize = .9.rs) },
+                    preserveColumnOnVertical = true,
+                    pageHeight = pageHeight,
+                    onPageContentHeight = onPageContentHeight,
+                ) {
                     items(state.continueWatching, key = { posterKey(it) }) { item ->
                         TvContinueCard(
                             item, { onItemClick(item) }, artwork = state.continueArtwork[posterKey(item)],
                             progress = state.continueProgress[item.tmdbId], remaining = state.continueRemaining[item.tmdbId],
                             episode = state.continueEpisode[item.tmdbId].orEmpty(), onFocus = { onFocus(item) },
+                            onLongClick = { onRemoveContinue(item) },
                         )
                     }
                 }
@@ -673,7 +710,7 @@ private fun PosterRail(
         items(items.size, key = { "${items[it].type}:${items[it].tmdbId}" }) { index ->
             val item = items[index]
             TvPoster(
-                item = item, onClick = { onItemClick(item) }, width = 12.5.r,
+                item = item, onClick = { onItemClick(item) }, width = tvPosterWidth,
                 progress = progress?.get(item.tmdbId), subtitle = subs?.get(item.tmdbId), badge = badges?.get(item.tmdbId),
                 onFocus = { onFocus(item) }, qualityNeighbors = { items.subList(index + 1, minOf(items.size, index + 8)) },
             )
@@ -689,7 +726,7 @@ private fun SeeAllCard(onClick: () -> Unit) {
     val s = tvFocusScaleState(focused, 1.06f)
     val shape = RoundedCornerShape(0.9.r)
     Column(
-        Modifier.width(12.5.r).aspectRatio(2f / 3f).tvFocusLayer(s).clip(shape).background(BackgroundCard)
+        Modifier.width(tvPosterWidth).aspectRatio(2f / 3f).tvFocusLayer(s).clip(shape).background(BackgroundCard)
             .border(if (focused) 0.22.r else 0.1.r, if (focused) Color.White else Border, shape)
             .onFocusChanged { focused = it.isFocused }.tvClick(onClick),
         horizontalAlignment = Alignment.CenterHorizontally,

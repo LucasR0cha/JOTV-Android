@@ -41,6 +41,8 @@ class EpisodePlayerViewModel @Inject constructor(
     /** Link direto já resolvido, sem rede (serve para o Chromecast). */
     fun debridNow(url: String, season: Int, episode: Int): String? = debrid.resolvedNow(url, season, episode)
     suspend fun debridResolve(url: String, season: Int, episode: Int) = debrid.resolve(url, season, episode)
+    suspend fun debridResolveUsenet(url: String, season: Int, episode: Int) = debrid.resolveUsenet(url, season, episode)
+    fun usenetResolvedNow(url: String, season: Int = 0, episode: Int = 0) = debrid.resolvedUsenetNow(url, season, episode)
     /** Torrent sem cache fica de fora (ajuste do Debrid). */
     fun debridHideUncached(): Boolean = debrid.settings.value.hideUncached
 

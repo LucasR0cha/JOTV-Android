@@ -1,7 +1,5 @@
 package com.joabtv.app.data.remote
 
-import com.google.gson.Gson
-import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -14,12 +12,6 @@ import javax.inject.Singleton
 
 /** Legenda externa (arquivo .srt) de um filme/episódio. */
 data class ExternalSub(val url: String, val lang: String, val label: String, val headers: Map<String, String> = emptyMap())
-
-private data class SubResponse(val subtitles: List<SubDto> = emptyList())
-private data class SubDto(
-    @SerializedName("url") val url: String? = null,
-    @SerializedName("lang") val lang: String? = null,
-)
 
 /**
  * Legendas externas via addon Stremio OpenSubtitles v3 (sem API key). Prioriza Português.
@@ -35,7 +27,6 @@ class SubtitleService @Inject constructor(
         .callTimeout(15, TimeUnit.SECONDS)
         .connectTimeout(10, TimeUnit.SECONDS)
         .build()
-    private val gson = Gson()
 
     // Nome e ordem vêm de SubLangs, com o idioma de legenda do perfil no topo.
     private fun rank(lang: String) = com.joabtv.app.data.local.SubLangs.rank(lang, prefs.subLang)
@@ -45,24 +36,14 @@ class SubtitleService @Inject constructor(
     suspend fun download(url: String, headers: Map<String, String> = emptyMap()): String? = withContext(Dispatchers.IO) {
         runCatching {
             val req = Request.Builder().url(url).apply {
+                header("User-Agent", STREAM_UA)
                 headers.forEach { (key, value) -> header(key, value) }
-                header("User-Agent", "Mozilla/5.0")
             }.build()
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
-                val bytes = resp.body?.bytes() ?: return@use null
-                val rawBytes = if (bytes.size >= 2 && bytes[0] == 0x1f.toByte() && bytes[1] == 0x8b.toByte()) {
-                    java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(bytes)).use { it.readBytes() }
-                } else bytes
-                try {
-                    java.nio.charset.StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(rawBytes)).toString()
-                } catch (e: Exception) {
-                    try {
-                        java.nio.charset.Charset.forName("windows-1252").decode(java.nio.ByteBuffer.wrap(rawBytes)).toString()
-                    } catch (e2: Exception) {
-                        String(rawBytes, java.nio.charset.StandardCharsets.ISO_8859_1)
-                    }
-                }
+                val body = resp.body ?: return@use null
+                val bytes = body.byteStream().readSubtitleBytes()
+                decodeSubtitle(bytes, body.contentType()?.charset())
             }
         }.getOrNull()
     }
@@ -95,12 +76,7 @@ class SubtitleService @Inject constructor(
                         client.newCall(Request.Builder().url(stremio.normalizeManifestUrl(base).removeSuffix("manifest.json") + "subtitles/$t/$id.json").build())
                             .execute().use { if (it.isSuccessful) it.body?.string() else null }
                     }.getOrNull() ?: return@async emptyList()
-                    val resp = runCatching { gson.fromJson(body, SubResponse::class.java) }.getOrNull()
-                    resp?.subtitles.orEmpty().mapNotNull { s ->
-                        val url = s.url?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
-                        val lang = s.lang.orEmpty().lowercase()
-                        ExternalSub(url, lang, label(lang) + " · " + name)
-                    }
+                    parseAddonSubtitles(body, base, name)
                 }
             }.awaitAll().flatten().sortedBy { rank(it.lang) }.take(30)
         }
@@ -117,15 +93,7 @@ class SubtitleService @Inject constructor(
                 }
             }.getOrNull() ?: return@withContext emptyList()
 
-            val resp = runCatching { gson.fromJson(body, SubResponse::class.java) }.getOrNull()
-                ?: return@withContext emptyList()
-
-            resp.subtitles
-                .mapNotNull { s ->
-                    val u = s.url?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
-                    val lang = s.lang?.lowercase() ?: return@mapNotNull null
-                    ExternalSub(u, lang, label(lang))
-                }
+            parseAddonSubtitles(body, url)
                 // 1 por idioma (a 1ª costuma ser a melhor), o idioma do perfil primeiro. Sem corte
                 // curto, para quem escolheu outro idioma achar a legenda dele.
                 .distinctBy { it.lang }

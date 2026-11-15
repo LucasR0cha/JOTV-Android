@@ -135,21 +135,46 @@ internal fun driftSpeed(errMs: Long, speed: Float): Float? {
 /** Uma fala da legenda, em ms. */
 data class SubCue(val start: Long, val end: Long, val text: String)
 
-private val CUE_TIME = Regex("""(?:(\d+):)?(\d{1,2}):(\d{2})[,.](\d{3})\s*-->\s*(?:(\d+):)?(\d{1,2}):(\d{2})[,.](\d{3})""")
+private val CUE_TIME = Regex("""(?:(\d{1,3}):)?(\d{1,2}):(\d{2})[,.](\d{1,3})\s*-->\s*(?:(\d{1,3}):)?(\d{1,2}):(\d{2})[,.](\d{1,3})""")
 
 /** Lê SRT ou VTT. Marcação (<i>, {\an8}) sai. */
 internal fun parseSubs(body: String): List<SubCue> {
     val out = mutableListOf<SubCue>()
-    for (block in body.replace("\r", "").split(Regex("\n{2,}"))) {
-        val lines = block.trim().lines()
-        val i = lines.indexOfFirst { CUE_TIME.containsMatchIn(it) }
-        if (i < 0) continue
-        val g = CUE_TIME.find(lines[i])!!.groupValues
-        fun ms(h: String, m: String, s: String, f: String) =
-            ((h.ifBlank { "0" }.toLong() * 60 + m.toLong()) * 60 + s.toLong()) * 1000 + f.toLong()
-        val text = lines.drop(i + 1).joinToString("\n")
-            .replace(Regex("<[^>]+>|\\{[^}]*\\}"), "").trim()
-        if (text.isNotEmpty()) out += SubCue(ms(g[1], g[2], g[3], g[4]), ms(g[5], g[6], g[7], g[8]), text)
+    val normalized = body.removePrefix("\uFEFF").replace("\r\n", "\n").replace('\r', '\n')
+    val lines = normalized.lines()
+    val times = lines.mapIndexedNotNull { index, line -> CUE_TIME.find(line)?.let { index to it.groupValues } }
+    fun ms(h: String, m: String, s: String, f: String) =
+        ((h.ifBlank { "0" }.toLong() * 60 + m.toLong()) * 60 + s.toLong()) * 1000 + f.padEnd(3, '0').toLong()
+    fun plain(text: String) = text.replace(Regex("<[^>]+>|\\{[^}]*\\}"), "")
+        .replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ").replace("&amp;", "&").trim()
+    times.forEachIndexed { index, (line, g) ->
+        val next = times.getOrNull(index + 1)?.first ?: lines.size
+        val textLines = lines.subList(line + 1, next).takeWhile { it.isNotBlank() }.toMutableList()
+        if (next < lines.size && textLines.lastOrNull()?.trim()?.toIntOrNull() != null) textLines.removeAt(textLines.lastIndex)
+        val text = plain(textLines.joinToString("\n"))
+        val start = ms(g[1], g[2], g[3], g[4])
+        val end = ms(g[5], g[6], g[7], g[8])
+        if (text.isNotEmpty() && end > start) out += SubCue(start, end, text)
+    }
+    if (times.isEmpty()) {
+        val format = lines.firstOrNull { it.startsWith("Format:", true) && "Text" in it && "Start" in it }
+            ?.substringAfter(':')?.split(',')?.map { it.trim().lowercase() }
+            ?: listOf("layer", "start", "end", "style", "name", "marginl", "marginr", "marginv", "effect", "text")
+        val startIndex = format.indexOf("start")
+        val endIndex = format.indexOf("end")
+        val textIndex = format.indexOf("text")
+        val assTime = Regex("""(\d{1,3}):(\d{2}):(\d{2})\.(\d{1,3})""")
+        if (startIndex >= 0 && endIndex >= 0 && textIndex == format.lastIndex) lines.filter { it.startsWith("Dialogue:", true) }.forEach { line ->
+            val values = line.substringAfter(':').split(',', limit = format.size)
+            val a = values.getOrNull(startIndex)?.trim()?.let { assTime.matchEntire(it)?.groupValues }
+            val b = values.getOrNull(endIndex)?.trim()?.let { assTime.matchEntire(it)?.groupValues }
+            val text = plain(values.getOrNull(textIndex).orEmpty().replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " "))
+            if (a != null && b != null && text.isNotEmpty()) {
+                val start = ms(a[1], a[2], a[3], a[4])
+                val end = ms(b[1], b[2], b[3], b[4])
+                if (end > start) out += SubCue(start, end, text)
+            }
+        }
     }
     return out.sortedBy { it.start }
 }

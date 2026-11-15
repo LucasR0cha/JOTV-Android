@@ -213,11 +213,11 @@ class TraktService @Inject constructor(
             val dur = runtimeMin * 60_000L
             if (dur <= 0) continue
             val ep = p.optJSONObject("episode")
-            library.saveProgress(
+            library.importPlayback(
                 tmdbId = id, type = type, title = m.optString("title"), posterUrl = "",
                 positionMs = (dur * p.optDouble("progress", 0.0) / 100).toLong(), durationMs = dur,
                 lastEpisode = if (isEp && ep != null) "T${ep.optInt("season")}:E${ep.optInt("number")}" else "",
-                lastSourceUrl = "",
+                watchedAt = at,
                 profileId = profileId,
             )
         }
@@ -244,7 +244,8 @@ class TraktService @Inject constructor(
     // ── Avisos do player e da Minha Lista ─────────────────────────────────────
 
     /** [action] é start, pause ou stop (stop com 80% ou mais conta como visto no Trakt). */
-    fun scrobble(action: String, tmdbId: Int, type: String, season: Int, episode: Int, progress: Double) {
+    fun scrobble(action: String, tmdbId: Int, type: String, season: Int, episode: Int, progress: Double, positionMs: Long = 0, durationMs: Long = 0) {
+        multiTracker.scrobble(action, "", "", tmdbId, type == MediaType.SERIES.name, season, episode, progress / 100.0, positionMs, durationMs)
         if (!configured || session() == null || tmdbId <= 0) return
         val body = JSONObject().put("progress", progress.coerceIn(0.0, 100.0))
         val ids = JSONObject().put("ids", JSONObject().put("tmdb", tmdbId))
@@ -253,11 +254,11 @@ class TraktService @Inject constructor(
         } else body.put("movie", ids)
         scope.launch {
             runCatching { call("POST", "/scrobble/$action", body) }
-            multiTracker.scrobble(action, "", "", tmdbId, type == MediaType.SERIES.name, season, episode, progress / 100.0)
         }
     }
 
     fun watchlistChanged(tmdbId: Int, type: String, added: Boolean) {
+        if (tmdbId > 0) multiTracker.watchlist("", "", tmdbId, type == MediaType.SERIES.name, added)
         if (!configured || session() == null || tmdbId <= 0) return
         val one = JSONArray().put(JSONObject().put("ids", JSONObject().put("tmdb", tmdbId)))
         val body = JSONObject().put(if (type == MediaType.MOVIE.name) "movies" else "shows", one)

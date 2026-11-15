@@ -5,8 +5,13 @@ import com.joabtv.app.data.local.dao.WatchedEpisodeDao
 import com.joabtv.app.data.local.dao.WatchlistDao
 import com.joabtv.app.data.local.entity.MovieHistoryEntity
 import com.joabtv.app.data.local.entity.WatchedEpisodeEntity
+import com.joabtv.app.domain.model.MediaType
 import com.joabtv.app.data.local.entity.WatchlistEntity
 import com.joabtv.app.domain.model.MovieItem
+import com.joabtv.app.data.local.playbackKey
+import com.joabtv.app.data.local.playbackHiddenBefore
+import com.joabtv.app.data.local.hidePlayback
+import com.joabtv.app.data.local.unhidePlayback
 import androidx.room.withTransaction
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -85,6 +90,23 @@ class LibraryRepository @Inject constructor(
     suspend fun getPlayback(tmdbId: Int, type: String, profileId: String? = null): MovieHistoryEntity? =
         movieHistoryDao.get(profileId ?: pid, tmdbId, type)
 
+    suspend fun completePlayback(tmdbId: Int, type: String, episodeLabel: String = "") {
+        val profile = pid
+        db.withTransaction {
+            val current = movieHistoryDao.get(profile, tmdbId, type) ?: return@withTransaction
+            val episode = episodeLabel.ifBlank { current.lastEpisode }
+            if (type == MediaType.SERIES.name) {
+                val parts = Regex("T(\\d+):E(\\d+)", RegexOption.IGNORE_CASE).matchEntire(episode) ?: return@withTransaction
+                val season = parts.groupValues[1].toIntOrNull() ?: return@withTransaction
+                val number = parts.groupValues[2].toIntOrNull() ?: return@withTransaction
+                if (season <= 0 || number <= 0) return@withTransaction
+                markEpisodeWatched(tmdbId, season, number, profile)
+            }
+            val duration = current.durationMs.takeIf { episode == current.lastEpisode && it > 0 } ?: 1L
+            movieHistoryDao.upsert(current.copy(lastEpisode = episode, positionMs = duration, durationMs = duration, lastWatchedAt = System.currentTimeMillis()))
+        }
+    }
+
     /**
      * Registra uma reproducao (upsert). [lastEpisode] ex "T1:E3" para serie, vazio p/ filme.
      * [lastSourceUrl] = fonte usada (p/ retomar na mesma). Preserva valores antigos quando 0/vazio.
@@ -123,6 +145,7 @@ class LibraryRepository @Inject constructor(
         profileId: String? = null,
     ) {
         val targetPid = profileId ?: pid
+        prefs.setHistoryHidden(unhidePlayback(prefs.historyHidden(targetPid), playbackKey(tmdbId, type)), targetPid)
         val prev = movieHistoryDao.get(targetPid, tmdbId, type)
         movieHistoryDao.upsert(
             MovieHistoryEntity(
@@ -148,8 +171,10 @@ class LibraryRepository @Inject constructor(
     suspend fun importPlayback(
         tmdbId: Int, type: String, title: String, posterUrl: String,
         positionMs: Long, durationMs: Long, lastEpisode: String, watchedAt: Long, profileId: String? = null,
+        lastSourceUrl: String? = null, lastAddon: String? = null,
     ): Boolean {
         val target = profileId ?: pid
+        if (watchedAt <= playbackHiddenBefore(prefs.historyHidden(target), playbackKey(tmdbId, type))) return false
         val prev = movieHistoryDao.get(target, tmdbId, type)
         if (prev != null && prev.lastWatchedAt >= watchedAt) return false
         movieHistoryDao.upsert(
@@ -157,7 +182,9 @@ class LibraryRepository @Inject constructor(
                 profileId = target, tmdbId = tmdbId, type = type,
                 title = title.ifBlank { prev?.title.orEmpty() }, posterUrl = posterUrl.ifBlank { prev?.posterUrl.orEmpty() },
                 lastWatchedAt = watchedAt, positionMs = positionMs, durationMs = durationMs,
-                lastEpisode = lastEpisode, lastSourceUrl = prev?.lastSourceUrl.orEmpty(), lastAddon = prev?.lastAddon.orEmpty(),
+                lastEpisode = lastEpisode,
+                lastSourceUrl = lastSourceUrl ?: if (prev?.lastEpisode.orEmpty() == lastEpisode) prev?.lastSourceUrl.orEmpty() else "",
+                lastAddon = lastAddon ?: if (prev?.lastEpisode.orEmpty() == lastEpisode) prev?.lastAddon.orEmpty() else "",
             )
         )
         return true
@@ -174,10 +201,19 @@ class LibraryRepository @Inject constructor(
     }
 
     /** Remove UM item do "continuar assistindo". */
-    suspend fun removePlayback(tmdbId: Int, type: String) = movieHistoryDao.delete(pid, tmdbId, type)
+    suspend fun removePlayback(tmdbId: Int, type: String) {
+        val profile = pid
+        val previous = movieHistoryDao.get(profile, tmdbId, type)
+        prefs.setHistoryHidden(hidePlayback(prefs.historyHidden(profile), playbackKey(tmdbId, type), maxOf(System.currentTimeMillis(), previous?.lastWatchedAt ?: 0)), profile)
+        movieHistoryDao.delete(profile, tmdbId, type)
+    }
 
     /** Limpa todo o historico de reproducoes. */
-    suspend fun clearHistory() = movieHistoryDao.clear(pid)
+    suspend fun clearHistory() {
+        val profile = pid
+        prefs.setHistoryHidden(org.json.JSONObject().put("allBefore", System.currentTimeMillis()).put("items", org.json.JSONObject()).toString(), profile)
+        movieHistoryDao.clear(profile)
+    }
 
     // ----- Episodios vistos (WatchedEpisode) -----
 
@@ -202,7 +238,27 @@ class LibraryRepository @Inject constructor(
         )
     }
 
+    suspend fun markEpisodesWatched(seriesTmdbId: Int, episodes: List<Pair<Int, Int>>, profileId: String? = null) {
+        val profile = profileId ?: pid
+        val now = System.currentTimeMillis()
+        val entries = episodes.distinct().filter { it.first > 0 && it.second > 0 }.map { (season, episode) ->
+            WatchedEpisodeEntity(profileId = profile, seriesTmdbId = seriesTmdbId, season = season, episode = episode, watchedAt = now)
+        }
+        if (entries.isEmpty()) return
+        db.withTransaction {
+            watchedEpisodeDao.markWatchedBatch(entries)
+            val current = movieHistoryDao.get(profile, seriesTmdbId, MediaType.SERIES.name)
+            if (current != null && entries.any { current.lastEpisode.equals("T${it.season}:E${it.episode}", ignoreCase = true) }) {
+                val duration = current.durationMs.coerceAtLeast(1)
+                movieHistoryDao.upsert(current.copy(positionMs = duration, durationMs = duration, lastWatchedAt = now))
+            }
+        }
+    }
+
     /** Desmarca um episodio (remove de vistos). */
     suspend fun unmarkEpisodeWatched(seriesTmdbId: Int, season: Int, episode: Int) =
         watchedEpisodeDao.unmark(pid, seriesTmdbId, season, episode)
+
+    suspend fun allWatchedEpisodes(): List<WatchedEpisodeEntity> =
+        watchedEpisodeDao.getAll(pid)
 }

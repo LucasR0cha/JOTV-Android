@@ -57,6 +57,7 @@ data class StremioStream(
     val fileSize: Long = 0,
     val headers: Map<String, String> = emptyMap(),
     val subtitles: List<ExternalSub> = emptyList(),
+    val nzbUrl: String = "",
 )
 
 private data class StremioStreamDto(
@@ -64,11 +65,13 @@ private data class StremioStreamDto(
     @SerializedName("title") val title: String? = null,
     @SerializedName("description") val description: String? = null,
     @SerializedName("url") val url: String? = null,
+    @SerializedName("nzbUrl") val nzbUrl: String? = null,
     @SerializedName("infoHash") val infoHash: String? = null,
     @SerializedName("fileIdx") val fileIdx: Int? = null,
     @SerializedName("sources") val sources: List<String>? = null,
     // JsonElement de propósito, um formato inesperado de um addon não derruba as outras fontes dele.
     @SerializedName("behaviorHints") val behaviorHints: com.google.gson.JsonElement? = null,
+    @SerializedName("subtitles") val subtitles: com.google.gson.JsonElement? = null,
 )
 
 private data class StremioStreamResponse(
@@ -206,16 +209,18 @@ class StremioAddonService @Inject constructor(
         val ep = if (type == "series") episode else null
         val sn = if (type == "series") season else null
         streams.mapNotNull { s ->
+            val nzb = if (s.url.isNullOrBlank()) s.nzbUrl.orEmpty() else nzbLink(s.url).orEmpty()
             val raw = (s.title ?: s.name ?: "Stream")
             val file = hint(s.behaviorHints, "filename").orEmpty()
             // Texto inteiro com teto de tamanho, porque vem do addon.
-            val full = "${s.name.orEmpty()}\n${s.title.orEmpty()}\n${s.description.orEmpty()}\n$file".take(3000)
+            val full = "${if (nzb.isNotBlank()) "Usenet\n" else ""}${s.name.orEmpty()}\n${s.title.orEmpty()}\n${s.description.orEmpty()}\n$file".take(3000)
             // Resolução costuma vir no "name" ("FrostStream 1080p"). Sem ela, o nome do arquivo e
             // depois o texto todo (igual ao webOS).
             val rank = qualityRankOf(s.name.orEmpty()).takeIf { it > 0 }
                 ?: qualityRankOf(file).takeIf { it > 0 }
                 ?: qualityRankOf(full)
             val url = when {
+                nzb.startsWith("http") -> nzb
                 !s.url.isNullOrBlank() && s.url.startsWith("http") -> s.url
                 // Torrent toca pelo motor P2P embutido. Vira magnet estável com as dicas de qual arquivo tocar.
                 TorrentMagnet.isMagnet(s.url) -> TorrentMagnet.parse(s.url)?.let {
@@ -234,6 +239,9 @@ class StremioAddonService @Inject constructor(
                 hdr = hasHdr(full), dolbyVision = hasDolbyVision(full), atmos = hasAtmos(full), ptAudio = ptAudio(full),
                 releaseText = full, fileName = file.take(512),
                 fileSize = hint(s.behaviorHints, "videoSize")?.toLongOrNull()?.coerceAtLeast(0) ?: 0,
+                headers = streamHeaders(s.behaviorHints),
+                subtitles = parseStreamSubtitles(s.subtitles, url, addonName),
+                nzbUrl = nzb,
             )
         }.sortedByDescending { it.qualityRank } // 4K primeiro, depois 1080p, 720p…
     } }
@@ -336,15 +344,17 @@ class StremioAddonService @Inject constructor(
 
     /**
      * Uma página de um catálogo do addon. Lê {base}/catalog/{type}/{id}[/genre=G&skip=N].json.
+     * [extra] leva os outros filtros do manifest (ano e afins), na ordem de chegada.
      * Devolve null quando o addon não respondeu.
      */
-    suspend fun catalogMetas(base: String, type: String, id: String, skip: Int, genre: String? = null): List<AddonMeta>? = withContext(Dispatchers.IO) {
-        val extras = listOfNotNull(
-            genre?.takeIf { it.isNotBlank() }?.let { "genre=" + AddonLinks.encodeURIComponent(it) },
-            if (skip > 0) "skip=$skip" else null,
-        )
-        val path = "${AddonLinks.baseOf(base)}/catalog/$type/${AddonLinks.encodeURIComponent(id)}" +
-            (if (extras.isEmpty()) "" else "/" + extras.joinToString("&")) + ".json"
+    suspend fun catalogMetas(
+        base: String, type: String, id: String, skip: Int, genre: String? = null,
+        extra: Map<String, String> = emptyMap(),
+    ): List<AddonMeta>? = withContext(Dispatchers.IO) {
+        val filters = LinkedHashMap<String, String>()
+        genre?.takeIf { it.isNotBlank() }?.let { filters["genre"] = it }
+        extra.forEach { (k, v) -> filters.putIfAbsent(k, v) }
+        val path = AddonLinks.catalogUrl(base, type, id, filters, skip)
         val body = runCatching {
             client.newCall(Request.Builder().url(encodePath(path)).build()).execute()
                 .use { if (it.isSuccessful) it.body?.string() else null }
@@ -375,6 +385,28 @@ class StremioAddonService @Inject constructor(
             client.newCall(Request.Builder().url(url).build()).execute().use { if (it.isSuccessful) it.body?.string() else null }
         }.getOrNull() ?: return@withContext emptyList()
         runCatching { AddonLinks.collectionCatalogs(com.google.gson.JsonParser.parseString(body).asJsonObject) }.getOrDefault(emptyList())
+    }
+
+    private val discoverCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<AddonCatalogOption>>>()
+
+    /**
+     * Catálogos do addon com todos os filtros do manifest, para a aba Descobrir. O manifest muda pouco,
+     * então a resposta fica 10 minutos na memória. Falha de rede não entra no cache.
+     */
+    suspend fun discoverCatalogs(manifestUrl: String): List<AddonCatalogOption> = withContext(Dispatchers.IO) {
+        val url = normalizeManifestUrl(manifestUrl)
+        if (url.isBlank()) return@withContext emptyList()
+        discoverCache[url]?.let { (at, list) ->
+            if (System.currentTimeMillis() - at < 10 * 60_000) return@withContext list
+        }
+        val body = runCatching {
+            client.newCall(Request.Builder().url(url).build()).execute().use { if (it.isSuccessful) it.body?.string() else null }
+        }.getOrNull() ?: return@withContext emptyList()
+        val list = runCatching {
+            AddonLinks.discoverCatalogs(com.google.gson.JsonParser.parseString(body).asJsonObject, AddonLinks.baseOf(url))
+        }.getOrDefault(emptyList())
+        discoverCache[url] = System.currentTimeMillis() to list
+        list
     }
 
     private companion object {

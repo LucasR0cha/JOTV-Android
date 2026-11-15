@@ -46,6 +46,77 @@ class AddonLinksTest {
         assertEquals("s1", c[1].name) // sem nome usa o id
     }
 
+    @Test fun catalogos_do_descobrir_trazem_os_filtros_do_manifest() {
+        val m = JsonParser.parseString(
+            """{"id":"org.x","name":"Streaming","catalogs":[
+              {"type":"movie","id":"top","name":"Top 10","extra":[{"name":"genre","options":["Ação","Drama"]},{"name":"skip"}]},
+              {"type":"movie","id":"ano","name":"Por ano","extra":[{"name":"year","options":["2025","2024"],"isRequired":true},{"name":"genre","options":["Ação"]}]},
+              {"type":"series","id":"antigo","name":"Antigo","extraSupported":["genre","skip"],"extraRequired":["genre"],"genres":["Anime","Comédia"]},
+              {"type":"movie","id":"busca","extra":[{"name":"search","isRequired":true}]},
+              {"type":"movie","id":"sem-opcoes","extra":[{"name":"studio","isRequired":true}]},
+              {"type":"tv","id":"canais"},
+              {"type":"series","id":"simples"}
+            ]}""",
+        ).asJsonObject
+        val c = AddonLinks.discoverCatalogs(m, "https://x.dev")
+        // Busca obrigatória, filtro obrigatório sem opções e tipo tv ficam de fora.
+        assertEquals(listOf("top", "ano", "antigo", "simples"), c.map { it.id })
+        assertEquals("https://x.dev", c[0].base)
+        assertEquals(listOf("Ação", "Drama"), c[0].genres)
+        assertFalse(c[0].extras.single().required)
+        // Filtro obrigatório com opções entra e fica sem a escolha "Todos".
+        assertEquals(listOf("year", "genre"), c[1].extras.map { it.name })
+        assertTrue(c[1].extras[0].required)
+        // Formato antigo, com genres solto no catálogo e extraRequired.
+        assertEquals(listOf("Anime", "Comédia"), c[2].genres)
+        assertTrue(c[2].genreRequired)
+        assertTrue(c[3].extras.isEmpty())
+    }
+
+    @Test fun manifest_do_cinemeta_no_descobrir() {
+        // Estrutura do manifest real do Cinemeta (listas encurtadas). O genre do catálogo New são anos e é obrigatório.
+        val m = JsonParser.parseString(
+            """{"id":"com.linvo.cinemeta","name":"Cinemeta","catalogs":[
+              {"id":"top","type":"movie","name":"Popular","genres":["Action","Drama"],"extra":[{"name":"genre","options":["Action","Drama"]},{"name":"search"},{"name":"skip"}]},
+              {"id":"year","type":"movie","name":"New","genres":["2026","2025"],"extra":[{"name":"genre","options":["2026","2025"],"isRequired":true},{"name":"skip"}],"extraRequired":["genre"]},
+              {"id":"last-videos","type":"series","name":"Last videos","extra":[{"name":"lastVideosIds","isRequired":true}],"extraRequired":["lastVideosIds"]}
+            ]}""",
+        ).asJsonObject
+        val c = AddonLinks.discoverCatalogs(m, "https://v3-cinemeta.strem.io")
+        assertEquals(listOf("top", "year"), c.map { it.id })
+        // Busca sem opções não vira filtro, e o gênero opcional fica com a lista do extra.
+        assertEquals(listOf("genre"), c[0].extras.map { it.name })
+        assertEquals(listOf("Action", "Drama"), c[0].extras[0].options)
+        assertFalse(c[0].extras[0].required)
+        assertTrue(c[1].extras[0].required)
+        assertEquals("2026", c[1].extras[0].options.first())
+        assertEquals("Cinemeta", c[0].addonName)
+    }
+
+    @Test fun filtro_do_catalogo_tem_teto_de_opcoes() {
+        val many = (1..1500).joinToString(",") { "\"o$it\"" }
+        val m = JsonParser.parseString(
+            """{"id":"org.x","name":"X","catalogs":[
+              {"type":"movie","id":"a","extra":[{"name":"genre","options":[$many]}]},
+              {"type":"series","id":"b","genres":[$many]}
+            ]}""",
+        ).asJsonObject
+        val c = AddonLinks.discoverCatalogs(m, "https://x.dev")
+        assertEquals(1000, c[0].extras.single().options.size)
+        assertEquals("o1", c[0].extras.single().options.first())
+        // O formato antigo tem o mesmo teto.
+        assertEquals(1000, c[1].extras.single().options.size)
+    }
+
+    @Test fun endereco_do_catalogo_com_filtros_e_skip() {
+        assertEquals("https://x.dev/catalog/movie/top.json", AddonLinks.catalogUrl("https://x.dev/manifest.json", "movie", "top"))
+        assertEquals(
+            "https://x.dev/catalog/movie/top/genre=A%C3%A7%C3%A3o&year=2024&skip=40.json",
+            AddonLinks.catalogUrl("https://x.dev/", "movie", "top", linkedMapOf("genre" to "Ação", "year" to "2024", "skip" to "9", "vazio" to ""), 40),
+        )
+        assertEquals("https://x.dev/catalog/series/a%2Fb.json", AddonLinks.catalogUrl("https://x.dev", "series", "a/b"))
+    }
+
     @Test fun link_capturado_valido() {
         assertEquals(
             "https://torrentio.strem.fun/providers=yts%7Csort=qualitysize/manifest.json",

@@ -42,6 +42,8 @@ fun scopedKey(key: String, profileId: String): String =
 
 /** Preferências que são de cada perfil. O resto (addons, modo, chave TMDB, aberturas) é do aparelho. */
 internal val SCOPED_KEYS = listOf(
+    "pref_tracker_sessions",
+    "history_hidden_v1",
     "recent_searches", "ext_audio_v1", "home_catalogs_v1", "sub_size", "sub_bg",
     "pref_audio", "pref_max_quality", "pref_hero_trailer", "trakt_v1",
     "home_layout_v1", "home_hero_v1", "pref_subtitle_on", "pref_sub_lang", "collections_v1",
@@ -56,8 +58,7 @@ class PlatformPrefs @Inject constructor(
         // Chave TMDB do app (do usuário, uso pessoal). Prefere BuildConfig (gradle property)
         // se preenchida; senão usa o fallback embutido p/ o app funcionar out-of-the-box.
         private val DEFAULT_TMDB_KEY =
-            BuildConfig.TMDB_API_KEY.takeIf { it.isNotBlank() }
-                ?: "8f4da6ac6c23b76bddc2280e62616ecc"
+            BuildConfig.TMDB_API_KEY
 
         /** Chave do formato novo (JSON com ordem + ativo). */
         private const val KEY_ADDONS_V2 = "stremio_addons_v2"
@@ -258,6 +259,17 @@ class PlatformPrefs @Inject constructor(
     var simklToken: String
         get() = prefs.getString(sk("pref_simkl_token"), "").orEmpty()
         set(value) { prefs.edit().putString(sk("pref_simkl_token"), value).apply() }
+
+    var trackerSessions: String
+        get() = prefs.getString(sk("pref_tracker_sessions"), "{}").orEmpty()
+        set(value) { prefs.edit().putString(sk("pref_tracker_sessions"), value).apply() }
+
+    fun historyHidden(profileId: String = _profileId.value): String =
+        prefs.getString(scopedKey("history_hidden_v1", profileId), "{}").orEmpty()
+
+    fun setHistoryHidden(value: String, profileId: String = _profileId.value) {
+        prefs.edit().putString(scopedKey("history_hidden_v1", profileId), value).apply()
+    }
 
     var mdblistKey: String
         get() = prefs.getString(sk("pref_mdblist_key"), "").orEmpty()
@@ -697,5 +709,60 @@ class PlatformPrefs @Inject constructor(
             arr.put(o)
         }
         return arr.toString()
+    }
+
+    fun exportHomeLayoutJson(): org.json.JSONArray = runCatching {
+        org.json.JSONArray(HomeLayout.encode(homeLayout))
+    }.getOrDefault(org.json.JSONArray())
+
+    fun importHomeLayoutJson(arr: org.json.JSONArray) {
+        val decoded = HomeLayout.decode(arr.toString()) ?: return
+        saveLayout(decoded)
+    }
+
+    fun exportHomeCatalogsJson(): org.json.JSONArray = runCatching {
+        org.json.JSONArray(prefs.getString(sk(KEY_HOME_CATALOGS), "[]"))
+    }.getOrDefault(org.json.JSONArray())
+
+    fun importHomeCatalogsJson(arr: org.json.JSONArray) {
+        val clean = org.json.JSONArray()
+        for (idx in 0 until arr.length()) {
+            val o = arr.optJSONObject(idx) ?: continue
+            val b = o.optString("b").ifBlank { o.optString("base") }
+            val i = o.optString("i").ifBlank { o.optString("id") }
+            val t = o.optString("t").ifBlank { o.optString("type") }
+            val n = o.optString("n").ifBlank { o.optString("name") }
+            val a = o.optString("a").ifBlank { o.optString("addon") }
+            if (b.startsWith("http") && i.isNotBlank()) {
+                clean.put(org.json.JSONObject().put("b", b).put("t", t).put("i", i).put("n", n).put("a", a))
+            }
+        }
+        prefs.edit().putString(sk(KEY_HOME_CATALOGS), clean.toString()).apply()
+        refreshLayout()
+    }
+
+    fun exportCollectionsJson(): org.json.JSONArray = runCatching {
+        org.json.JSONArray(com.joabtv.app.data.collections.CollectionsJson.encode(_collections.value))
+    }.getOrDefault(org.json.JSONArray())
+
+    fun importCollectionsJson(arr: org.json.JSONArray) {
+        com.joabtv.app.data.collections.CollectionsJson.parse(arr.toString()).getOrNull()?.let { saveCollections(it) }
+    }
+
+    fun exportIntroMarksJson(): org.json.JSONObject = runCatching {
+        org.json.JSONObject(prefs.getString(KEY_INTRO_MARKS, null) ?: "{}")
+    }.getOrDefault(org.json.JSONObject())
+
+    fun importIntroMarksJson(obj: org.json.JSONObject) {
+        val cur = exportIntroMarksJson()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val arr = obj.optJSONArray(k) ?: continue
+            if (arr.length() >= 2 && arr.optLong(1, -1L) > arr.optLong(0, -1L)) {
+                cur.put(k, arr)
+            }
+        }
+        prefs.edit().putString(KEY_INTRO_MARKS, cur.toString()).apply()
     }
 }

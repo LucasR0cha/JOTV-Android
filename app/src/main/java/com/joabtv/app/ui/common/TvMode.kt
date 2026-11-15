@@ -74,8 +74,9 @@ fun ProvideTvMode(isTv: Boolean, content: @Composable () -> Unit) {
         LocalIndication provides TvFocusIndication,
         LocalRippleConfiguration provides RippleConfiguration(Color.White, RippleAlpha(0.16f, 0.32f, 0.08f, 0.24f)),
         androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides TvBringIntoView,
-        content = content,
-    )
+    ) {
+        com.joabtv.app.ui.tv.TvViewport(content)
+    }
 }
 
 /**

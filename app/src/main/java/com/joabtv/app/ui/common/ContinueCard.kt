@@ -52,7 +52,7 @@ fun ContinueCard(
         else artwork?.imageUrl.orEmpty().ifBlank { item.backdropUrl }.ifBlank { item.posterUrl }
     Box(Modifier.width(width).height(height).clip(shape).background(BackgroundCard)
         .onFocusChanged { focused = it.isFocused }
-        .combinedClickable(role = Role.Button, onClick = onClick, onLongClick = onLongClick)
+        .combinedClickable(role = Role.Button, onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "Opções do título")
         .then(if (focused) Modifier.border(2.dp, Color.White, shape) else Modifier)) {
         AsyncImage(image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, onError = { failed = true })
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(

@@ -10,12 +10,18 @@ import java.util.Locale
 
 internal data class ReleaseGroup(val members: List<StremioStream>) {
     val lead get() = members.first()
+    /** Chave do grupo, a do primeiro membro. Muda quando um addon de prioridade alta chega depois. */
+    val key get() = fileKeyOf(lead) ?: "u${lead.url}"
+    /** Link e arquivo de todos os membros. A identidade do cartão na tela vem daqui (ver [StableOrder]). */
+    val keys get() = members.flatMap { listOfNotNull("u${it.url}", fileKeyOf(it)) }
 }
+
+private fun fileKeyOf(s: StremioStream) =
+    if (s.fileName.isNotBlank() && s.fileSize > 0) "ffile:${s.fileName.lowercase(Locale.ROOT)}:${s.fileSize}" else null
 
 /** Só agrupa arquivos cuja identidade foi informada. Qualidade igual não prova que é o mesmo vídeo. */
 internal fun groupReleases(streams: List<StremioStream>): List<ReleaseGroup> = streams.groupBy { s ->
-    if (s.fileName.isNotBlank() && s.fileSize > 0) "file:${s.fileName.lowercase(Locale.ROOT)}:${s.fileSize}"
-    else "url:${s.url}"
+    fileKeyOf(s) ?: "url:${s.url}"
 }.values.map { ReleaseGroup(it) }
 
 /**
@@ -43,6 +49,15 @@ private val RELEASE_KIND = Regex("\\b(web[ .-]?dl|web[ .-]?rip|blu[ .-]?ray|remu
 private val RELEASE_SIZE = Regex("\\b(\\d{1,6}(?:[.,]\\d{1,3})?)\\s?(TiB|GiB|MiB|TB|GB|MB)\\b", RegexOption.IGNORE_CASE)
 private val RELEASE_SEEDS = Regex("(?:👤|👥|🌱|\\bseed(?:er)?s?\\s?)\\s{0,3}[:=]?\\s{0,3}(\\d{1,8})", RegexOption.IGNORE_CASE)
 private val RELEASE_FILE = Regex("(?:\\.mkv|\\.mp4|\\.avi|\\.S\\d{1,2}E\\d{1,3}\\.)", RegexOption.IGNORE_CASE)
+// Compilados uma vez só. Dentro da função cada cartão refazia todos a cada recomposição.
+private val RELEASE_HDR10P = Regex("HDR10\\+|HDR10Plus", RegexOption.IGNORE_CASE)
+private val RELEASE_USENET = Regex("""\busenet\b|\beasynews\b|\bnzb\b""", RegexOption.IGNORE_CASE)
+private val RELEASE_USENET_URL = Regex("""^nzb:|^usenet:|\.nzb(\?|$)""", RegexOption.IGNORE_CASE)
+private val RELEASE_TRUEHD = Regex("\\btrue[ .-]?hd\\b", RegexOption.IGNORE_CASE)
+private val RELEASE_DDP = Regex("\\bddp|e[ .-]?ac3|dd\\+", RegexOption.IGNORE_CASE)
+private val RELEASE_DTS = Regex("\\bdts(?:[ .-]?hd)?\\b", RegexOption.IGNORE_CASE)
+private val RELEASE_CHANNELS = Regex("\\b[257]\\.[01]\\b")
+private val RELEASE_SUBBED = Regex("legendad|\\bleg\\b|\\bsubbed\\b", RegexOption.IGNORE_CASE)
 
 internal fun releaseInfo(stream: StremioStream, title: String, providers: List<String> = emptyList()): SourceInfo {
     val text = stream.releaseText.ifBlank { stream.label }.take(3000)
@@ -55,18 +70,18 @@ internal fun releaseInfo(stream: StremioStream, title: String, providers: List<S
         ?.replace("WEBRIP", "WEBRip")?.replace("BLURAY", "BluRay")
     val badges = buildList {
         if (stream.dolbyVision || hasDolbyVision(text)) add("Dolby Vision")
-        if (stream.hdr || hasHdr(text)) add(if (Regex("HDR10\\+|HDR10Plus", RegexOption.IGNORE_CASE).containsMatchIn(text)) "HDR10+"
+        if (stream.hdr || hasHdr(text)) add(if (RELEASE_HDR10P.containsMatchIn(text)) "HDR10+"
             else if (text.contains("HDR10", true)) "HDR10" else "HDR")
         if (stream.atmos || hasAtmos(text)) add("Atmos")
-        if (Regex("""\busenet\b|\beasynews\b|\bnzb\b""", RegexOption.IGNORE_CASE).containsMatchIn(text) || Regex("""^nzb:|^usenet:|\.nzb(\?|$)""", RegexOption.IGNORE_CASE).containsMatchIn(stream.url)) add("Usenet")
-        if (Regex("\\btrue[ .-]?hd\\b", RegexOption.IGNORE_CASE).containsMatchIn(text)) add("TrueHD")
-        if (Regex("\\bddp|e[ .-]?ac3|dd\\+", RegexOption.IGNORE_CASE).containsMatchIn(text)) add("DD+")
-        if (Regex("\\bdts(?:[ .-]?hd)?\\b", RegexOption.IGNORE_CASE).containsMatchIn(text)) add("DTS")
-        Regex("\\b[257]\\.[01]\\b").find(text)?.value?.let(::add)
+        if (RELEASE_USENET.containsMatchIn(text) || RELEASE_USENET_URL.containsMatchIn(stream.url)) add("Usenet")
+        if (RELEASE_TRUEHD.containsMatchIn(text)) add("TrueHD")
+        if (RELEASE_DDP.containsMatchIn(text)) add("DD+")
+        if (RELEASE_DTS.containsMatchIn(text)) add("DTS")
+        RELEASE_CHANNELS.find(text)?.value?.let(::add)
     }
     val language = when {
         stream.ptAudio || ptAudio(text) -> "Dublado"
-        Regex("legendad|\\bleg\\b|\\bsubbed\\b", RegexOption.IGNORE_CASE).containsMatchIn(text) -> "Legendado"
+        RELEASE_SUBBED.containsMatchIn(text) -> "Legendado"
         else -> base.language
     }
     val bytes = stream.fileSize

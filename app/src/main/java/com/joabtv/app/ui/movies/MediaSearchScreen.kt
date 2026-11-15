@@ -21,9 +21,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.LocalMovies
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -213,11 +211,22 @@ private fun ColumnScope.SearchBody(
             }
 
             query.isBlank() -> {
+                var confirmClearRecents by remember { mutableStateOf(false) }
                 RecentSearches(
                     recents = recents,
                     onPick = viewModel::onQueryChange,
                     onRemove = viewModel::removeRecent,
-                    onClearAll = viewModel::clearRecents,
+                    onClearAll = { confirmClearRecents = true },
+                )
+                if (confirmClearRecents) AlertDialog(
+                    onDismissRequest = { confirmClearRecents = false },
+                    containerColor = BackgroundCard,
+                    title = { Text("Limpar buscas recentes?", color = TextPrimary, fontWeight = FontWeight.ExtraBold) },
+                    text = { Text("Todas as pesquisas salvas deste perfil serão apagadas.", color = TextSecondary) },
+                    confirmButton = {
+                        TextButton(onClick = { viewModel.clearRecents(); confirmClearRecents = false }) { Text("Limpar", color = DangerText) }
+                    },
+                    dismissButton = { TextButton(onClick = { confirmClearRecents = false }) { Text("Cancelar", color = TextSecondary) } },
                 )
             }
 

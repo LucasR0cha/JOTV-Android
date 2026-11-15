@@ -110,7 +110,9 @@ private fun TabbedContent(st: FolderViewModel.UiState, vm: FolderViewModel, onIt
             modifier = Modifier.padding(horizontal = pad, vertical = 24.dp),
         )
         else -> LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 112.dp),
+            // Na TV o pôster tem a medida da Início (com 3% de folga). Os 112 dp do celular davam uns 8,4 rem, dez por linha.
+            columns = if (com.joabtv.app.ui.common.LocalIsTv.current) GridCells.Adaptive(com.joabtv.app.ui.tv.tvPosterWidth * 0.97f)
+            else GridCells.Adaptive(minSize = 112.dp),
             state = grid,
             contentPadding = PaddingValues(start = pad, end = pad, top = 8.dp, bottom = 32.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -142,8 +144,9 @@ private fun RowsContent(st: FolderViewModel.UiState, vm: FolderViewModel, onItem
                         val row = rememberLazyListState()
                         val nearEnd by remember { derivedStateOf { (row.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= row.layoutInfo.totalItemsCount - 4 } }
                         LaunchedEffect(nearEnd, tab.items.size) { if (nearEnd) vm.loadMore(tab.key) }
+                        val cardWidth = if (com.joabtv.app.ui.common.LocalIsTv.current) com.joabtv.app.ui.tv.tvPosterWidth else 128.dp
                         LazyRow(state = row, contentPadding = PaddingValues(horizontal = pad), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            items(tab.items, key = { "${it.type}:${it.tmdbId}" }) { item -> PosterItem(item, onItemClick, Modifier.width(128.dp)) }
+                            items(tab.items, key = { "${it.type}:${it.tmdbId}" }) { item -> PosterItem(item, onItemClick, Modifier.width(cardWidth)) }
                         }
                     }
                 }

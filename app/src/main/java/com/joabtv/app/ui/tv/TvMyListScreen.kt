@@ -50,12 +50,24 @@ private fun TvMyListScreenBody(
     val artwork by vm.recentArtwork.collectAsStateWithLifecycle()
     var filter by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf<Triple<String, String, () -> Unit>?>(null) }
+    var continueOptions by remember { mutableStateOf<com.joabtv.app.data.local.entity.MovieHistoryEntity?>(null) }
     val gs = rememberLazyGridState()
 
     fun type(raw: String) = runCatching { MediaType.valueOf(raw) }.getOrDefault(MediaType.MOVIE)
     fun stub(id: Int, t: String, title: String, poster: String, year: String) =
         MovieItem(id, "", title, "", poster, "", year, 0.0, type = type(t))
 
+    continueOptions?.let { h ->
+        val item = stub(h.tmdbId, h.type, h.title, h.posterUrl, "")
+        TvContinueOptions(
+            title = h.title, episode = h.lastEpisode,
+            canMark = h.type != MediaType.SERIES.name || Regex("T\\d+:E\\d+", RegexOption.IGNORE_CASE).matches(h.lastEpisode),
+            onDetails = { continueOptions = null; onItemClick(item) },
+            onMark = { continueOptions = null; vm.completeContinue(h) },
+            onRemove = { continueOptions = null; confirm = Triple("Remover de Continuar assistindo?", h.title) { vm.removeFromContinue(h.tmdbId, h.type) } },
+            onDismiss = { continueOptions = null },
+        )
+    }
     confirm?.let { (t, body, ok) ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirm = null },
@@ -102,7 +114,12 @@ private fun TvMyListScreenBody(
                     val p = m.measure(c.copy(minWidth = c.maxWidth + extra, maxWidth = c.maxWidth + extra))
                     layout(c.maxWidth, p.height) { p.place(-extra / 2, 0) }
                 }) {
-                    TvRail("Continuar assistindo", eyebrow = "Recentes", trailing = { TvCountPill(count(recent.size)) }) {
+                    TvRail("Continuar assistindo", eyebrow = "Recentes", trailing = {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(1.r)) {
+                            Text("Segure OK para opções", color = TextTertiary, fontSize = .9.rs)
+                            TvCountPill(count(recent.size))
+                        }
+                    }) {
                         items(recent, key = { "${it.tmdbId}:${it.type}" }) { h ->
                             val ep = h.lastEpisode.replace(":", " ")
                             TvContinueCard(
@@ -111,7 +128,7 @@ private fun TvMyListScreenBody(
                                 progress = if (h.durationMs > 0) h.positionMs.toFloat() / h.durationMs else null,
                                 remaining = if (h.durationMs > h.positionMs) ((h.durationMs - h.positionMs) / 60_000L).toInt() else null,
                                 episode = ep,
-                                onLongClick = { confirm = Triple("Remover de Continuar assistindo?", h.title) { vm.removeFromContinue(h.tmdbId, h.type) } },
+                                onLongClick = { continueOptions = h },
                             )
                         }
                     }

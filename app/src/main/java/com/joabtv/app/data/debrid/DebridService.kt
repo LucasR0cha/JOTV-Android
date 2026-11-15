@@ -21,6 +21,7 @@ import javax.inject.Singleton
 @Singleton
 class DebridService @Inject constructor(
     @ApplicationContext context: Context,
+    private val platformPrefs: com.joabtv.app.data.local.PlatformPrefs,
 ) {
     private val prefs = context.getSharedPreferences("joabtv_debrid", Context.MODE_PRIVATE)
     private val http = DebridHttp(
@@ -123,7 +124,7 @@ class DebridService @Inject constructor(
                 val ok = if (a.provider == DebridProvider.TORBOX) tb.cached(a.token, todo) else pm.cached(a.token, todo)
                 todo.forEach { cache["${a.provider.id}:$it"] = it in ok }
             }
-            DebridProvider.REAL_DEBRID -> magnets.filter { m -> hashOf(m) in todo }.take(rdTop).forEach { resolve(it, season, episode) }
+            DebridProvider.REAL_DEBRID -> if (!platformPrefs.debridCachedOnly) magnets.filter { m -> hashOf(m) in todo }.take(rdTop).forEach { resolve(it, season, episode) }
         }
         hashes.mapNotNull { h -> cache["${a.provider.id}:$h"]?.let { h to it } }.toMap()
     }
@@ -134,6 +135,23 @@ class DebridService @Inject constructor(
     /** Link pronto por 15 min (o serviço dá algumas horas, mas a fonte pode mudar). */
     private val resolved = ConcurrentHashMap<String, Hit>()
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<DebridResolve>>()
+    private val resolvedUsenet = ConcurrentHashMap<String, Hit>()
+
+    fun resolvedUsenetNow(link: String, season: Int = 0, episode: Int = 0): String? {
+        val account = active() ?: return null
+        return resolvedUsenet["${account.token}|$link|$season:$episode"]?.takeIf { System.currentTimeMillis() - it.at < RESOLVED_TTL }?.result?.url
+    }
+
+    suspend fun resolveUsenet(link: String, season: Int, episode: Int): DebridResolve = withContext(Dispatchers.IO) {
+        val account = active() ?: return@withContext DebridResolve.Failed("Conecte o TorBox para abrir arquivos NZB")
+        if (account.provider != DebridProvider.TORBOX) return@withContext DebridResolve.Failed("Esta fonte NZB precisa do TorBox")
+        resolvedUsenetNow(link, season, episode)?.let { return@withContext DebridResolve.Ok(it, account.provider) }
+        val result = try { tb.resolveUsenet(account.token, link, season, episode) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { DebridResolve.Failed("O TorBox não respondeu. Tente novamente") }
+        if (result is DebridResolve.Ok) resolvedUsenet["${account.token}|$link|$season:$episode"] = Hit(result, System.currentTimeMillis())
+        result
+    }
 
     /** Link já resolvido para o magnet, sem rede. Serve para o Chromecast. */
     fun resolvedNow(magnet: String?, season: Int = 0, episode: Int = 0): String? {
@@ -229,6 +247,30 @@ class DebridService @Inject constructor(
     private fun writeSettings(s: DebridSettings) {
         prefs.edit().putBoolean("enabled", s.enabled).putString("preferred", s.preferred).putBoolean("hide_uncached", s.hideUncached).apply()
         _settings.value = s
+    }
+
+    fun exportBackupJson(): org.json.JSONObject = org.json.JSONObject().apply {
+        val rawAccounts = prefs.getString("accounts", "[]") ?: "[]"
+        put("accounts", runCatching { org.json.JSONArray(rawAccounts) }.getOrDefault(org.json.JSONArray()))
+        val s = _settings.value
+        put("enabled", s.enabled)
+        put("preferred", s.preferred)
+        put("hideUncached", s.hideUncached)
+    }
+
+    fun importBackupJson(obj: org.json.JSONObject) {
+        obj.optJSONArray("accounts")?.let { arr ->
+            prefs.edit().putString("accounts", arr.toString()).apply()
+            _accounts.value = readAccounts()
+        }
+        val cur = _settings.value
+        writeSettings(
+            DebridSettings(
+                enabled = obj.optBoolean("enabled", cur.enabled),
+                preferred = obj.optString("preferred", cur.preferred),
+                hideUncached = obj.optBoolean("hideUncached", cur.hideUncached),
+            )
+        )
     }
 
     private companion object {

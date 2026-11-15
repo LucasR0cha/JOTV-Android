@@ -731,6 +731,7 @@ fun MoviesNavigation(
                 onProfile = { navController.navigate(MoviesRoute.Profiles.route) },
             )
         }
+        com.joabtv.app.ui.settings.AppUpdateHost(allowPrompt = currentRoute == MoviesRoute.Home.route || currentRoute == MoviesRoute.Settings.route)
     }
     }
 }
@@ -872,6 +873,7 @@ private fun MinhaListaScreen(
 
     // Itens pendentes de remoção (segurar → confirma), um por seção.
     var pendingRemove by remember { mutableStateOf<com.joabtv.app.data.local.entity.MovieHistoryEntity?>(null) }
+    var continueOptions by remember { mutableStateOf<com.joabtv.app.data.local.entity.MovieHistoryEntity?>(null) }
     var pendingUnsave by remember { mutableStateOf<com.joabtv.app.data.local.entity.WatchlistEntity?>(null) }
     // Filtro do grid de salvos. "" = tudo.
     var filter by remember { mutableStateOf("") }
@@ -910,6 +912,19 @@ private fun MinhaListaScreen(
 
     fun typeOf(raw: String): MediaType =
         runCatching { MediaType.valueOf(raw) }.getOrDefault(MediaType.MOVIE)
+
+    continueOptions?.let { h ->
+        val item = rebuild(h.tmdbId, typeOf(h.type), h.title, h.posterUrl, "")
+        com.joabtv.app.ui.common.ContinueOptionsDialog(
+            title = h.title, episode = h.lastEpisode,
+            imageUrl = recentArtwork[com.joabtv.app.data.local.posterKey(item)]?.imageUrl.orEmpty().ifBlank { item.backdropUrl },
+            canMark = h.type != MediaType.SERIES.name || Regex("T\\d+:E\\d+", RegexOption.IGNORE_CASE).matches(h.lastEpisode),
+            onDetails = { continueOptions = null; onItemClick(item) },
+            onMark = { continueOptions = null; vm.completeContinue(h) },
+            onRemove = { continueOptions = null; pendingRemove = h },
+            onDismiss = { continueOptions = null },
+        )
+    }
 
     val hasBothTypes = remember(watchlist) {
         watchlist.any { it.type == "MOVIE" } && watchlist.any { it.type == "SERIES" }
@@ -953,7 +968,12 @@ private fun MinhaListaScreen(
                 item {
                     com.joabtv.app.ui.common.SectionHeader(
                         title = "Continuar assistindo",
-                        action = { CountPill(recent.size) },
+                        action = {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Segure para opções", color = com.joabtv.app.ui.theme.TextTertiary, fontSize = 12.sp)
+                                CountPill(recent.size)
+                            }
+                        },
                     )
                 }
                 item {
@@ -975,7 +995,7 @@ private fun MinhaListaScreen(
                                 remaining = if (h.durationMs > h.positionMs) ((h.durationMs - h.positionMs + 59_999) / 60_000).toInt() else null,
                                 episode = h.lastEpisode,
                                 progress = pct,
-                                onLongClick = { pendingRemove = h }, // segurar → remover
+                                onLongClick = { continueOptions = h },
                             )
                         }
                     }

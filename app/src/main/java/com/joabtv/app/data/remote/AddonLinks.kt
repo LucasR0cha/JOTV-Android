@@ -19,7 +19,14 @@ data class AddonCatalogOption(
     val name: String,
     val genres: List<String> = emptyList(),
     val genreRequired: Boolean = false,
+    /** Base do addon. Só o Descobrir preenche, a pasta da coleção guarda o id do addon. */
+    val base: String = "",
+    /** Todos os filtros com lista de opções que o manifest declara, o gênero entre eles. */
+    val extras: List<AddonCatalogExtra> = emptyList(),
 )
+
+/** Filtro de catálogo (extra com opções do manifest), como gênero ou ano. Com [required] não existe "Todos". */
+data class AddonCatalogExtra(val name: String, val options: List<String>, val required: Boolean)
 
 /** Campo do formulário de configuração que o manifest declara em `config`. */
 data class AddonConfigField(
@@ -56,6 +63,9 @@ data class CommunityAddon(
 object AddonLinks {
 
     private val gson = GsonBuilder().disableHtmlEscaping().create()
+
+    /** Teto de opções por filtro de catálogo. Um manifest sem limite poderia travar a tela do Descobrir. */
+    private const val MAX_OPTIONS = 1000
 
     /**
      * Normaliza o que o usuário colar, igual o Stremio aceita.
@@ -164,6 +174,58 @@ object AddonLinks {
                 ?.mapNotNull { o -> o.takeIf { it.isJsonPrimitive }?.asString?.takeIf { s -> s.isNotBlank() } }.orEmpty()
             AddonCatalogOption(addonId, addonName, type, id, c.str("name").ifBlank { id }, genres, "genre" in required)
         }
+    }
+
+    /**
+     * Catálogos de filme e série da aba Descobrir, com os filtros que o manifest declara. Cada extra
+     * com lista de opções (gênero, ano, o que o addon inventar) vira um filtro. Catálogo que exige um
+     * extra sem opções, como a busca, fica de fora. Aceita também o formato antigo do manifest
+     * (extraRequired e a lista genres solta no catálogo).
+     */
+    fun discoverCatalogs(manifest: JsonObject, base: String): List<AddonCatalogOption> {
+        val addonId = manifest.str("id")
+        if (addonId.isBlank()) return emptyList()
+        val addonName = manifest.str("name").ifBlank { addonId }
+        val arr = manifest.arr("catalogs") ?: return emptyList()
+        return arr.mapNotNull { el ->
+            val c = el.obj() ?: return@mapNotNull null
+            val type = c.str("type")
+            val id = c.str("id")
+            if (id.isBlank() || (type != "movie" && type != "series")) return@mapNotNull null
+            val declared = c.arr("extra")?.mapNotNull { it.obj() }.orEmpty()
+            val required = declared.filter { it.bool("isRequired") }.map { it.str("name") }.toMutableSet()
+            required += c.strings("extraRequired")
+            val extras = declared.mapNotNull { e ->
+                val name = e.str("name")
+                val options = e.strings("options").distinct().take(MAX_OPTIONS)
+                if (name.isBlank() || name == "skip" || name == "search" || options.isEmpty()) null
+                else AddonCatalogExtra(name, options, name in required)
+            }.distinctBy { it.name }.toMutableList()
+            if (extras.none { it.name == "genre" }) {
+                val legacy = c.strings("genres").distinct().take(MAX_OPTIONS)
+                if (legacy.isNotEmpty()) extras += AddonCatalogExtra("genre", legacy, "genre" in required)
+            }
+            // Exige um filtro que o Descobrir não sabe preencher.
+            if (required.any { r -> r.isNotBlank() && extras.none { it.name == r } }) return@mapNotNull null
+            val genre = extras.firstOrNull { it.name == "genre" }
+            AddonCatalogOption(
+                addonId, addonName, type, id, c.str("name").ifBlank { id },
+                genres = genre?.options.orEmpty(), genreRequired = genre?.required == true,
+                base = base, extras = extras,
+            )
+        }
+    }
+
+    /**
+     * Endereço de uma página do catálogo. Os filtros vão no trecho extra do Stremio, na ordem em que
+     * chegam e com o skip no fim (genre=Ação&skip=40). Filtro sem valor e o nome skip são ignorados.
+     */
+    fun catalogUrl(base: String, type: String, id: String, extra: Map<String, String> = emptyMap(), skip: Int = 0): String {
+        val parts = extra.filter { (k, v) -> k.isNotBlank() && v.isNotBlank() && k != "skip" }
+            .map { (k, v) -> encodeURIComponent(k) + "=" + encodeURIComponent(v) } +
+            (if (skip > 0) listOf("skip=$skip") else emptyList())
+        return baseOf(base) + "/catalog/" + encodeURIComponent(type) + "/" + encodeURIComponent(id) +
+            (if (parts.isEmpty()) "" else "/" + parts.joinToString("&")) + ".json"
     }
 
     private val linkRegex = Regex("""(?i)(stremio|https?)://[^\s"'<>`]+?/manifest\.json""")

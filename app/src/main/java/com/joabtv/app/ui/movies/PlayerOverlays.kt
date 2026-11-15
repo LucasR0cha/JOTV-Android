@@ -36,6 +36,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.sp
 import com.joabtv.app.ui.common.Eyebrow
 import com.joabtv.app.ui.common.rememberReducedMotion
@@ -54,6 +56,7 @@ internal fun BoxScope.ExternalSubtitle(
     withBg: Boolean,
     isTv: Boolean,
     raised: Boolean,
+    bottomInset: Dp? = null,
 ) {
     var subPos by remember { mutableLongStateOf(0L) }
     LaunchedEffect(cues, player) {
@@ -71,8 +74,8 @@ internal fun BoxScope.ExternalSubtitle(
         style = androidx.compose.ui.text.TextStyle(
             shadow = if (withBg) null else androidx.compose.ui.graphics.Shadow(Color.Black, blurRadius = 8f),
         ),
-        modifier = Modifier.align(Alignment.BottomCenter)
-            .padding(start = 24.dp, end = 24.dp, bottom = if (raised) 190.dp else 32.dp)
+        modifier = Modifier.align(Alignment.BottomCenter).zIndex(2f)
+            .padding(start = 24.dp, end = 24.dp, bottom = bottomInset ?: if (raised) 190.dp else 32.dp)
             .then(if (withBg) Modifier.clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.78f)) else Modifier)
             .padding(horizontal = 12.dp, vertical = 6.dp),
     )
@@ -92,12 +95,12 @@ internal fun CastingOverlay(title: String) {
 
 /** Botão Pular abertura (.pl-skip). Branco com texto escuro. */
 @Composable
-internal fun SkipIntroButton(raised: Boolean, label: String = "Pular abertura", onClick: () -> Unit) {
+internal fun SkipIntroButton(raised: Boolean, label: String = "Pular abertura", bottomInset: Dp? = null, onClick: () -> Unit) {
     Row(
         Modifier
             // O vídeo ocupa a tela toda, inclusive o recorte da câmera. O botão fica fora dele.
             .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
-            .padding(end = 20.dp, bottom = if (raised) 150.dp else 34.dp)
+            .padding(end = 20.dp, bottom = bottomInset ?: if (raised) 150.dp else 34.dp)
             .heightIn(min = 48.dp)
             .shadow(10.dp, RoundedCornerShape(14.dp))
             .clip(RoundedCornerShape(14.dp))
@@ -275,14 +278,23 @@ internal fun NextEpisodeCard(isSeason: Boolean, line: String, countdown: Int, on
     }
 }
 
-/** Nenhuma fonte serviu (.pl-fail). O player volta ao detalhe sozinho. */
+/** Mantém as opções disponíveis quando uma fonte falha. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun SourceFailedOverlay() {
+internal fun SourceFailedOverlay(onSources: () -> Unit, onRetry: () -> Unit, onBack: () -> Unit) {
+    val first = remember { FocusRequester() }
+    val tv = com.joabtv.app.ui.common.LocalIsTv.current
+    LaunchedEffect(tv) { if (tv) first.requestFocus() }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.86f)), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.widthIn(max = 600.dp).fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Icon(Icons.Default.ErrorOutline, null, tint = Danger, modifier = Modifier.size(56.dp))
             Text("Fonte indisponível", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, fontFamily = Inter)
-            Text("Não foi possível carregar este título agora.", color = TextSecondary, fontSize = 15.sp)
+            Text("Esta fonte não iniciou. Você pode tentar novamente ou escolher outra versão.", color = TextSecondary, textAlign = TextAlign.Center)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.Button(onClick = onSources, modifier = Modifier.heightIn(min = 48.dp).focusRequester(first)) { Text("Escolher fonte") }
+                androidx.compose.material3.OutlinedButton(onClick = onRetry, modifier = Modifier.heightIn(min = 48.dp)) { Text("Tentar novamente") }
+                androidx.compose.material3.TextButton(onClick = onBack, modifier = Modifier.heightIn(min = 48.dp)) { Text("Voltar") }
+            }
         }
     }
 }

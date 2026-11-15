@@ -12,6 +12,7 @@ import org.junit.Test
 /** Rede de mentira. Cada chamada procura a primeira regra cujo trecho aparece na URL. */
 private class FakeHttp(private val rules: MutableList<Pair<String, () -> DebridHttp.Res>>) : DebridHttp(null) {
     val calls = mutableListOf<String>()
+    val posted = mutableListOf<List<Pair<String, String>>>()
     private fun answer(method: String, url: String): DebridHttp.Res {
         calls += "$method $url"
         val i = rules.indexOfFirst { url.contains(it.first) }
@@ -20,7 +21,10 @@ private class FakeHttp(private val rules: MutableList<Pair<String, () -> DebridH
     override fun get(url: String, bearer: String?) = answer("GET", url)
     override fun form(url: String, fields: List<Pair<String, String>>, bearer: String?) = answer("POST", url)
     override fun json(url: String, body: String, bearer: String?) = answer("POST", url)
-    override fun multipart(url: String, fields: List<Pair<String, String>>, bearer: String?) = answer("POST", url)
+    override fun multipart(url: String, fields: List<Pair<String, String>>, bearer: String?): DebridHttp.Res {
+        posted += fields
+        return answer("POST", url)
+    }
     override fun delete(url: String, bearer: String?) = answer("DELETE", url)
 }
 
@@ -95,6 +99,20 @@ class DebridApisTest {
     fun `torbox sem cache vira NotCached`() {
         val http = FakeHttp(mutableListOf("createtorrent" to { res("""{"success":false,"detail":"Torrent is not cached"}""", 400) }))
         assertEquals(DebridResolve.NotCached, TorBoxApi(http).resolve("k", magnet, TorrentSpec(hash, emptyList()), 0, 0))
+    }
+
+    @Test fun `usenet nunca inicia download sem cache e escolhe o episodio certo`() {
+        val http = FakeHttp(mutableListOf(
+            "createusenetdownload" to { res("""{"success":true,"data":{"usenet_id":42}}""") },
+            "/usenet/mylist" to { res("""{"success":true,"data":{"files":[{"id":1,"name":"Show.S02E03.mkv","size":950},{"id":2,"name":"Show.S02E04.mkv","size":900}]}}""") },
+            "/usenet/requestdl" to { res("""{"success":true,"data":"https://video.example/4.mkv"}""") },
+        ))
+        assertEquals(DebridResolve.Ok("https://video.example/4.mkv", DebridProvider.TORBOX), TorBoxApi(http).resolveUsenet("chave-falsa", "https://indexer.example/pack.nzb", 2, 4))
+        assertTrue(http.posted.single().contains("add_only_if_cached" to "true"))
+        assertTrue(http.calls.last().contains("usenet_id=42&file_id=2"))
+        val uncached = FakeHttp(mutableListOf("createusenetdownload" to { res("""{"success":false,"error":"not_cached"}""", 400) }))
+        assertEquals(DebridResolve.NotCached, TorBoxApi(uncached).resolveUsenet("chave-falsa", "https://indexer.example/pack.nzb", 2, 4))
+        assertEquals(1, uncached.calls.size)
     }
 
     @Test

@@ -42,16 +42,39 @@ class MovieDetailViewModel @Inject constructor(
     // URLs já mandadas pro teste. A lista é recriada a cada addon que responde, então o
     // resultado fica por URL em [UiState.probes].
     private val probing = mutableSetOf<String>()
+    // Resultados de teste ainda não aplicados. Um por fonte refazia a tela inteira a cada um.
+    // Tudo aqui roda na thread principal (viewModelScope), então não precisa de trava.
+    private val probeBatch = HashMap<String, com.joabtv.app.data.remote.ProbeResult>()
+    private var probesRunning = 0
+    private var probeFlush: kotlinx.coroutines.Job? = null
 
     /** Testa as fontes novas (64 KB cada, 4 por vez no prober) e guarda o resultado. */
     private fun verify(streams: List<com.joabtv.app.data.remote.StremioStream>) {
         streams.filter { it.url.startsWith("http") && probing.add(it.url) }.forEach { stream ->
+            probesRunning++
             viewModelScope.launch {
-                val r = prober.probe(stream.url, stream.headers)
-                _uiState.update { it.copy(probes = it.probes + (stream.url to r)) }
+                try {
+                    probeBatch[stream.url] = prober.probe(stream.url, stream.headers)
+                } finally {
+                    probesRunning--
+                }
+                // Aplica em lote a cada 450 ms. Quando a fila zera, aplica o que sobrou na hora.
+                if (probesRunning == 0) { probeFlush?.cancel(); probeFlush = null; flushProbes() }
+                else if (probeFlush == null) probeFlush = viewModelScope.launch {
+                    kotlinx.coroutines.delay(450)
+                    probeFlush = null
+                    flushProbes()
+                }
             }
         }
         scheduleDebridCheck()
+    }
+
+    private fun flushProbes() {
+        if (probeBatch.isEmpty()) return
+        val batch = HashMap(probeBatch)
+        probeBatch.clear()
+        _uiState.update { it.copy(probes = it.probes + batch) }
     }
 
     private var debridJob: kotlinx.coroutines.Job? = null
@@ -230,7 +253,7 @@ class MovieDetailViewModel @Inject constructor(
             } else {
                 // "Vendo": tem progresso mas ainda não passou de 90% (não terminou).
                 val notFinished = pb.durationMs <= 0 || pb.positionMs < pb.durationMs * 0.9
-                val watching = if (notFinished) {
+                val watching = if (notFinished && pb.positionMs > 0L) {
                     Regex("T(\\d+):E(\\d+)").find(pb.lastEpisode)?.let { m ->
                         val s = m.groupValues[1].toIntOrNull(); val e = m.groupValues[2].toIntOrNull()
                         if (s != null && e != null) epKey(s, e) else ""
@@ -502,6 +525,36 @@ class MovieDetailViewModel @Inject constructor(
             // (C) também registra a série no "continuar assistindo" com o último episódio
             library.recordPlayback(item, lastEpisode = "T$season:E$episode")
         }
+    }
+
+    suspend fun setEpisodeViewed(season: Int, episode: Int) {
+        val id = stubItem?.tmdbId ?: return
+        library.markEpisodesWatched(id, listOf(season to episode))
+        val current = library.getPlayback(id, MediaType.SERIES.name)
+        if (current != null && current.lastEpisode.equals("T$season:E$episode", true)) {
+            _uiState.update { it.copy(resumePositionMs = current.positionMs, resumeDurationMs = current.durationMs, watchingEpisode = "") }
+        }
+    }
+
+    suspend fun markEpisodeRange(episode: EpisodeItem, previousOnly: Boolean): Int {
+        val id = stubItem?.tmdbId ?: return 0
+        val profile = prefs.profileId.value
+        val cached = _uiState.value.seasons
+        val selected = collectEpisodeWatchRange(episode, previousOnly) { number ->
+            cached[number]?.takeIf { it.isNotEmpty() } ?: run {
+                val key = prefs.tmdbApiKey
+                check(key.isNotBlank()) { "TMDB indisponível" }
+                tmdb.getSeason(id, number, apiKey = key).episodes.map { it.toDomain() }
+            }
+        }
+        library.markEpisodesWatched(id, selected, profile)
+        if (prefs.profileId.value == profile) {
+            val current = library.getPlayback(id, MediaType.SERIES.name, profile)
+            if (current != null && selected.any { current.lastEpisode.equals("T${it.first}:E${it.second}", true) }) {
+                _uiState.update { it.copy(resumePositionMs = current.positionMs, resumeDurationMs = current.durationMs, watchingEpisode = "") }
+            }
+        }
+        return selected.size
     }
 
     // ───────────────────────── (A) FONTES DO EPISÓDIO SELECIONADO ─────────────────────────

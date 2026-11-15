@@ -16,21 +16,28 @@ android {
         minSdk         = 23
         targetSdk      = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode    = 18
-        versionName    = "1.0.17"
+        versionCode    = 21
+        versionName    = "1.0.20"
         // Chave TMDB lida de gradle property (local.properties / ~/.gradle/gradle.properties),
         // fora do VCS. Sem ela, fica vazia e o usuário informa a própria chave em Configurações.
         val tmdbKey = (project.findProperty("TMDB_API_KEY") as String?) ?: ""
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbKey\"")
-        val simklClientId = (project.findProperty("SIMKL_CLIENT_ID") as String?) ?: ""
-        buildConfigField("String", "SIMKL_CLIENT_ID", "\"$simklClientId\"")
         // Trakt (trakt.tv/oauth/applications). Lido do local.properties, que não vai para o git.
         // Vazio deixa o Trakt desligado e escondido nas Configurações.
         val local = Properties().apply {
             rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
         }
+        val trackerApps = rootProject.file("shared/tracker-apps.json").takeIf { it.exists() }?.let {
+            groovy.json.JsonSlurper().parse(it) as Map<*, *>
+        }.orEmpty()
         buildConfigField("String", "TRAKT_CLIENT_ID", "\"${local.getProperty("TRAKT_CLIENT_ID", "")}\"")
         buildConfigField("String", "TRAKT_CLIENT_SECRET", "\"${local.getProperty("TRAKT_CLIENT_SECRET", "")}\"")
+        buildConfigField("String", "SIMKL_CLIENT_ID", "\"${local.getProperty("SIMKL_CLIENT_ID", trackerApps["simkl"]?.toString().orEmpty())}\"")
+        buildConfigField("String", "WETRAKR_CLIENT_ID", "\"${local.getProperty("WETRAKR_CLIENT_ID", trackerApps["wetrakr"]?.toString().orEmpty())}\"")
+        val updateConfig = groovy.json.JsonSlurper().parse(rootProject.file("shared/update-config.json")) as Map<*, *>
+        val updateRepository = updateConfig["repository"]?.toString().orEmpty()
+        require(updateRepository.matches(Regex("[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}")))
+        buildConfigField("String", "UPDATE_REPOSITORY", "\"$updateRepository\"")
     }
     buildTypes {
         release {
@@ -130,6 +137,7 @@ dependencies {
     // Media3 (ExoPlayer HLS)
     implementation("androidx.media3:media3-exoplayer:1.6.0")
     implementation("androidx.media3:media3-exoplayer-hls:1.6.0")
+    implementation("androidx.media3:media3-exoplayer-dash:1.6.0")
     implementation("androidx.media3:media3-ui:1.6.0")
     // DataSource via OkHttp → ExoPlayer usa o MESMO DNS-over-HTTPS dos streams.
     implementation("androidx.media3:media3-datasource-okhttp:1.6.0")

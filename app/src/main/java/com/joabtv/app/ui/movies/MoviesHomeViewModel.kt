@@ -38,6 +38,7 @@ class MoviesHomeViewModel @Inject constructor(
     collections: com.joabtv.app.data.collections.CollectionsRepository,
     private val posterInfo: com.joabtv.app.data.local.PosterInfo,
     private val continueArt: com.joabtv.app.data.repository.ContinueArtworkRepository,
+    trackerSync: com.joabtv.app.data.remote.TrackerSyncService,
 ) : ViewModel() {
     /** Coleções do perfil, para as fileiras de pastas da Início. */
     val collectionsFlow: StateFlow<List<com.joabtv.app.data.collections.MediaCollection>> = collections.flow
@@ -46,6 +47,7 @@ class MoviesHomeViewModel @Inject constructor(
         // Abrir a Início (e trocar de perfil, que reabre o app) sincroniza com o Trakt.
         // ponytail: sem o intervalo de 30 min do webOS, a sincronia roda a cada abertura da Início.
         trakt.syncInBackground()
+        trackerSync.syncInBackground()
     }
 
 
@@ -980,6 +982,15 @@ class MoviesHomeViewModel @Inject constructor(
             }
             sectionLoadingMore.remove(sectionId)
         }
+    }
+
+    /** Remove um título de Continuar assistindo no histórico do perfil atual. */
+    fun removeFromContinue(tmdbId: Int, type: MediaType) {
+        viewModelScope.launch { library.removePlayback(tmdbId, type.name) }
+    }
+
+    fun completeContinue(item: MovieItem, episode: String) {
+        viewModelScope.launch { library.completePlayback(item.tmdbId, item.type.name, episode) }
     }
 }
 
