@@ -15,8 +15,8 @@ O catálogo vem do TMDB, em português. Os vídeos vêm dos addons e dos plugins
 [![Baixar para Android](https://img.shields.io/badge/Android-baixar%20o%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](../../releases/latest)
 [![Baixar para LG webOS](https://img.shields.io/badge/LG%20webOS-baixar%20o%20IPK-A50034?style=for-the-badge&logo=lg&logoColor=white)](../../releases/latest)
 [![Baixar para Samsung Tizen](https://img.shields.io/badge/Samsung%20Tizen-baixar%20o%20WGT-1428A0?style=for-the-badge&logo=samsung&logoColor=white)](../../releases/latest)
-[![Baixar para Windows](https://img.shields.io/badge/Windows-baixar%20o%20instalador-0078D4?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest)
-[![Baixar para Linux](https://img.shields.io/badge/Linux-Debian%20e%20AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.1)
+[![Baixar para Windows](https://img.shields.io/badge/Windows-baixar%20o%20instalador-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.12)
+[![Baixar para Linux](https://img.shields.io/badge/Linux-Debian%20e%20AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.2)
 
 [Novidades](#novidades) · [Na TV](#na-tv) · [No celular](#no-celular) · [No Windows](#no-windows) · [No Linux](#no-linux) · [Tudo o que o app faz](#tudo-o-que-o-app-faz) · [Instalação](#instalação) · [Para desenvolvedores](#para-desenvolvedores)
 
@@ -37,6 +37,17 @@ próprio perfil com lista, histórico e progresso.
 O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-legal).
 
 ## Novidades
+
+### Som de outra fonte no Windows e no Linux
+
+Ouvir a dublagem de uma versão sobre a imagem de outra agora funciona no computador. Antes, o painel Áudio
+mostrava essa parte toda desligada. Agora o **Som de outra fonte** toca pelo próprio mpv, com a sincronia
+ajustável de sempre. Vale qualquer som que o mpv decodifica (AAC, AC3, E-AC3, DTS) e também lista HLS. As
+fontes de debrid e os arquivos NZB do TorBox são resolvidos antes, como na fonte principal. A escolha aparece
+marcada na hora, trocar a fonte principal religa o som, link que falha volta o som original e a escolha fica
+salva por título. Torrent P2P sem conta de debrid fica de fora, porque o motor do app abre um torrent por vez.
+
+[Baixar o Windows 0.2.12](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.12) e [baixar o Linux 0.1.2](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.2).
 
 ### Tizen Legacy, a Samsung de 2017 em diante
 
@@ -275,7 +286,7 @@ pode ficar numa pasta da sua conta. Os dois formatos preservam addons, plugins, 
 histórico, coleções e preferências. O backup JSON permite trazer os dados de outra versão do JOTV.
 Os avisos de atualização identificam o formato instalado antes de escolher o download.
 
-As versões 0.1.0 e 0.1.1 foram testadas em Linux isolado, com vídeo e legenda externa em 720p e 1080p. A validação
+As versões 0.1.0, 0.1.1 e 0.1.2 foram testadas em Linux isolado, com vídeo e legenda externa em 720p e 1080p. A validação
 em computador físico, saída HDMI, HDR e áudio multicanal continua pendente. A reprodução de torrent usa o mesmo motor do Windows e ainda não foi exercitada nessa validação.
 
 ## Tudo o que o app faz
@@ -397,8 +408,8 @@ em computador físico, saída HDMI, HDR e áudio multicanal continua pendente. A
 ## Instalação
 
 Todos os arquivos ficam na página de **[Releases](../../releases)**. Não precisa compilar nada.
-O Linux tem sua própria [release 0.1.1](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.1).
-As versões atuais de Android, LG, Samsung e Windows estão na [release v1.0.20](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.20).
+O Windows e o Linux têm cada um a sua release, a [windows-v0.2.12](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.12) e a [linux-v0.1.2](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.2).
+As versões atuais de Android, LG e Samsung estão na [release v1.0.20](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.20).
 
 | Aparelho | Arquivo | Precisa de |
 |---|---|---|
@@ -483,7 +494,7 @@ A TV de 2016 (Tizen 2.4) não é atendida.
 <details>
 <summary><b>Windows</b></summary>
 
-1. Baixe o `JOTV-Windows-v<versão>-setup.exe` da Release e abra.
+1. Baixe o `JOTV-Windows-v<versão>-setup.exe` da [release do Windows](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.12) e abra.
 2. O instalador não tem assinatura digital paga, então o Windows pode avisar que protegeu o computador. Clique em **Mais informações** e depois em **Executar assim mesmo**.
 3. O JOTV abre em tela cheia. F11 ou Alt+Enter alternam a tela cheia, e o mouse no topo da tela mostra os botões de sair da tela cheia, minimizar e fechar.
 
@@ -492,33 +503,33 @@ A TV de 2016 (Tizen 2.4) não é atendida.
 <details>
 <summary><b>Linux</b></summary>
 
-Escolha um dos dois formatos da [release Linux 0.1.1](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.1).
+Escolha um dos dois formatos da [release Linux 0.1.2](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.2).
 
 **Debian ou Ubuntu compatível**
 
-Baixe [JOTV-Linux-v0.1.1-amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.1/JOTV-Linux-v0.1.1-amd64.deb)
+Baixe [JOTV-Linux-v0.1.2-amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.2/JOTV-Linux-v0.1.2-amd64.deb)
 e execute na pasta do arquivo. O instalador busca as dependências da distribuição.
 
 ```sh
-sudo apt install ./JOTV-Linux-v0.1.1-amd64.deb
+sudo apt install ./JOTV-Linux-v0.1.2-amd64.deb
 ```
 
 Depois, abra o JOTV pelo menu de aplicativos.
 
 **AppImage portátil**
 
-Baixe [JOTV-Linux-v0.1.1-x86_64.AppImage](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.1/JOTV-Linux-v0.1.1-x86_64.AppImage),
+Baixe [JOTV-Linux-v0.1.2-x86_64.AppImage](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.2/JOTV-Linux-v0.1.2-x86_64.AppImage),
 dê permissão de execução e abra o arquivo.
 
 ```sh
-chmod +x ./JOTV-Linux-v0.1.1-x86_64.AppImage
-./JOTV-Linux-v0.1.1-x86_64.AppImage
+chmod +x ./JOTV-Linux-v0.1.2-x86_64.AppImage
+./JOTV-Linux-v0.1.2-x86_64.AppImage
 ```
 
 Se o sistema não tiver FUSE, use a extração temporária do próprio AppImage.
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./JOTV-Linux-v0.1.1-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./JOTV-Linux-v0.1.2-x86_64.AppImage
 ```
 
 Em uma sessão Wayland, o JOTV usa XWayland, que precisa estar instalado. Faça um backup nas
