@@ -16,7 +16,7 @@ O catálogo vem do TMDB, em português. Os vídeos vêm dos addons e dos plugins
 [![Baixar para LG webOS](https://img.shields.io/badge/LG%20webOS-baixar%20o%20IPK-A50034?style=for-the-badge&logo=lg&logoColor=white)](../../releases/latest)
 [![Baixar para Samsung Tizen](https://img.shields.io/badge/Samsung%20Tizen-baixar%20o%20WGT-1428A0?style=for-the-badge&logo=samsung&logoColor=white)](../../releases/latest)
 [![Baixar para Windows](https://img.shields.io/badge/Windows-baixar%20o%20instalador-0078D4?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest)
-[![Baixar para Linux](https://img.shields.io/badge/Linux-Debian%20e%20AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.0)
+[![Baixar para Linux](https://img.shields.io/badge/Linux-Debian%20e%20AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.1)
 
 [Novidades](#novidades) · [Na TV](#na-tv) · [No celular](#no-celular) · [No Windows](#no-windows) · [No Linux](#no-linux) · [Tudo o que o app faz](#tudo-o-que-o-app-faz) · [Instalação](#instalação) · [Para desenvolvedores](#para-desenvolvedores)
 
@@ -37,6 +37,63 @@ próprio perfil com lista, histórico e progresso.
 O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-legal).
 
 ## Novidades
+
+### Tizen Legacy, a Samsung de 2017 em diante
+
+O JOTV agora instala em TVs Samsung com **Tizen 3.0 ou mais novo**, de 2017 em diante. Antes o mínimo
+era o Tizen 5.5, de 2020. O arquivo `JOTV-Tizen` é um só e abre no modo certo sozinho, escolhido pelo
+que o navegador da TV sabe fazer e não pelo número da versão.
+
+| Ano da TV | Tizen | Modo |
+|---|---|---|
+| 2017 | 3.0 | Tizen Legacy |
+| 2018 | 4.0 | Tizen Legacy |
+| 2019 | 5.0 | Tizen Legacy |
+| 2020 em diante | 5.5 ou mais novo | Completo, como antes |
+
+No **Tizen Legacy** a interface é a mesma, com os mesmos temas, estilos de menu, Descobrir, Coleções,
+player, perfis e backup. Nos testes cada tela saiu igual à do modo completo em todas as combinações de
+tema e de menu. Ficam de fora os Plugins e o P2P, que pedem recursos que esses navegadores não têm. A TV
+de 2017, a mais fraca, começa com o movimento da interface reduzido, e dá para mudar em Ajustes. A TV de
+2016 (Tizen 2.4) não é atendida.
+
+O modo foi conferido no navegador que a Tizen 3.0 usa (Chromium 47), em computador, com as telas, o
+controle remoto, o player e o HLS. Ainda não foi instalado numa TV Samsung de 2017.
+
+### Descobrir com os catálogos dos seus addons
+
+O Descobrir passa a ler os catálogos dos addons ligados e os filtros que cada um declara, como o Nuvio faz.
+A escolha **TMDB · Filtros avançados** fica no topo da lista e mantém os filtros de antes. Filtro obrigatório
+abre na primeira opção, a lista rola sem fim pelo avanço do próprio addon, e trocar entre Filmes e Séries
+mantém o mesmo catálogo quando o addon tem os dois. O perfil infantil não vê catálogo de addon. Está no
+Android (celular e TV), na LG, na Samsung, no Windows e no Linux.
+
+Na Android TV o Descobrir e a pasta das Coleções agora têm pôsteres do mesmo tamanho grande da Início, em
+qualquer Tamanho da interface e em qualquer estilo de menu.
+
+### Opções nos cartões e nos episódios
+
+Segurar o cartão de Continuar assistindo no celular, segurar OK na Android TV e o botão direito ou o clique
+longo no computador abrem **Ir para detalhes**, **Marcar como assistido** e **Remover**. No detalhe da série,
+cada episódio ganha as marcações do episódio, dos anteriores e da temporada inteira. O Verificar atualizações
+foi para a seção Sobre das Configurações.
+
+### Lista de fontes que não pula
+
+A lista de fontes deixa de trocar de ordem a cada addon que responde. O que apareceu fica onde está, o que
+chega depois entra embaixo, e a ordem de prioridade vale uma vez ao fim da busca, se você não mexeu na lista.
+A busca continua em todos os addons ao mesmo tempo. Na LG, com um filme de 547 fontes, a lista mudou de
+ordem uma vez em vez de dez, e o tempo em tarefas longas da tela de fontes caiu de uns 70 segundos para
+menos de 7.
+
+### Player ao vivo com mouse no computador
+
+No Windows e no Linux, mexer o mouse no player ao vivo mostra a informação e clicar abre a lista de canais.
+Os botões viram ícones redondos que mostram o nome ao passar o mouse, como no player de filmes.
+
+### Linux 0.1.1
+
+O Linux acompanha o Windows 0.2.11, com tudo o que está acima. [Baixar o Linux 0.1.1 e ver as notas da versão](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.1).
 
 ### Linux 0.1.0
 
@@ -170,8 +227,8 @@ vídeo, com a lista e a programação, e o CH+ e o CH- trocam de canal.
 
 ## Na TV
 
-Versões próprias para **LG webOS** e **Samsung Tizen**, leves e feitas para o controle remoto, e o
-mesmo APK do celular na **Android TV**.
+Versões próprias para **LG webOS** e **Samsung Tizen** (da TV de 2017 em diante, com o modo Tizen Legacy), leves e
+feitas para o controle remoto, e o mesmo APK do celular na **Android TV**.
 
 <table>
   <tr>
@@ -179,7 +236,7 @@ mesmo APK do celular na **Android TV**.
     <td width="50%"><img src="docs/readme/tv-detalhe.jpg" alt="Detalhe de um filme na TV"><br><b>Detalhe</b><br><sub>Logo do título, nota, classificação, sinopse e o Assistir que já sabe a melhor fonte.</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/readme/tv-descobrir.jpg" alt="Tela Descobrir com filtros"><br><b>Descobrir</b><br><sub>Filtros de conteúdo, ordem, gênero, ano, classificação e nota mínima.</sub></td>
+    <td width="50%"><img src="docs/readme/tv-descobrir.jpg" alt="Tela Descobrir com filtros"><br><b>Descobrir</b><br><sub>Filtros de conteúdo, ordem, gênero, ano, classificação e nota mínima, ou os catálogos e filtros dos seus addons.</sub></td>
     <td width="50%"><img src="docs/readme/tv-busca.jpg" alt="Busca com teclado na tela"><br><b>Busca</b><br><sub>Teclado na tela pensado para o controle e buscas recentes.</sub></td>
   </tr>
   <tr>
@@ -218,7 +275,7 @@ pode ficar numa pasta da sua conta. Os dois formatos preservam addons, plugins, 
 histórico, coleções e preferências. O backup JSON permite trazer os dados de outra versão do JOTV.
 Os avisos de atualização identificam o formato instalado antes de escolher o download.
 
-A versão 0.1.0 foi testada em Linux isolado, com vídeo e legenda externa em 720p e 1080p. A validação
+As versões 0.1.0 e 0.1.1 foram testadas em Linux isolado, com vídeo e legenda externa em 720p e 1080p. A validação
 em computador físico, saída HDMI, HDR e áudio multicanal continua pendente. A reprodução de torrent usa o mesmo motor do Windows e ainda não foi exercitada nessa validação.
 
 ## Tudo o que o app faz
@@ -340,15 +397,15 @@ em computador físico, saída HDMI, HDR e áudio multicanal continua pendente. A
 ## Instalação
 
 Todos os arquivos ficam na página de **[Releases](../../releases)**. Não precisa compilar nada.
-O Linux tem sua própria [release 0.1.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.0).
-As versões atuais de Android, LG, Samsung e Windows estão na [release v1.0.19](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.19).
+O Linux tem sua própria [release 0.1.1](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.1).
+As versões atuais de Android, LG, Samsung e Windows estão na [release v1.0.20](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.20).
 
 | Aparelho | Arquivo | Precisa de |
 |---|---|---|
 | Celular ou tablet Android | `JOTV-v*.apk` | Android 6 ou mais novo |
 | Android TV e Google TV | `JOTV-v*.apk` | Android TV 6 ou mais novo |
 | TV LG | `JOTV-webOS-v*.ipk` | webOS 4 ou mais novo, em modo desenvolvedor |
-| TV Samsung | `JOTV-Tizen-v*.wgt` | Tizen 5.5 ou mais novo (TVs de 2020 em diante), em modo desenvolvedor |
+| TV Samsung | `JOTV-Tizen-v*.wgt` | Tizen 3.0 ou mais novo (TVs de 2017 em diante), em modo desenvolvedor. De 2017 a 2019 abre no modo Tizen Legacy, sem Plugins e P2P |
 | Computador | `JOTV-Windows-v*-setup.exe` | Windows 10 ou 11 de 64 bits |
 | Linux Debian ou Ubuntu compatível | `JOTV-Linux-v*-amd64.deb` | x86_64, glibc 2.35 ou mais nova e X11 ou XWayland |
 | Linux portátil | `JOTV-Linux-v*-x86_64.AppImage` | x86_64, glibc 2.35 ou mais nova e X11 ou XWayland |
@@ -417,6 +474,10 @@ renove a sessão (o IP e a frase podem mudar).
 O `.wgt` sai assinado com certificado de desenvolvedor, o que basta para uso pessoal em modo
 desenvolvedor. Ele não serve para a loja da Samsung.
 
+O mesmo arquivo serve para qualquer TV com Tizen 3.0 ou mais novo. Em TVs de 2017 a 2019 (Tizen 3.0, 4.0 e 5.0)
+ele abre no modo **Tizen Legacy**, sem Plugins e sem P2P. Em TVs de 2020 em diante abre no modo completo.
+A TV de 2016 (Tizen 2.4) não é atendida.
+
 </details>
 
 <details>
@@ -431,33 +492,33 @@ desenvolvedor. Ele não serve para a loja da Samsung.
 <details>
 <summary><b>Linux</b></summary>
 
-Escolha um dos dois formatos da [release Linux 0.1.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.0).
+Escolha um dos dois formatos da [release Linux 0.1.1](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.1).
 
 **Debian ou Ubuntu compatível**
 
-Baixe [JOTV-Linux-v0.1.0-amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.0/JOTV-Linux-v0.1.0-amd64.deb)
+Baixe [JOTV-Linux-v0.1.1-amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.1/JOTV-Linux-v0.1.1-amd64.deb)
 e execute na pasta do arquivo. O instalador busca as dependências da distribuição.
 
 ```sh
-sudo apt install ./JOTV-Linux-v0.1.0-amd64.deb
+sudo apt install ./JOTV-Linux-v0.1.1-amd64.deb
 ```
 
 Depois, abra o JOTV pelo menu de aplicativos.
 
 **AppImage portátil**
 
-Baixe [JOTV-Linux-v0.1.0-x86_64.AppImage](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.0/JOTV-Linux-v0.1.0-x86_64.AppImage),
+Baixe [JOTV-Linux-v0.1.1-x86_64.AppImage](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.1/JOTV-Linux-v0.1.1-x86_64.AppImage),
 dê permissão de execução e abra o arquivo.
 
 ```sh
-chmod +x ./JOTV-Linux-v0.1.0-x86_64.AppImage
-./JOTV-Linux-v0.1.0-x86_64.AppImage
+chmod +x ./JOTV-Linux-v0.1.1-x86_64.AppImage
+./JOTV-Linux-v0.1.1-x86_64.AppImage
 ```
 
 Se o sistema não tiver FUSE, use a extração temporária do próprio AppImage.
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./JOTV-Linux-v0.1.0-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./JOTV-Linux-v0.1.1-x86_64.AppImage
 ```
 
 Em uma sessão Wayland, o JOTV usa XWayland, que precisa estar instalado. Faça um backup nas
