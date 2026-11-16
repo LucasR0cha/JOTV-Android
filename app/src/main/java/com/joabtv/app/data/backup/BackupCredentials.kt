@@ -24,9 +24,12 @@ internal fun portableTrackers(tokens: Map<String, String>, sessions: String): JS
     return JSONObject().apply {
         tokens.filterValues { it.isNotBlank() }.forEach { (id, token) ->
             val saved = metadata.optJSONObject(names[id].orEmpty())
-            put(id, JSONObject().put(if (id == "simkl" || id == "wetrakr") "token" else "key", token)
+            // MDBList por código sai como "token" com auth oauth, para ninguém ler como chave da API.
+            val oauth = com.joabtv.app.data.remote.trackerSessionIsOAuth(saved)
+            put(id, JSONObject().put(if (id == "simkl" || id == "wetrakr" || oauth) "token" else "key", token)
                 .put("client", saved?.optString("client_id").orEmpty())
-                .put("refresh", saved?.optString("refresh_token").orEmpty()).put("expires", saved?.optLong("expires_at") ?: 0))
+                .put("refresh", saved?.optString("refresh_token").orEmpty()).put("expires", saved?.optLong("expires_at") ?: 0)
+                .apply { if (oauth) put("auth", "oauth") })
         }
     }
 }
@@ -39,7 +42,8 @@ internal fun androidTrackerSessions(data: JSONObject, previous: String): String 
     mapOf("simkl" to "SIMKL", "wetrakr" to "WETRAKR", "mdblist" to "MDBLIST", "publicmetadb" to "PUBLICMETA").forEach { (id, name) ->
         data.optJSONObject(id)?.let { item ->
             if (backupTrackerToken(item).isNotBlank()) sessions.put(name, JSONObject().put("client_id", item.optString("client"))
-                .put("refresh_token", item.optString("refresh")).put("expires_at", item.optLong("expires")))
+                .put("refresh_token", item.optString("refresh")).put("expires_at", item.optLong("expires"))
+                .put("oauth", item.optString("auth") == "oauth" || item.optString("refresh").isNotBlank()))
         }
     }
     return sessions.toString()

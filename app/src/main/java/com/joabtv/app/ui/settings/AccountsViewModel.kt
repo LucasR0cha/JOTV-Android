@@ -41,6 +41,7 @@ class AccountsViewModel @Inject constructor(
     private val nuvio: NuvioAccountService,
     private val hub: AccountsHub,
     private val prefs: PlatformPrefs,
+    private val history: com.joabtv.app.data.sync.HistorySync,
 ) : ViewModel() {
 
     /**
@@ -72,6 +73,8 @@ class AccountsViewModel @Inject constructor(
         val login: LoginFlow? = null,
         /** Entrada em andamento ("nuvio_code", "stremio_login"...). Trava o segundo toque. */
         val busy: String? = null,
+        /** Sincronia do histórico de cada conta com o perfil ativo. */
+        val sync: Map<Account, com.joabtv.app.data.sync.HistorySync.Status> = emptyMap(),
     ) {
         fun snap(a: Account) = if (a == Account.NUVIO) nuvio else stremio
     }
@@ -89,9 +92,15 @@ class AccountsViewModel @Inject constructor(
         combine(hub.nuvioState, hub.stremioState, prefs.importLogFlow, hub.running, hub.nuvioProfiles) { n, s, log, run, pr ->
             Ui(n, s, log, run, pr, hub.nuvioPick(), prefs.profile.name)
         },
-        local, prefs.profileId,
-    ) { base, l, _ -> base.copy(profileName = prefs.profile.name, login = l.login, busy = l.busy) }
+        local, prefs.profileId, history.status,
+    ) { base, l, _, sync -> base.copy(profileName = prefs.profile.name, login = l.login, busy = l.busy, sync = sync) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, build(Local()))
+
+    /** Liga ou desliga o sync do histórico desta conta para o perfil ativo. */
+    fun setSync(a: Account, on: Boolean) = history.setEnabled(a, on)
+
+    /** Sincroniza agora, sem esperar os intervalos. */
+    fun syncNow(a: Account) = history.syncNow(a)
 
     private val _toasts = MutableSharedFlow<String>(extraBufferCapacity = 4)
     /** Avisos curtos para quem está olhando outra coisa. O resultado de verdade fica em O que veio. */
@@ -169,6 +178,11 @@ class AccountsViewModel @Inject constructor(
                 onFailure = { e -> local.update { it.copy(busy = null, login = cur.copy(error = e.message ?: "Não deu para entrar")) } },
             )
         }
+    }
+
+    /** Abre o passo Trazer tudo para uma conta que já está conectada (a pessoa fechou o diálogo antes de trazer). */
+    fun openImport(a: Account) {
+        local.update { it.copy(busy = null, login = LoginFlow.Step(a, null)) }
     }
 
     /** Fecha o diálogo de entrada, em qualquer passo. */

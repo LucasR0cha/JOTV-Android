@@ -162,4 +162,38 @@ class DebridApisTest {
         assertEquals(1_764_547_200_000L, isoMs("2025-12-01T00:00:00+00:00"))
         assertEquals(0L, isoMs(""))
     }
+
+    @Test
+    fun `consulta de cache do real-debrid nunca toca na conta`() {
+        // O Real-Debrid tirou a consulta. O único jeito de saber era adicionar o torrent, que começava a baixar no
+        // servidor e enchia a conta de fonte que ninguém escolheu. Para ele a resposta é "não sei", sem pedido nenhum.
+        val http = FakeHttp(mutableListOf("addMagnet" to { res("""{"id":"T1"}""", 201) }))
+        val out = CacheCheck(TorBoxApi(http), PremiumizeApi(http)).cached(DebridProvider.REAL_DEBRID, "tok", listOf(hash, "b".repeat(40)))
+        assertTrue("o Real-Debrid não sabe o que está pronto", out.isEmpty())
+        assertTrue("a consulta não pode adicionar torrent na conta: ${http.calls}", http.calls.isEmpty())
+    }
+
+    @Test
+    fun `consulta de cache do torbox e do premiumize e em lote e nao cria nada`() {
+        val other = "b".repeat(40)
+        val tb = FakeHttp(mutableListOf("checkcached" to { res("""{"success":true,"data":{"$hash":{"name":"x","size":1}}}""") }))
+        assertEquals(mapOf(hash to true, other to false), CacheCheck(TorBoxApi(tb), PremiumizeApi(tb)).cached(DebridProvider.TORBOX, "k", listOf(hash, other)))
+        assertEquals(1, tb.calls.size)
+        assertTrue(tb.calls.single().contains("checkcached"))
+        val pm = FakeHttp(mutableListOf("cache/check" to { res("""{"status":"success","response":[true,false]}""") }))
+        assertEquals(mapOf(hash to true, other to false), CacheCheck(TorBoxApi(pm), PremiumizeApi(pm)).cached(DebridProvider.PREMIUMIZE, "k", listOf(hash, other)))
+        assertEquals(1, pm.calls.size)
+        assertTrue(pm.calls.single().contains("cache/check"))
+    }
+
+    @Test
+    fun `tocar a fonte escolhida continua adicionando no real-debrid`() {
+        val http = FakeHttp(mutableListOf(
+            "addMagnet" to { res("""{"id":"T3"}""", 201) },
+            "torrents/info/T3" to { res("""{"status":"downloading","files":$pack,"links":[]}""") },
+            "torrents/delete/T3" to { res("", 204) },
+        ))
+        assertEquals(DebridResolve.NotCached, RealDebridApi(http).resolve("tok", magnet, TorrentSpec(hash, emptyList()), 0, 0))
+        assertEquals(1, http.calls.count { it.contains("addMagnet") })
+    }
 }

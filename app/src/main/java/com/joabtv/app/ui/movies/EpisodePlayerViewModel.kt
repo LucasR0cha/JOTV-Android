@@ -48,7 +48,6 @@ class EpisodePlayerViewModel @Inject constructor(
 
     /** Teste da fonte já feito (no detalhe ou aqui), sem esperar. */
     fun probeCached(url: String, headers: Map<String, String> = emptyMap()) = prober.cached(url, headers)
-    suspend fun probe(url: String, headers: Map<String, String> = emptyMap()) = prober.probe(url, headers)
 
     /** Duração do filme no TMDB, em minutos. 0 = desconhecida. */
     suspend fun movieRuntime(tmdbId: Int): Int {

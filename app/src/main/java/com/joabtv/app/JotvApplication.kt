@@ -12,6 +12,27 @@ import dagger.hilt.android.HiltAndroidApp
 @HiltAndroidApp
 class JotvApplication : Application(), ImageLoaderFactory {
 
+    @javax.inject.Inject
+    lateinit var historySync: dagger.Lazy<com.joabtv.app.data.sync.HistorySync>
+
+    override fun onCreate() {
+        super.onCreate()
+        // Sync de histórico com Nuvio e Stremio. Conta as telas à frente para saber quando o app volta para a
+        // frente (puxa) e quando sai dela (manda o que estiver pendente antes de o sistema encerrar o processo).
+        val sync = historySync
+        sync.get().start()
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            private var started = 0
+            override fun onActivityStarted(activity: android.app.Activity) { if (started++ == 0) sync.get().onForeground() }
+            override fun onActivityStopped(activity: android.app.Activity) { if (--started <= 0) { started = 0; sync.get().onBackground() } }
+            override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) = Unit
+            override fun onActivityResumed(activity: android.app.Activity) = Unit
+            override fun onActivityPaused(activity: android.app.Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) = Unit
+            override fun onActivityDestroyed(activity: android.app.Activity) = Unit
+        })
+    }
+
     // ImageLoader afinado para TV box / aparelhos fracos (Android 9+):
     // - cache de memória limitado (15%) e disco (256MB) evita OOM/jank
     // - RGB_565 corta uso de memória de bitmap pela metade (posters/backdrops)

@@ -19,9 +19,10 @@ class PlayerProgressViewModel @Inject constructor(
     private val trakt: com.joabtv.app.data.remote.TraktService,
 ) : ViewModel() {
 
-    /** Avisa o Trakt (start, pause ou stop). Não faz nada sem conta conectada. */
+    /** Avisa o Trakt e os outros serviços (start, pause ou stop). Não faz nada sem conta conectada. */
     fun scrobble(action: String, tmdbId: Int, type: String, season: Int, episode: Int, positionMs: Long, durationMs: Long) {
-        if (durationMs <= 0) return
+        // Pause sem nada tocado (posição 0) não tem progresso para salvar.
+        if (durationMs <= 0 || (action == "pause" && positionMs <= 0)) return
         trakt.scrobble(action, tmdbId, type, season, episode, positionMs * 100.0 / durationMs, positionMs, durationMs)
     }
 

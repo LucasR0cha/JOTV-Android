@@ -21,7 +21,6 @@ import javax.inject.Singleton
 @Singleton
 class DebridService @Inject constructor(
     @ApplicationContext context: Context,
-    private val platformPrefs: com.joabtv.app.data.local.PlatformPrefs,
 ) {
     private val prefs = context.getSharedPreferences("joabtv_debrid", Context.MODE_PRIVATE)
     private val http = DebridHttp(
@@ -110,22 +109,19 @@ class DebridService @Inject constructor(
         return cache["${a.provider.id}:$h"]
     }
 
+    private val cacheCheck = CacheCheck(tb, pm)
+
     /**
-     * Consulta de uma vez os torrents da lista. TorBox e Premiumize respondem em lote. O
-     * Real-Debrid não tem consulta, então ele confere só os [rdTop] primeiros tentando resolver
-     * (o que já deixa o link pronto para tocar na hora).
+     * Consulta de uma vez os torrents da lista, sem criar nada na conta. TorBox e Premiumize respondem
+     * em lote. O Real-Debrid não tem consulta e não é perguntado (adicionar o torrent para ver se
+     * fica pronto começava um download por fonte e enchia a conta), então o que ele tem pronto só se
+     * sabe depois de a pessoa tocar a fonte ([resolve]).
      */
-    suspend fun check(magnets: List<String>, season: Int = 0, episode: Int = 0, rdTop: Int = 3): Map<String, Boolean> = withContext(Dispatchers.IO) {
+    suspend fun check(magnets: List<String>): Map<String, Boolean> = withContext(Dispatchers.IO) {
         val a = active() ?: return@withContext emptyMap()
         val hashes = magnets.mapNotNull { hashOf(it) }.distinct()
         val todo = hashes.filter { cache["${a.provider.id}:$it"] == null }
-        when (a.provider) {
-            DebridProvider.TORBOX, DebridProvider.PREMIUMIZE -> if (todo.isNotEmpty()) {
-                val ok = if (a.provider == DebridProvider.TORBOX) tb.cached(a.token, todo) else pm.cached(a.token, todo)
-                todo.forEach { cache["${a.provider.id}:$it"] = it in ok }
-            }
-            DebridProvider.REAL_DEBRID -> if (!platformPrefs.debridCachedOnly) magnets.filter { m -> hashOf(m) in todo }.take(rdTop).forEach { resolve(it, season, episode) }
-        }
+        if (todo.isNotEmpty()) cacheCheck.cached(a.provider, a.token, todo).forEach { (h, v) -> cache["${a.provider.id}:$h"] = v }
         hashes.mapNotNull { h -> cache["${a.provider.id}:$h"]?.let { h to it } }.toMap()
     }
 

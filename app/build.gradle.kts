@@ -16,8 +16,8 @@ android {
         minSdk         = 23
         targetSdk      = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode    = 21
-        versionName    = "1.0.20"
+        versionCode    = 22
+        versionName    = "1.0.21"
         // Chave TMDB lida de gradle property (local.properties / ~/.gradle/gradle.properties),
         // fora do VCS. Sem ela, fica vazia e o usuário informa a própria chave em Configurações.
         val tmdbKey = (project.findProperty("TMDB_API_KEY") as String?) ?: ""
@@ -34,6 +34,7 @@ android {
         buildConfigField("String", "TRAKT_CLIENT_SECRET", "\"${local.getProperty("TRAKT_CLIENT_SECRET", "")}\"")
         buildConfigField("String", "SIMKL_CLIENT_ID", "\"${local.getProperty("SIMKL_CLIENT_ID", trackerApps["simkl"]?.toString().orEmpty())}\"")
         buildConfigField("String", "WETRAKR_CLIENT_ID", "\"${local.getProperty("WETRAKR_CLIENT_ID", trackerApps["wetrakr"]?.toString().orEmpty())}\"")
+        buildConfigField("String", "MDBLIST_CLIENT_ID", "\"${local.getProperty("MDBLIST_CLIENT_ID", trackerApps["mdblist"]?.toString().orEmpty())}\"")
         val updateConfig = groovy.json.JsonSlurper().parse(rootProject.file("shared/update-config.json")) as Map<*, *>
         val updateRepository = updateConfig["repository"]?.toString().orEmpty()
         require(updateRepository.matches(Regex("[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}")))

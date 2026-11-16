@@ -1,6 +1,11 @@
 package com.joabtv.app.data.accounts
 
 import android.content.Context
+import com.joabtv.app.data.sync.PushRow
+import com.joabtv.app.data.sync.PushSeen
+import com.joabtv.app.data.sync.RemoteRow
+import com.joabtv.app.data.sync.RemoteSeen
+import com.joabtv.app.data.sync.SyncPlan
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,8 +31,17 @@ data class NuvioSession(
     val email: String,
 )
 
-/** Perfil da conta Nuvio. [index] é o número que as consultas usam (1 é o principal). */
-data class NuvioProfile(val index: Int, val name: String, val usesPrimaryAddons: Boolean)
+/**
+ * Perfil da conta Nuvio. [index] é o número que as consultas usam (1 é o principal). [avatarUrl] é o endereço da
+ * foto (o próprio do perfil ou a imagem do catálogo do Nuvio) e fica vazio sem foto. [colorHex] é a cor do perfil.
+ */
+data class NuvioProfile(
+    val index: Int, val name: String, val usesPrimaryAddons: Boolean,
+    val avatarUrl: String = "", val colorHex: String = "",
+)
+
+/** Foto pronta do catálogo do Nuvio. */
+data class NuvioAvatar(val id: String, val name: String, val category: String, val url: String)
 
 /** Código para entrar pelo site do Nuvio (nuvio.tv/link). */
 data class NuvioDeviceCode(val deviceCode: String, val userCode: String, val url: String, val intervalSec: Int, val nonce: String, val server: String, val key: String)
@@ -134,9 +148,36 @@ class NuvioAccountService @Inject constructor(
         _session.value = null
     }
 
-    suspend fun profiles(): Result<List<NuvioProfile>> = rpcRows("sync_pull_profiles", JSONObject()).map { rows ->
-        rows.map { NuvioProfile(it.optInt("profile_index", 1), it.optString("name").ifBlank { "Perfil" }, it.optBoolean("uses_primary_addons")) }
-            .sortedBy { it.index }
+    suspend fun profiles(): Result<List<NuvioProfile>> {
+        val rows = rpcRows("sync_pull_profiles", JSONObject()).getOrElse { return Result.failure(it) }
+        // O catálogo só é buscado quando algum perfil usa foto pronta (avatar_id) em vez de endereço próprio.
+        val needCatalog = rows.any { it.text("avatar_url").isBlank() && it.text("avatar_id").isNotBlank() }
+        val catalog = if (needCatalog) avatarCatalog().getOrNull().orEmpty().associateBy { it.id } else emptyMap()
+        return Result.success(
+            rows.map { o ->
+                val own = validPhotoUrl(o.text("avatar_url"))
+                val url = own ?: catalog[o.text("avatar_id")]?.url.orEmpty()
+                NuvioProfile(
+                    o.optInt("profile_index", 1), o.text("name").ifBlank { "Perfil" }, o.optBoolean("uses_primary_addons"),
+                    url, o.text("avatar_color_hex"),
+                )
+            }.sortedBy { it.index },
+        )
+    }
+
+    /** Fotos prontas do Nuvio (get_avatar_catalog), na ordem do catálogo. */
+    suspend fun avatarCatalog(): Result<List<NuvioAvatar>> {
+        val server = _session.value?.server ?: return Result.failure(IllegalStateException("Entre na conta Nuvio"))
+        return rpcRows("get_avatar_catalog", JSONObject()).map { rows ->
+            rows.filter { it.optBoolean("is_active", true) }
+                .sortedWith(compareBy<JSONObject>({ it.text("category") }, { it.optInt("sort_order") }))
+                .mapNotNull { o ->
+                    val path = o.text("storage_path").ifBlank { return@mapNotNull null }
+                    val url = validPhotoUrl(if (path.startsWith("http")) path else "$server/storage/v1/object/public/avatars/$path")
+                        ?: return@mapNotNull null
+                    NuvioAvatar(o.text("id"), o.text("display_name").ifBlank { o.text("id") }, o.text("category"), url)
+                }
+        }
     }
 
     /** Addons do perfil. Perfil que usa os addons do principal lê os do perfil 1, como no Nuvio. */
@@ -208,6 +249,105 @@ class NuvioAccountService @Inject constructor(
     suspend fun mainProfile(): NuvioProfile =
         profiles().getOrNull()?.minByOrNull { it.index } ?: NuvioProfile(1, "Perfil", false)
 
+    // ── Histórico (sync nos dois sentidos) ──────────────────────────────────────
+
+    /** Linhas de progresso da conta com chave e episódio, no formato comum do sync. */
+    suspend fun progressRows(profile: NuvioProfile): Result<List<RemoteRow>> =
+        rpcRows("sync_pull_watch_progress", JSONObject().put("p_profile_id", profile.index), array = true).map { rows ->
+            rows.mapNotNull { o ->
+                val type = o.text("content_type")
+                if (type != "movie" && type != "series") return@mapNotNull null
+                val id = o.text("content_id").ifBlank { return@mapNotNull null }
+                val series = type == "series"
+                val season = if (series) o.optInt("season", 0) else 0
+                val episode = if (series) o.optInt("episode", 0) else 0
+                RemoteRow(
+                    id, series, season, episode, o.optLong("position"), o.optLong("duration"), o.optLong("last_watched"),
+                    o.text("progress_key").ifBlank { SyncPlan.progressKey(id, season, episode) },
+                )
+            }
+        }
+
+    /** Itens vistos da conta (páginas de 500). O booleano diz se leu tudo (falso se passou do teto de páginas). */
+    suspend fun watchedRows(profile: NuvioProfile): Result<Pair<List<RemoteSeen>, Boolean>> {
+        val out = ArrayList<RemoteSeen>()
+        var page = 1
+        while (page <= 40) {
+            val rows = rpcRows(
+                "sync_pull_watched_items",
+                JSONObject().put("p_profile_id", profile.index).put("p_page", page).put("p_page_size", 500),
+                array = true,
+            ).getOrElse { return Result.failure(it) }
+            rows.forEach { o ->
+                val type = o.text("content_type")
+                val id = o.text("content_id")
+                if ((type != "movie" && type != "series") || id.isBlank()) return@forEach
+                val series = type == "series"
+                out += RemoteSeen(
+                    id, series, o.text("title"), if (series) o.optInt("season", 0) else 0,
+                    if (series) o.optInt("episode", 0) else 0, normalizeWatchedAt(o.optLong("watched_at")),
+                )
+            }
+            if (rows.size < 500) return Result.success(out to true)
+            page++
+        }
+        return Result.success(out to false)
+    }
+
+    /**
+     * Manda linhas de progresso em lotes. O resultado diz se o servidor aceitou o p_origin_client_id (falso quando
+     * a função só existe sem ele, e então a chamada é refeita sem o parâmetro).
+     */
+    suspend fun pushProgress(profile: NuvioProfile, rows: List<PushRow>, origin: String?): Result<Boolean> =
+        batched(rows, origin) { chunk, o -> "sync_push_watch_progress" to SyncPlan.progressBody(profile.index, chunk, o) }
+
+    suspend fun pushWatched(profile: NuvioProfile, items: List<PushSeen>, origin: String?): Result<Boolean> =
+        batched(items, origin) { chunk, o -> "sync_push_watched_items" to SyncPlan.watchedBody(profile.index, chunk, o) }
+
+    suspend fun deleteProgress(profile: NuvioProfile, keys: List<String>, origin: String?): Result<Boolean> =
+        batched(keys, origin) { chunk, o -> "sync_delete_watch_progress" to SyncPlan.deleteProgressBody(profile.index, chunk, o) }
+
+    suspend fun deleteWatched(profile: NuvioProfile, keys: List<Triple<String, Int, Int>>, origin: String?): Result<Boolean> =
+        batched(keys, origin) { chunk, o -> "sync_delete_watched_items" to SyncPlan.deleteWatchedBody(profile.index, chunk, o) }
+
+    private suspend fun <T> batched(
+        items: List<T>, origin: String?, build: (List<T>, String?) -> Pair<String, JSONObject>,
+    ): Result<Boolean> {
+        var useOrigin = origin
+        var accepted = origin != null
+        for (chunk in items.chunked(SyncPlan.BATCH)) {
+            val (name, body) = build(chunk, useOrigin)
+            val r = rpcRaw(name, body).getOrElse { return Result.failure(it) }
+            if (r.code in 200..299) continue
+            // O PostgREST casa a função pelo conjunto de nomes de parâmetros. Sem o p_origin_client_id é outra assinatura.
+            if (useOrigin != null && functionMissing(r)) {
+                useOrigin = null
+                accepted = false
+                val (n2, b2) = build(chunk, null)
+                val r2 = rpcRaw(n2, b2).getOrElse { return Result.failure(it) }
+                if (r2.code in 200..299) continue
+                return Result.failure(IllegalStateException(errorOf(r2.text, r2.code)))
+            }
+            return Result.failure(IllegalStateException(errorOf(r.text, r.code)))
+        }
+        return Result.success(accepted)
+    }
+
+    private fun functionMissing(r: Raw) =
+        r.code == 404 || r.text.contains("PGRST202") || r.text.contains("Could not find the function", true)
+
+    /** O Nuvio às vezes grava a hora como número compacto AAAAMMDDhhmmss em vez de milissegundos. */
+    private fun normalizeWatchedAt(v: Long): Long {
+        if (v !in 20_000_101_000_000L..99_991_231_235_959L) return v
+        val s = v.toString()
+        return runCatching {
+            java.time.LocalDateTime.of(
+                s.substring(0, 4).toInt(), s.substring(4, 6).toInt(), s.substring(6, 8).toInt(),
+                s.substring(8, 10).toInt(), s.substring(10, 12).toInt(), s.substring(12, 14).toInt(),
+            ).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
+        }.getOrDefault(v)
+    }
+
     // ── HTTP ────────────────────────────────────────────────────────────────────
 
     /** Sessão válida, renovada quando falta pouco para vencer. null sem login ou sem renovação. */
@@ -223,19 +363,58 @@ class NuvioAccountService @Inject constructor(
         return sessionOf(s.server, s.key, o, s.email).also { save(it) }
     }
 
-    private suspend fun rpcRows(name: String, params: JSONObject): Result<List<JSONObject>> = withContext(Dispatchers.IO) {
+    /** Resposta crua de uma chamada. [retryAfter] é o cabeçalho Retry-After, quando o servidor manda. */
+    private class Raw(val code: Int, val text: String, val retryAfter: String?)
+
+    private fun postRaw(url: String, body: JSONObject, key: String, bearer: String?): Raw = runCatching {
+        val req = Request.Builder().url(url)
+            .header("apikey", key).header("Authorization", "Bearer ${bearer ?: key}").header("User-Agent", "JOTV")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build()
+        client.newCall(req).execute().use { Raw(it.code, it.body?.string().orEmpty(), it.header("Retry-After")) }
+    }.getOrElse { Raw(-1, "", null) }
+
+    /**
+     * Chamada de função do servidor com renovação de sessão (401) e uma espera educada quando o servidor
+     * pede calma (429 ou 503 com Retry-After, no máximo 30 s). Quem chama decide o que fazer com o código.
+     */
+    private suspend fun rpcRaw(name: String, params: JSONObject): Result<Raw> = withContext(Dispatchers.IO) {
         val s = fresh() ?: return@withContext Result.failure(IllegalStateException("Entre na conta Nuvio"))
-        var r = post("${s.server}/rest/v1/rpc/$name", params, s.key, s.access)
-        if (r.first == 401) {
+        var r = postRaw("${s.server}/rest/v1/rpc/$name", params, s.key, s.access)
+        if (r.code == 401) {
             // Token recusado antes da hora. Força a renovação uma vez.
             _session.value = s.copy(expiresAt = 0)
             val again = fresh() ?: return@withContext Result.failure(IllegalStateException("A sessão do Nuvio acabou. Entre de novo."))
-            r = post("${again.server}/rest/v1/rpc/$name", params, again.key, again.access)
+            r = postRaw("${again.server}/rest/v1/rpc/$name", params, again.key, again.access)
         }
-        if (r.first !in 200..299) return@withContext Result.failure(IllegalStateException(errorOf(r.third, r.first)))
-        val arr = runCatching { JSONArray(r.third) }.getOrElse { runCatching { JSONArray().put(JSONObject(r.third)) }.getOrDefault(JSONArray()) }
-        Result.success((0 until arr.length()).mapNotNull { arr.optJSONObject(it) })
+        if (r.code == 429 || r.code == 503) {
+            val wait = ((r.retryAfter?.trim()?.toLongOrNull() ?: 1L) * 1000L).coerceIn(500L, 30_000L)
+            kotlinx.coroutines.delay(wait)
+            val cur = _session.value ?: return@withContext Result.failure(IllegalStateException("A sessão do Nuvio acabou. Entre de novo."))
+            r = postRaw("${cur.server}/rest/v1/rpc/$name", params, cur.key, cur.access)
+        }
+        Result.success(r)
     }
+
+    /**
+     * Linhas de uma função do servidor. Com [array] o corpo tem que ser uma lista JSON, senão é falha. Sem isso,
+     * página de Wi-Fi com login (200 com HTML) ou corpo vazio viraria "lista vazia" e o sync acharia que tudo foi removido.
+     */
+    private suspend fun rpcRows(name: String, params: JSONObject, array: Boolean = false): Result<List<JSONObject>> {
+        val r = rpcRaw(name, params).getOrElse { return Result.failure(it) }
+        if (r.code !in 200..299) return Result.failure(IllegalStateException(errorOf(r.text, r.code)))
+        val arr = runCatching { JSONArray(r.text) }.getOrElse {
+            if (array) return Result.failure(IllegalStateException("Resposta inesperada do servidor"))
+            runCatching { JSONArray().put(JSONObject(r.text)) }.getOrDefault(JSONArray())
+        }
+        return Result.success((0 until arr.length()).mapNotNull { arr.optJSONObject(it) })
+    }
+
+    /** Texto de um campo, vazio quando falta ou é nulo (o org.json devolve "null" como texto nesse caso). */
+    private fun JSONObject.text(name: String): String = if (isNull(name)) "" else optString(name)
+
+    /** Foto só por https, sem espaço e de tamanho razoável. */
+    private fun validPhotoUrl(url: String): String? =
+        url.trim().takeIf { it.length <= 2048 && it.startsWith("https://") && it.none(Char::isWhitespace) }
 
     /** POST com JSON. Devolve código, corpo como objeto (quando é objeto) e o texto cru. */
     private fun post(url: String, body: JSONObject, key: String, bearer: String?): Triple<Int, JSONObject?, String> = runCatching {

@@ -360,3 +360,19 @@ internal class PremiumizeApi(private val http: DebridHttp) {
 
     private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
 }
+
+// ── Consulta de cache ───────────────────────────────────────────────────────────
+
+/**
+ * Consulta de cache que NÃO mexe na conta. Só TorBox e Premiumize têm consulta em lote. O Real-Debrid tirou a dele, e
+ * o único jeito de saber era adicionar o torrent (que começava a baixar no servidor e enchia a conta de fonte que
+ * ninguém escolheu), então para ele não há resposta. O torrent só entra no Real-Debrid na hora de tocar.
+ * Devolve só os hashes que o serviço respondeu.
+ */
+internal class CacheCheck(private val tb: TorBoxApi, private val pm: PremiumizeApi) {
+    fun cached(provider: DebridProvider, token: String, hashes: List<String>): Map<String, Boolean> = when (provider) {
+        DebridProvider.TORBOX -> tb.cached(token, hashes).let { ok -> hashes.associateWith { it in ok } }
+        DebridProvider.PREMIUMIZE -> pm.cached(token, hashes).let { ok -> hashes.associateWith { it in ok } }
+        DebridProvider.REAL_DEBRID -> emptyMap()
+    }
+}

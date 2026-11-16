@@ -113,10 +113,17 @@ internal fun keepNewest(all: Map<String, ExtAudioPick>, max: Int = 60): Map<Stri
     if (all.size <= max) all
     else all.entries.sortedByDescending { it.value.at }.take(max).associate { it.key to it.value }
 
-/** Por que uma fonte não serve como som, ou "" se serve. */
-internal fun extAudioBlock(url: String) =
-    if (!url.startsWith("http://", true) && !url.startsWith("https://", true))
-        "Link que não é de vídeo direto, não serve como som" else ""
+/**
+ * Por que uma fonte não serve como som, ou "" se serve. [usenet] é fonte de NZB e [debrid] o nome do serviço
+ * ligado (null sem conta). Magnet e NZB viram link direto pelo debrid antes de tocar, como na fonte principal.
+ * Torrent sem debrid fica de fora, porque abrir um segundo torrent só para o som pesa demais no aparelho.
+ */
+internal fun extAudioBlock(url: String, usenet: Boolean = false, debrid: String? = null): String = when {
+    usenet -> if (debrid.equals("TorBox", true)) "" else "Arquivo NZB precisa do TorBox conectado"
+    url.startsWith("magnet:", true) -> if (debrid != null) "" else "Torrent sem conta de debrid (P2P) não serve como som"
+    !url.startsWith("http://", true) && !url.startsWith("https://", true) -> "Link que não é de vídeo direto, não serve como som"
+    else -> ""
+}
 
 /**
  * Correção de deriva do som. [errMs] positivo é som adiantado em relação à imagem.

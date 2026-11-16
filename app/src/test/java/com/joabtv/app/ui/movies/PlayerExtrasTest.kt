@@ -43,6 +43,17 @@ class PlayerExtrasTest {
     }
 
     @Test
+    fun `som de outra fonte aceita magnet com debrid e NZB com TorBox`() {
+        assertEquals("", extAudioBlock("https://x/video.mkv"))
+        assertEquals("Link que não é de vídeo direto, não serve como som", extAudioBlock("ftp://x/a.mkv"))
+        assertEquals("Torrent sem conta de debrid (P2P) não serve como som", extAudioBlock("magnet:?xt=urn:btih:abc"))
+        assertEquals("", extAudioBlock("magnet:?xt=urn:btih:abc", debrid = "Real-Debrid"))
+        assertEquals("Arquivo NZB precisa do TorBox conectado", extAudioBlock("nzb://x", usenet = true))
+        assertEquals("Arquivo NZB precisa do TorBox conectado", extAudioBlock("nzb://x", usenet = true, debrid = "Real-Debrid"))
+        assertEquals("", extAudioBlock("nzb://x", usenet = true, debrid = "TorBox"))
+    }
+
+    @Test
     fun `correcao de deriva`() {
         assertNull(driftSpeed(450, 1f))
         assertNull(driftSpeed(-301, 1f))

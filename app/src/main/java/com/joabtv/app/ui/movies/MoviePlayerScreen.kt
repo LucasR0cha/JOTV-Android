@@ -442,7 +442,7 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
         if (extRestored || extUrl != null || readyUrl == null || casting) return@LaunchedEffect
         val saved = progressVm.extAudio(extKey) ?: run { extRestored = true; return@LaunchedEffect }
         val s = currentSources.firstOrNull {
-            it.url != streamUrl && extAudioBlock(it.url).isEmpty() && sourceSig(it, title) == saved.sig
+            it.url != streamUrl && extBlock(it).isEmpty() && sourceSig(it, title) == saved.sig
         } ?: return@LaunchedEffect
         extRestored = true
         audioDelay = saved.delaySec
@@ -509,6 +509,14 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
     // Trakt. Avisa quando começa a tocar e quando pausa, e "stop" ao sair (logo abaixo).
     LaunchedEffect(isPlaying, curSeason, curEpisode, duration > 0) {
         progressVm.scrobble(if (isPlaying) "start" else "pause", tmdbId, type, curSeason, curEpisode, position, duration)
+        // A cada 5 minutos tocando sem parar, salva o ponto nos serviços (pause e, 1,5 s depois, start).
+        // Pausar, trocar de episódio ou sair cancela este efeito e o salvamento para junto.
+        if (isPlaying && duration > 0) while (true) {
+            delay(5 * 60_000L)
+            progressVm.scrobble("pause", tmdbId, type, curSeason, curEpisode, position, duration)
+            delay(1_500L)
+            progressVm.scrobble("start", tmdbId, type, curSeason, curEpisode, position, duration)
+        }
     }
     // Salva ao sair da tela do player. Usa `position` (último poll do currentPlayer, já
     // cast-aware) — NÃO exoPlayer.currentPosition: no onDispose o player já foi liberado
@@ -675,8 +683,8 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
     }
 
     // Vídeo carregou. (1) Filme com duração que não bate com o TMDB é outro filme de nome
-    // parecido, pula pra próxima. (2) 4 s depois testa as outras fontes do mesmo idioma e, se
-    // achar uma pelo menos 25% mais alta, troca uma vez sem perder o ponto. Fonte escolhida à
+    // parecido, pula pra próxima. (2) 4 s depois, se outra fonte do mesmo idioma já tem resolução
+    // conhecida pelo menos 25% mais alta, troca uma vez sem perder o ponto. Fonte escolhida à
     // mão ou fixada não troca.
     LaunchedEffect(readyUrl) {
         val u = readyUrl ?: return@LaunchedEffect
@@ -713,17 +721,9 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
             applyMovieSource(best)
             return true
         }
-        if (consider()) return@LaunchedEffect
-        val todo = currentSources.filter {
-            it.url != u && it.url !in triedUrls && it.url.startsWith("http") &&
-                langOf(it.label) == lang && episodeVm.probeCached(it.url, it.stream?.headers.orEmpty()) == null
-        }.take(8)
-        for (pair in todo.chunked(2)) {
-            kotlinx.coroutines.coroutineScope {
-                pair.map { async { episodeVm.probe(it.url, it.stream?.headers.orEmpty()) } }.forEach { it.await() }
-            }
-            if (consider()) return@LaunchedEffect
-        }
+        // O app não mede as outras fontes sozinho (abrir o link de uma fonte, até para medir, faz addon com debrid
+        // adicionar o torrent na conta), então a troca só vale quando a resolução da outra já é conhecida.
+        consider()
     }
     // Buffering TRAVADO: fonte conectou (READY) mas empaca >12s sem avançar (stall infinito,
     // sem erro) → pula pra próxima. Cobre o caso "1ª fonte abre e fica no preto carregando".
@@ -1350,6 +1350,8 @@ internal class PlayerSession(
     var extSync by run { mutableStateOf<ExtAudioSync?>(null) }
     var extUrl by run { mutableStateOf<String?>(null) }
     var extHeld by run { mutableStateOf(false) }
+    // Preparando o link da outra fonte (debrid, NZB). A imagem segue tocando com o som original até ele ficar pronto.
+    var extPreparing by run { mutableStateOf(false) }
     var audioDelay by run { mutableDoubleStateOf(0.0) }
     var syncBarOpen by run { mutableStateOf(false) }
     var extRestored by run { mutableStateOf(false) }
@@ -1471,36 +1473,63 @@ internal class PlayerSession(
     }
     fun dropExt() {
         extSync?.release()
-        extSync = null; extUrl = null; extHeld = false; syncBarOpen = false
+        extSync = null; extUrl = null; extHeld = false; extPreparing = false; syncBarOpen = false
     }
+    /** Por que [src] não serve como som de outra fonte, ou "" se serve. Magnet e NZB viram link direto pelo debrid. */
+    fun extBlock(src: MoviePlayerSource): String =
+        extAudioBlock(src.url, !src.stream?.nzbUrl.isNullOrBlank() || com.joabtv.app.data.remote.nzbLink(src.url) != null, episodeVm.debridLabel())
     /** Liga o som de [src] com a imagem atual. [onDone] diz se deu certo. */
     fun setExt(src: MoviePlayerSource, onDone: (Boolean) -> Unit) {
         dropExt()
-        val item = try {
-            mediaItemFor(context, src.url)
-        } catch (_: com.joabtv.app.data.torrent.TorrentUnavailable) {
-            toastMsg = "Este aparelho não toca torrent."
+        extUrl = src.url // aparece marcada na hora, e o segundo toque não faz nada enquanto abre
+        extPreparing = true
+        fun giveUp(message: String) {
+            if (extUrl != src.url) return
+            dropExt()
+            toastMsg = message
             onDone(false)
-            return
         }
-        val ext = ExoPlayer.Builder(context).setMediaSourceFactory(mediaSourceFactory(context)).build().apply {
-            // Só o som. Sem decodificar imagem nem legenda.
-            trackSelectionParameters = trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
-                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
-                .setPreferredAudioLanguage("pt")
-                .build()
-            setMediaItem(item)
+        scope.launch {
+            // Mesmo caminho da fonte principal. Magnet e NZB viram link direto pelo debrid, e o link próprio da fonte leva os cabeçalhos dela.
+            var play = src.url
+            val nzb = src.stream?.nzbUrl?.takeIf { it.isNotBlank() } ?: com.joabtv.app.data.remote.nzbLink(src.url)
+            if (nzb != null || TorrentMagnet.isMagnet(src.url)) {
+                val result = if (nzb != null) episodeVm.debridResolveUsenet(nzb, curSeason, curEpisode)
+                else episodeVm.debridResolve(src.url, curSeason, curEpisode)
+                if (result is com.joabtv.app.data.debrid.DebridResolve.Ok) play = result.url
+                else return@launch giveUp(
+                    ((result as? com.joabtv.app.data.debrid.DebridResolve.Failed)?.message
+                        ?: if (nzb != null) "O TorBox ainda não tem esse NZB pronto" else "${episodeVm.debridLabel()} não tem esse arquivo pronto") + ". Voltou o som original."
+                )
+            }
+            if (extUrl != src.url) return@launch // a pessoa escolheu outra enquanto o link era preparado
+            val headers = if (play == src.url) src.stream?.headers.orEmpty() else emptyMap()
+            val mime = com.joabtv.app.data.remote.resolvePlaybackMimeType(play, headers)
+            val item = try {
+                mediaItemFor(context, play).buildUpon().apply { if (mime != null) setMimeType(mime) }.build()
+            } catch (_: com.joabtv.app.data.torrent.TorrentUnavailable) {
+                return@launch giveUp("Este aparelho não toca torrent.")
+            }
+            if (extUrl != src.url) return@launch
+            val ext = ExoPlayer.Builder(context).setMediaSourceFactory(mediaSourceFactory(context, headers)).build().apply {
+                // Só o som. Sem decodificar imagem nem legenda.
+                trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
+                    .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
+                    .setPreferredAudioLanguage("pt")
+                    .build()
+                setMediaItem(item)
+            }
+            extPreparing = false
+            extSync = ExtAudioSync(
+                exoPlayer, ext, scope, audioDelay,
+                onHold = { extHeld = it },
+                onReady = { if (extUrl == src.url) { saveExt(); onDone(true) } },
+                onError = { msg ->
+                    if (extUrl == src.url) { extSync = null; dropExt(); toastMsg = msg; onDone(false) }
+                },
+            )
         }
-        extUrl = src.url
-        extSync = ExtAudioSync(
-            exoPlayer, ext, scope, audioDelay,
-            onHold = { extHeld = it },
-            onReady = { if (extUrl == src.url) { saveExt(); onDone(true) } },
-            onError = { msg ->
-                if (extUrl == src.url) { extSync = null; dropExt(); toastMsg = msg; onDone(false) }
-            },
-        )
     }
     // ── Gestos de volume (direita) e brilho (esquerda) — só celular (toque) ──
     val audioManager = run { context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager }
@@ -1681,7 +1710,7 @@ internal class PlayerSession(
         SourceFacts(
             s.url, s.addon, s.label, sourceQualityRank(s.label), p,
             wrongTitle = s.url in wrongUrls || (p != null && durationMismatch(runtimeMin, p.sec)),
-            debrid = if (episodeVm.debridCached(s.url) == true) 2 else 0,
+            debrid = if (episodeVm.debridCached(s.url) == true || com.joabtv.app.data.debrid.DebridLinks.cachedTag(s.stream?.name.orEmpty())) 2 else 0,
         )
     }
 
@@ -1792,10 +1821,10 @@ internal class PlayerSession(
         val others = currentSources.filterIndexed { i, _ -> i != currentSourceIdx }
             .sortedByDescending { langOf(it.label) == "dub" }
         others.forEachIndexed { i, src ->
-            val why = extAudioBlock(src.url)
+            val why = extBlock(src)
             val sub = when {
                 why.isNotBlank() -> why
-                ext == src.url -> if (extHeld) "Carregando o som…" else "Tocando o som desta fonte"
+                ext == src.url -> if (extHeld || extPreparing) "Carregando o som…" else "Tocando o som desta fonte"
                 src.url in wrongUrls -> "Parece ser outro filme"
                 else -> ""
             }

@@ -16,6 +16,9 @@ enum class ImportPart(
     val many: Boolean,
     val miss: String,
 ) {
+    // Só o Nuvio tem perfil com nome e foto. Vem na primeira vez e não volta nos Trazer tudo seguintes, para não
+    // desfazer o que a pessoa mudou no perfil do JOTV (de novo só pelo painel Mais, trazendo só esta parte).
+    PROFILE("profile", "Nome e foto do perfil", "Nome e foto do perfil", "nome e foto", "o nome e a foto", false, "Nome e foto não vieram"),
     ADDONS("addons", "Addons", "Addons e as fileiras deles", "addons", "os addons", true, "Addons não vieram"),
     LIBRARY("library", "Minha Lista e progresso", "Minha Lista e o que você estava assistindo", "Minha Lista", "a Minha Lista", false, "Minha Lista não veio"),
     COLLECTIONS("collections", "Coleções", "Coleções", "coleções", "as coleções", true, "Coleções não vieram"),
@@ -38,7 +41,7 @@ enum class Account(
     val hint: String,
     val parts: List<ImportPart>,
 ) {
-    NUVIO("nuvio", "Nuvio", "N", "nuvio.tv/link", "Traz addons, Minha Lista, progresso, coleções e debrid", ImportPart.entries),
+    NUVIO("nuvio", "Nuvio", "N", "nuvio.tv/link", "Traz nome, foto, addons, Minha Lista, progresso, coleções e debrid", ImportPart.entries),
     STREMIO("stremio", "Stremio", "S", "link.stremio.com", "Traz addons, Minha Lista e progresso", listOf(ImportPart.ADDONS, ImportPart.LIBRARY));
 
     companion object {

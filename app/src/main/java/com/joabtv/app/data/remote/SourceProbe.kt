@@ -31,6 +31,16 @@ const val STREAM_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 9) AppleWebKit/537.
  */
 data class ProbeResult(val ok: Boolean, val ms: Long, val sec: Double, val height: Int)
 
+/** Resultado neutro de uma fonte que não se testa. Viva, sem duração, sem resolução e sem passar por rápida. */
+internal val PROBE_SKIPPED = ProbeResult(true, 99_999L, 0.0, 0)
+
+/**
+ * Link que o próprio addon manda resolver no debrid dele não é aberto para teste, porque abrir esse endereço faz o
+ * addon adicionar o torrent na conta (ver [com.joabtv.app.data.debrid.DebridLinks]). null quando pode testar.
+ */
+internal fun probeSkipped(url: String): ProbeResult? =
+    if (com.joabtv.app.data.debrid.DebridLinks.urlLooksDebrid(url)) PROBE_SKIPPED else null
+
 // ── Leitura do cabeçalho MP4 ──────────────────────────────────────────────────
 
 private fun u32(b: ByteArray, o: Int): Long =
@@ -282,6 +292,7 @@ class SourceProber @Inject constructor() {
         done[cacheKey(url, headers)]?.takeIf { System.currentTimeMillis() - it.at < TTL_MS }?.r
 
     suspend fun probe(url: String, headers: Map<String, String> = emptyMap()): ProbeResult {
+        probeSkipped(url)?.let { return it }
         cached(url, headers)?.let { return it }
         val key = cacheKey(url, headers)
         val d = running.computeIfAbsent(key) {

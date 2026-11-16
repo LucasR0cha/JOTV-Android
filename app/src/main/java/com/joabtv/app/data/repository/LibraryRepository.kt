@@ -14,7 +14,11 @@ import com.joabtv.app.data.local.hidePlayback
 import com.joabtv.app.data.local.unhidePlayback
 import androidx.room.withTransaction
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.joabtv.app.data.sync.HistoryChange
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
@@ -36,12 +40,33 @@ class LibraryRepository @Inject constructor(
 ) {
     private val pid get() = prefs.profileId.value
 
+    // Sem descarte. Se o buffer encher, quem emite espera o sync ler (ele só grava em preferências, então anda rápido).
+    // Sem nenhum ouvinte (sync desligado) o emit volta na hora.
+    private val _changes = MutableSharedFlow<HistoryChange>(extraBufferCapacity = 1024)
+
+    /**
+     * Mudanças de histórico feitas pela pessoa neste aparelho. O sync com Nuvio e Stremio escuta isto. O que chega de
+     * outra conta (importPlayback, ou os métodos chamados com silent) não passa por aqui, para não voltar de onde veio.
+     */
+    val changes: SharedFlow<HistoryChange> = _changes.asSharedFlow()
+
+    private suspend fun emit(c: HistoryChange) { _changes.emit(c) }
+
     /** Apaga Minha Lista, histórico e episódios vistos de um perfil removido (tudo ou nada). */
-    suspend fun dropProfile(profileId: String) = db.withTransaction {
-        watchlistDao.dropProfile(profileId)
-        movieHistoryDao.clear(profileId)
-        watchedEpisodeDao.dropProfile(profileId)
+    suspend fun dropProfile(profileId: String) {
+        db.withTransaction {
+            watchlistDao.dropProfile(profileId)
+            movieHistoryDao.clear(profileId)
+            watchedEpisodeDao.dropProfile(profileId)
+        }
+        emit(HistoryChange.ProfileDropped(profileId))
     }
+
+    /** Linhas do Continuar assistindo de um perfil (até 30, mais recentes primeiro), para o sync. */
+    suspend fun historyRows(profileId: String): List<MovieHistoryEntity> = movieHistoryDao.getAll(profileId).first()
+
+    /** Episódios vistos de um perfil, para o sync. */
+    suspend fun watchedRows(profileId: String): List<WatchedEpisodeEntity> = watchedEpisodeDao.getAll(profileId)
 
     // ----- Minha Lista (Watchlist) -----
 
@@ -103,7 +128,8 @@ class LibraryRepository @Inject constructor(
                 markEpisodeWatched(tmdbId, season, number, profile)
             }
             val duration = current.durationMs.takeIf { episode == current.lastEpisode && it > 0 } ?: 1L
-            movieHistoryDao.upsert(current.copy(lastEpisode = episode, positionMs = duration, durationMs = duration, lastWatchedAt = System.currentTimeMillis()))
+            movieHistoryDao.upsert(current.copy(lastEpisode = episode, positionMs = duration, durationMs = duration, lastWatchedAt = maxOf(System.currentTimeMillis(), current.lastWatchedAt)))
+            emit(HistoryChange.Progress(profile, tmdbId, type))
         }
     }
 
@@ -127,7 +153,8 @@ class LibraryRepository @Inject constructor(
                 type = item.type.name,
                 title = item.title.ifBlank { prev?.title ?: "" },
                 posterUrl = item.posterUrl.ifBlank { prev?.posterUrl ?: "" },
-                lastWatchedAt = System.currentTimeMillis(),
+                // Nunca anda para trás. Um título que subiu de hora por causa do relógio de outro aparelho mantém a hora maior.
+                lastWatchedAt = maxOf(System.currentTimeMillis(), prev?.lastWatchedAt ?: 0L),
                 positionMs = if (positionMs > 0) positionMs else prev?.positionMs ?: 0,
                 durationMs = if (durationMs > 0) durationMs else prev?.durationMs ?: 0,
                 lastEpisode = lastEpisode.ifBlank { prev?.lastEpisode ?: "" },
@@ -135,6 +162,7 @@ class LibraryRepository @Inject constructor(
                 lastAddon = lastAddon.ifBlank { prev?.lastAddon ?: "" },
             )
         )
+        emit(HistoryChange.Progress(pid, item.tmdbId, item.type.name))
     }
 
     /** Salva SÓ a posição/fonte (chamado pelo player periodicamente e ao sair). */
@@ -154,7 +182,7 @@ class LibraryRepository @Inject constructor(
                 type = type,
                 title = title.ifBlank { prev?.title ?: "" },
                 posterUrl = posterUrl.ifBlank { prev?.posterUrl ?: "" },
-                lastWatchedAt = System.currentTimeMillis(),
+                lastWatchedAt = maxOf(System.currentTimeMillis(), prev?.lastWatchedAt ?: 0L),
                 positionMs = positionMs,
                 durationMs = durationMs,
                 lastEpisode = lastEpisode.ifBlank { prev?.lastEpisode ?: "" },
@@ -162,6 +190,7 @@ class LibraryRepository @Inject constructor(
                 lastAddon = lastAddon.ifBlank { prev?.lastAddon ?: "" },
             )
         )
+        emit(HistoryChange.Progress(targetPid, tmdbId, type))
     }
 
     /**
@@ -190,6 +219,15 @@ class LibraryRepository @Inject constructor(
         return true
     }
 
+    /**
+     * Sobe a hora de um título que o sync mandou com hora maior que a local (relógio daqui atrás do remoto). A linha daqui
+     * acompanha, senão a próxima puxada acharia o dado do outro lado mais novo e devolveria a posição velha. Não emite aviso.
+     */
+    suspend fun bumpPlayback(tmdbId: Int, type: String, profileId: String, at: Long) {
+        val cur = movieHistoryDao.get(profileId, tmdbId, type) ?: return
+        if (cur.lastWatchedAt < at) movieHistoryDao.upsert(cur.copy(lastWatchedAt = at))
+    }
+
     /** Item de outra conta na Minha Lista. Não mexe no que já estava salvo. Devolve se entrou. */
     suspend fun importToList(
         tmdbId: Int, type: String, title: String, posterUrl: String, year: String, addedAt: Long, profileId: String? = null,
@@ -201,18 +239,24 @@ class LibraryRepository @Inject constructor(
     }
 
     /** Remove UM item do "continuar assistindo". */
-    suspend fun removePlayback(tmdbId: Int, type: String) {
-        val profile = pid
+    suspend fun removePlayback(tmdbId: Int, type: String, profileId: String? = null, silent: Boolean = false) {
+        val profile = profileId ?: pid
         val previous = movieHistoryDao.get(profile, tmdbId, type)
         prefs.setHistoryHidden(hidePlayback(prefs.historyHidden(profile), playbackKey(tmdbId, type), maxOf(System.currentTimeMillis(), previous?.lastWatchedAt ?: 0)), profile)
         movieHistoryDao.delete(profile, tmdbId, type)
+        if (!silent) emit(HistoryChange.Removed(profile, tmdbId, type))
     }
 
-    /** Limpa todo o historico de reproducoes. */
+    /**
+     * Limpa todo o historico de reproducoes. O sync recebe uma remoção para cada linha que existia aqui, e nunca um
+     * "apaga tudo". Apagar tudo levaria da conta também o que este aparelho nunca mostrou e o que outro app mexeu depois.
+     */
     suspend fun clearHistory() {
         val profile = pid
+        val rows = movieHistoryDao.allOf(profile)
         prefs.setHistoryHidden(org.json.JSONObject().put("allBefore", System.currentTimeMillis()).put("items", org.json.JSONObject()).toString(), profile)
         movieHistoryDao.clear(profile)
+        rows.forEach { emit(HistoryChange.Removed(profile, it.tmdbId, it.type)) }
     }
 
     // ----- Episodios vistos (WatchedEpisode) -----
@@ -226,23 +270,36 @@ class LibraryRepository @Inject constructor(
         watchedEpisodeDao.isWatched(profileId ?: pid, seriesTmdbId, season, episode)
 
     /** Marca um episodio como visto. Com [profileId], grava nesse perfil em vez do ativo. */
-    suspend fun markEpisodeWatched(seriesTmdbId: Int, season: Int, episode: Int, profileId: String? = null) {
+    suspend fun markEpisodeWatched(seriesTmdbId: Int, season: Int, episode: Int, profileId: String? = null, silent: Boolean = false) {
+        val profile = profileId ?: pid
         watchedEpisodeDao.markWatched(
             WatchedEpisodeEntity(
-                profileId = profileId ?: pid,
+                profileId = profile,
                 seriesTmdbId = seriesTmdbId,
                 season = season,
                 episode = episode,
                 watchedAt = System.currentTimeMillis(),
             )
         )
+        if (!silent) emit(HistoryChange.Watched(profile, seriesTmdbId, season, episode, true))
     }
 
-    suspend fun markEpisodesWatched(seriesTmdbId: Int, episodes: List<Pair<Int, Int>>, profileId: String? = null) {
+    /**
+     * Marca vários episódios de uma série como vistos. [times] traz a hora que a conta de origem registrou para cada
+     * episódio (importação do sync). Sem ela vale a hora atual. Com [silent] (veio de fora) a linha do Continuar
+     * assistindo não sobe de hora, senão o título importado pareceria mexido agora e a importação mudaria a ordem da lista.
+     */
+    suspend fun markEpisodesWatched(
+        seriesTmdbId: Int, episodes: List<Pair<Int, Int>>, profileId: String? = null, silent: Boolean = false,
+        times: Map<Pair<Int, Int>, Long> = emptyMap(),
+    ) {
         val profile = profileId ?: pid
         val now = System.currentTimeMillis()
         val entries = episodes.distinct().filter { it.first > 0 && it.second > 0 }.map { (season, episode) ->
-            WatchedEpisodeEntity(profileId = profile, seriesTmdbId = seriesTmdbId, season = season, episode = episode, watchedAt = now)
+            WatchedEpisodeEntity(
+                profileId = profile, seriesTmdbId = seriesTmdbId, season = season, episode = episode,
+                watchedAt = times[season to episode]?.takeIf { it > 0 }?.coerceAtMost(now) ?: now,
+            )
         }
         if (entries.isEmpty()) return
         db.withTransaction {
@@ -250,14 +307,18 @@ class LibraryRepository @Inject constructor(
             val current = movieHistoryDao.get(profile, seriesTmdbId, MediaType.SERIES.name)
             if (current != null && entries.any { current.lastEpisode.equals("T${it.season}:E${it.episode}", ignoreCase = true) }) {
                 val duration = current.durationMs.coerceAtLeast(1)
-                movieHistoryDao.upsert(current.copy(positionMs = duration, durationMs = duration, lastWatchedAt = now))
+                movieHistoryDao.upsert(current.copy(positionMs = duration, durationMs = duration, lastWatchedAt = if (silent) current.lastWatchedAt else maxOf(now, current.lastWatchedAt)))
             }
         }
+        if (!silent) emit(HistoryChange.WatchedMany(profile, seriesTmdbId, entries.map { it.season to it.episode }))
     }
 
     /** Desmarca um episodio (remove de vistos). */
-    suspend fun unmarkEpisodeWatched(seriesTmdbId: Int, season: Int, episode: Int) =
-        watchedEpisodeDao.unmark(pid, seriesTmdbId, season, episode)
+    suspend fun unmarkEpisodeWatched(seriesTmdbId: Int, season: Int, episode: Int, profileId: String? = null, silent: Boolean = false) {
+        val profile = profileId ?: pid
+        watchedEpisodeDao.unmark(profile, seriesTmdbId, season, episode)
+        if (!silent) emit(HistoryChange.Watched(profile, seriesTmdbId, season, episode, false))
+    }
 
     suspend fun allWatchedEpisodes(): List<WatchedEpisodeEntity> =
         watchedEpisodeDao.getAll(pid)

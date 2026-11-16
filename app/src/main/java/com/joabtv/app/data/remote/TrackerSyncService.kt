@@ -45,9 +45,9 @@ class TrackerSyncService @Inject constructor(
                 TrackerProvider.MDBLIST -> {
                     val playback = trackers.read(provider, "/sync/playback", profile)
                     trackerItems(playback).forEach { importPlayback(it, profile) }
-                    val list = trackers.read(provider, "/watchlist/items", profile)
-                    trackerItems(list).forEach { importList(it, profile) }
-                    importSeasonHistory(trackers.read(provider, "/sync/watched", profile), profile)
+                    // Na lista a série vem sem o bloco ids e o id do item já é o do TMDB.
+                    mdblistPages("/watchlist/items?limit=1000", profile) { body -> trackerItems(body, plainId = true).forEach { importList(it, profile) } }
+                    importMdblistWatched(profile)
                 }
                 TrackerProvider.SIMKL -> {
                     trackerItems(trackers.read(provider, "/sync/playback", profile)).forEach { importPlayback(it, profile) }
@@ -95,6 +95,31 @@ class TrackerSyncService @Inject constructor(
             page++
         } while (page <= 100 && prefs.profileId.value == profile)
         check(page <= 100) { "A lista é muito grande para uma única sincronização" }
+    }
+
+    /** Segue o next_cursor do MDBList até acabar (teto de 100 páginas, como o paged). */
+    private suspend fun mdblistPages(path: String, profile: String, onPage: suspend (String) -> Unit) {
+        var cursor: String? = null
+        for (page in 1..100) {
+            if (prefs.profileId.value != profile) error("O perfil mudou")
+            val suffix = cursor?.let { "&cursor=" + java.net.URLEncoder.encode(it, "UTF-8") }.orEmpty()
+            val body = trackers.read(TrackerProvider.MDBLIST, path + suffix, profile)
+            onPage(body)
+            cursor = mdblistNextCursor(body) ?: return
+        }
+        error("A lista é muito grande para uma única sincronização")
+    }
+
+    /** O /sync/watched do MDBList não tem o formato do Trakt. Só puxa quando o last_activities mudou. */
+    private suspend fun importMdblistWatched(profile: String) {
+        val provider = TrackerProvider.MDBLIST
+        val stamp = JSONObject(trackers.read(provider, "/sync/last_activities", profile)).optString("episode_watched_at")
+        if (!mdblistWatchedChanged(stamp, trackers.syncMark(provider, "episode_watched_at"))) return
+        mdblistPages("/sync/watched?mediatype=episode&extended=ids_only&limit=1000", profile) { body ->
+            mdblistWatchedEpisodes(body).forEach { (id, season, episode) -> importWatched(TrackerRemoteItem(id, true, "", season, episode), profile) }
+        }
+        // O carimbo só é guardado depois de puxar tudo, senão uma falha no meio pularia episódios para sempre.
+        if (stamp.isNotBlank()) trackers.setSyncMark(provider, "episode_watched_at", stamp, profile)
     }
 
     private suspend fun importList(item: TrackerRemoteItem, profile: String) {

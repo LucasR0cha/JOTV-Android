@@ -33,85 +33,14 @@ class MovieDetailViewModel @Inject constructor(
     private val stremio: com.joabtv.app.data.remote.StremioAddonService,
     private val downloads: com.joabtv.app.data.repository.DownloadRepository,
     private val youtubeTrailer: com.joabtv.app.data.remote.YoutubeTrailer,
-    private val prober: com.joabtv.app.data.remote.SourceProber,
     private val trakt: com.joabtv.app.data.remote.TraktService,
     private val debrid: com.joabtv.app.data.debrid.DebridService,
     private val posterInfo: com.joabtv.app.data.local.PosterInfo,
 ) : ViewModel() {
 
-    // URLs já mandadas pro teste. A lista é recriada a cada addon que responde, então o
-    // resultado fica por URL em [UiState.probes].
-    private val probing = mutableSetOf<String>()
-    // Resultados de teste ainda não aplicados. Um por fonte refazia a tela inteira a cada um.
-    // Tudo aqui roda na thread principal (viewModelScope), então não precisa de trava.
-    private val probeBatch = HashMap<String, com.joabtv.app.data.remote.ProbeResult>()
-    private var probesRunning = 0
-    private var probeFlush: kotlinx.coroutines.Job? = null
-
-    /** Testa as fontes novas (64 KB cada, 4 por vez no prober) e guarda o resultado. */
-    private fun verify(streams: List<com.joabtv.app.data.remote.StremioStream>) {
-        streams.filter { it.url.startsWith("http") && probing.add(it.url) }.forEach { stream ->
-            probesRunning++
-            viewModelScope.launch {
-                try {
-                    probeBatch[stream.url] = prober.probe(stream.url, stream.headers)
-                } finally {
-                    probesRunning--
-                }
-                // Aplica em lote a cada 450 ms. Quando a fila zera, aplica o que sobrou na hora.
-                if (probesRunning == 0) { probeFlush?.cancel(); probeFlush = null; flushProbes() }
-                else if (probeFlush == null) probeFlush = viewModelScope.launch {
-                    kotlinx.coroutines.delay(450)
-                    probeFlush = null
-                    flushProbes()
-                }
-            }
-        }
-        scheduleDebridCheck()
-    }
-
-    private fun flushProbes() {
-        if (probeBatch.isEmpty()) return
-        val batch = HashMap(probeBatch)
-        probeBatch.clear()
-        _uiState.update { it.copy(probes = it.probes + batch) }
-    }
-
-    private var debridJob: kotlinx.coroutines.Job? = null
-
-    /**
-     * Pergunta ao debrid quais torrents ele tem prontos. Espera os addons pararem de chegar
-     * (1,2 s), porque o Real-Debrid confere tentando resolver e só vale gastar com os melhores.
-     */
-    private fun scheduleDebridCheck() {
-        val a = debrid.active() ?: return
-        debridJob?.cancel()
-        debridJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(1_200)
-            val st = _uiState.value
-            val ep = st.selectedEpisode
-            val streams = if (ep != null) st.episodeStremioStreams else st.stremioStreams
-            val cap = prefs.maxQuality.takeIf { it > 0 } ?: Int.MAX_VALUE
-            val magnets = streams.filter { com.joabtv.app.data.torrent.TorrentMagnet.isMagnet(it.url) }
-                .sortedWith(
-                    compareByDescending<com.joabtv.app.data.remote.StremioStream> { if (it.qualityRank > cap) 0 else it.qualityRank }
-                        .thenByDescending { com.joabtv.app.data.torrent.TorrentMagnet.seeders(it.label) }
-                ).map { it.url }
-            if (magnets.isEmpty()) return@launch
-            debrid.check(magnets, ep?.first ?: 0, ep?.second ?: 0)
-            val known = magnets.mapNotNull { u -> debrid.knownCached(u)?.let { u to it } }.toMap()
-            _uiState.update { cur ->
-                val map = cur.debridCached + known
-                val hide = debrid.settings.value.hideUncached
-                cur.copy(
-                    debridCached = map,
-                    debridTag = a.provider.short,
-                    stremioStreams = if (hide) cur.stremioStreams.filterNot { map[it.url] == false } else cur.stremioStreams,
-                    episodeStremioStreams = if (hide) cur.episodeStremioStreams.filterNot { map[it.url] == false } else cur.episodeStremioStreams,
-                )
-            }
-        }
-    }
+    // O app não testa as fontes sozinho. Abrir o link de uma fonte, até para medir (64 KB), faz addon com debrid
+    // adicionar o torrent na conta, e a consulta de cache também mexia com o debrid. Duração, resolução e resposta
+    // da fonte só aparecem na hora de tocar, que é quando a pessoa escolhe a fonte.
 
     /** Tira da lista o torrent que o debrid disse que não tem, quando o ajuste pede. */
     private fun dropUncached(list: List<com.joabtv.app.data.remote.StremioStream>, st: UiState) =
@@ -214,7 +143,8 @@ class MovieDetailViewModel @Inject constructor(
             com.joabtv.app.data.remote.SourceFacts(
                 it.url, it.addon, it.releaseText.ifBlank { it.label }, it.qualityRank, p,
                 wrongTitle = p != null && com.joabtv.app.data.remote.durationMismatch(runtime, p.sec),
-                debrid = if (debridCached[it.url] == true) 2 else 0,
+                // Torrent que o debrid tem pronto, ou link de debrid do addon marcado como pronto ([RD+], ⚡). Esse não é testado.
+                debrid = if (debridCached[it.url] == true || com.joabtv.app.data.debrid.DebridLinks.cachedTag(it.name)) 2 else 0,
             )
         }
         fun movieFacts() = factsOf(stremioStreams, runtimeMin)
@@ -350,7 +280,6 @@ class MovieDetailViewModel @Inject constructor(
                                     stremioLoading = slots.any { it == null },
                                 )
                             }
-                            verify(s)
                         }
                     }
                 }
@@ -586,7 +515,6 @@ class MovieDetailViewModel @Inject constructor(
                     slots[idx] = s
                     // Todos os addons responderam. O episódio também vale para o pôster da série.
                     if (slots.none { it == null }) posterInfo.remember(com.joabtv.app.domain.model.MediaType.SERIES, seriesTmdb, slots.filterNotNull().flatten())
-                    if (_uiState.value.selectedEpisode == (season to episode)) verify(s)
                     _uiState.update { st ->
                         if (st.selectedEpisode != (season to episode)) st
                         else st.copy(

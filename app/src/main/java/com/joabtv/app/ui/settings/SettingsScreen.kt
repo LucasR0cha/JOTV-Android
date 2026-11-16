@@ -364,7 +364,8 @@ fun SettingsScreen(
 
                 SettingsSection("Aparência")
                 val appearance by viewModel.appearance.collectAsStateWithLifecycle()
-                AppearanceSettings(appearance, viewModel::setTheme, viewModel::setMotion, viewModel::setMenu, viewModel::setUiSize)
+                val showAddons by viewModel.menuAddons.collectAsStateWithLifecycle()
+                AppearanceSettings(appearance, viewModel::setTheme, viewModel::setMotion, viewModel::setMenu, viewModel::setUiSize, showAddons, viewModel::setMenuAddons)
 
                 // Addons, Aparelho e TMDB somem no perfil infantil — só quem já passou pelo PIN
                 // pra sair do infantil mexe nisso (ver ProfilesScreen).
@@ -658,6 +659,8 @@ internal fun AppearanceSettings(
     onMotion: (com.joabtv.app.data.local.InterfaceMotion) -> Unit,
     onMenu: ((com.joabtv.app.data.local.MenuStyle) -> Unit)? = null,
     onSize: ((com.joabtv.app.data.local.InterfaceSize) -> Unit)? = null,
+    showAddons: Boolean = true,
+    onShowAddons: ((Boolean) -> Unit)? = null,
 ) {
     SettingsCard {
         PrefRow("Tema", com.joabtv.app.data.local.AppTheme.entries.map { it to it.label }, appearance.theme, onTheme, tonal = true)
@@ -675,6 +678,14 @@ internal fun AppearanceSettings(
                 "Cápsula na lateral, barra no topo da tela ou lateral escondida.",
                 color = TextTertiary, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp),
             )
+            if (onShowAddons != null) {
+                Spacer(Modifier.height(18.dp))
+                PrefRow("Aba Addons no menu", listOf(true to "Mostrar", false to "Ocultar"), showAddons, onShowAddons, tonal = true)
+                Text(
+                    "Ocultando, os addons continuam em Configurações, em Seu catálogo.",
+                    color = TextTertiary, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 10.dp),
+                )
+            }
         }
         // O tamanho vale só na TV, onde tudo é medido pela largura da tela. A linha da tela ajuda a achar a causa quando alguém relata texto pequeno.
         if (onSize != null && com.joabtv.app.ui.common.LocalIsTv.current) {
@@ -695,7 +706,7 @@ internal fun AppearanceSettings(
  * Botão de rede marca na hora, gira "Salvando…" e trava o segundo toque até a resposta.
  */
 @Composable
-private fun TraktSection(viewModel: SettingsViewModel) {
+internal fun TraktSection(viewModel: SettingsViewModel) {
     val user by viewModel.traktUser.collectAsStateWithLifecycle()
     val busy by viewModel.traktBusy.collectAsStateWithLifecycle()
     val code by viewModel.traktCode.collectAsStateWithLifecycle()
@@ -807,7 +818,7 @@ private fun LangOption(label: String, selected: Boolean, modifier: Modifier, onC
 
 /** Uma preferência de escolha única em pílulas. Salva na hora (é local, sem rede). */
 @Composable
-private fun <T> PrefRow(title: String, options: List<Pair<T, String>>, value: T, onPick: (T) -> Unit, tonal: Boolean = false) {
+internal fun <T> PrefRow(title: String, options: List<Pair<T, String>>, value: T, onPick: (T) -> Unit, tonal: Boolean = false) {
     Text(title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(6.dp))
     @OptIn(ExperimentalLayoutApi::class)
@@ -841,7 +852,10 @@ private fun PlatformOption(
 @Composable
 internal fun TrackerDialog(provider: TrackerProvider, viewModel: SettingsViewModel, onDismiss: () -> Unit) {
     val current = remember(provider) { viewModel.trackerToken(provider) }
-    var text by remember(provider) { mutableStateOf(current) }
+    // O MDBList aceita código (padrão) ou a chave da API como alternativa.
+    val keyField = !provider.needsClientId || provider == TrackerProvider.MDBLIST
+    // Token de login por código não aparece no campo da chave, senão seria salvo de novo como chave.
+    var text by remember(provider) { mutableStateOf(if (viewModel.trackerUsesCode(provider)) "" else current) }
     var clientId by remember(provider) { mutableStateOf(viewModel.trackerClientId(provider)) }
     val needsSetup = remember(provider) { clientId.isBlank() }
     var busy by remember { mutableStateOf(false) }
@@ -858,12 +872,18 @@ internal fun TrackerDialog(provider: TrackerProvider, viewModel: SettingsViewMod
         title = { Text(provider.label, color = TextPrimary, fontWeight = FontWeight.Bold) },
         text = {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (deviceCode == null) Text(if (provider.needsClientId) "Entre com um código no celular. A conexão só é salva depois que o serviço aceitar."
-                    else "Gere uma chave na sua conta e cole abaixo. A conexão só é salva depois que o serviço aceitar.", color = TextSecondary)
+                if (deviceCode == null) Text(when {
+                    provider == TrackerProvider.MDBLIST -> "Entre com um código no celular. Se preferir, cole a chave da API da sua conta mais abaixo. A conexão só é salva depois que o serviço aceitar."
+                    provider.needsClientId -> "Entre com um código no celular. A conexão só é salva depois que o serviço aceitar."
+                    else -> "Gere uma chave na sua conta e cole abaixo. A conexão só é salva depois que o serviço aceitar."
+                }, color = TextSecondary)
                 if (provider.needsClientId) {
                     if (needsSetup) {
-                    Text(if (provider == TrackerProvider.SIMKL) "A integração precisa do ID de um aplicativo Simkl AUTH V2."
-                        else "Use o ID do aplicativo registrado no WeTrakr. A chave de aplicativo e o token de usuário são diferentes.", color = TextSecondary)
+                    Text(when (provider) {
+                        TrackerProvider.SIMKL -> "A integração precisa do ID de um aplicativo Simkl AUTH V2."
+                        TrackerProvider.MDBLIST -> "Use o ID do aplicativo Device Code registrado no MDBList."
+                        else -> "Use o ID do aplicativo registrado no WeTrakr. A chave de aplicativo e o token de usuário são diferentes."
+                    }, color = TextSecondary)
                     OutlinedTextField(value = clientId, onValueChange = { clientId = it }, enabled = !busy,
                         label = { Text("ID do aplicativo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     }
@@ -892,8 +912,11 @@ internal fun TrackerDialog(provider: TrackerProvider, viewModel: SettingsViewMod
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Escaneie com o celular", color = TextPrimary)
                             Text(code.code, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-                            Text(if (provider == TrackerProvider.SIMKL) "Ou abra simkl.com/pin e digite o código"
-                                else "Ou abra wetrakr.com/activate e digite o código", color = TextSecondary)
+                            Text(when (provider) {
+                                TrackerProvider.SIMKL -> "Ou abra simkl.com/pin e digite o código"
+                                TrackerProvider.MDBLIST -> "Ou abra mdblist.com/oauth/device e digite o código"
+                                else -> "Ou abra wetrakr.com/activate e digite o código"
+                            }, color = TextSecondary)
                         }
                     } else {
                         Text(code.code, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
@@ -901,11 +924,11 @@ internal fun TrackerDialog(provider: TrackerProvider, viewModel: SettingsViewMod
                     }
                     Text("Fechar esta janela cancela a espera.", color = TextSecondary)
                 }
-                if (!provider.needsClientId) OutlinedTextField(
+                if (keyField) OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
                     enabled = !busy,
-                    label = { Text(if (provider.needsClientId) "Token de acesso (opcional com código)" else "Chave da API") },
+                    label = { Text("Chave da API") },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
@@ -921,7 +944,7 @@ internal fun TrackerDialog(provider: TrackerProvider, viewModel: SettingsViewMod
             }
         },
         confirmButton = {
-            if (!provider.needsClientId) TextButton(enabled = !busy && text.isNotBlank(), onClick = {
+            if (keyField) TextButton(enabled = !busy && text.isNotBlank(), onClick = {
                 busy = true
                 error = null
                 scope.launch {
@@ -943,7 +966,8 @@ internal fun TrackerDialog(provider: TrackerProvider, viewModel: SettingsViewMod
         onDismissRequest = { confirmDisconnect = false },
         containerColor = BackgroundCard,
         title = { Text("Desconectar?", color = TextPrimary, fontWeight = FontWeight.ExtraBold) },
-        text = { Text(if (provider.needsClientId) "Será necessário autorizar um novo código para sincronizar."
+        text = { Text(if (provider.needsClientId && !keyField) "Será necessário autorizar um novo código para sincronizar."
+            else if (provider == TrackerProvider.MDBLIST) "Será necessário entrar com um código ou informar a chave novamente para sincronizar."
             else "Será necessário informar a chave novamente para sincronizar.", color = TextSecondary) },
         confirmButton = {
             TextButton(onClick = { confirmDisconnect = false; viewModel.disconnectTracker(provider); onDismiss() }) { Text("Desconectar", color = Danger) }

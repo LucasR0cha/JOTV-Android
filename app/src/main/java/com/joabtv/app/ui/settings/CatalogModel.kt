@@ -161,6 +161,9 @@ data class PartSummary(val mark: Mark, val text: String, val sub: String = "")
 fun partSummary(p: ImportPart, r: PartRecord): PartSummary {
     if (!r.ok) return PartSummary(Mark.BAD, p.miss, r.why)
     return when (p) {
+        ImportPart.PROFILE ->
+            if (r.label.isNotBlank()) PartSummary(Mark.OK, "Perfil ${r.label}", if (r.n > 0) "Com a foto do Nuvio" else "Sem foto no Nuvio, ficou a inicial")
+            else PartSummary(Mark.NONE, "O perfil do Nuvio não tem nome nem foto")
         ImportPart.ADDONS -> {
             val total = r.n + r.skip
             if (total == 0 && r.failed == 0) {

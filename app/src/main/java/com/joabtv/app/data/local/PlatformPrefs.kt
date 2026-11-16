@@ -25,11 +25,25 @@ data class HomeCatalogRef(val base: String, val type: String, val id: String, va
     val key get() = "$base|$type|$id"
 }
 
-/** Perfil de quem assiste. [color] é o índice em [PROFILE_COLORS]. */
-data class Profile(val id: String, val name: String, val color: Int = 0, val kids: Boolean = false)
+/**
+ * Perfil de quem assiste. [color] é o índice em [PROFILE_COLORS]. [avatar] é a foto (ver [ProfilePhotos]) e vazio
+ * quer dizer sem foto, com a inicial na cor do perfil.
+ */
+data class Profile(val id: String, val name: String, val color: Int = 0, val kids: Boolean = false, val avatar: String = "")
 
 /** Cores dos perfis, as mesmas do webOS. */
 val PROFILE_COLORS = listOf(0xFF2E8BFF, 0xFFE5484D, 0xFF3DDC84, 0xFFF5A524, 0xFFA970FF, 0xFFFF6FB5)
+
+/** Cor do perfil do JOTV mais próxima de uma cor "#RRGGBB" (a do perfil no Nuvio). null quando o texto não é uma cor. */
+fun nearestProfileColor(hex: String): Int? {
+    val rgb = hex.trim().removePrefix("#").takeIf { it.length == 6 }?.toLongOrNull(16) ?: return null
+    fun ch(c: Long, shift: Int) = ((c shr shift) and 0xFF).toInt()
+    fun sq(v: Int) = v * v
+    return PROFILE_COLORS.indices.minByOrNull { i ->
+        val c = PROFILE_COLORS[i]
+        sq(ch(c, 16) - ch(rgb, 16)) + sq(ch(c, 8) - ch(rgb, 8)) + sq(ch(c, 0) - ch(rgb, 0))
+    }
+}
 const val MAX_PROFILES = 5
 const val MAIN_PROFILE = "main"
 
@@ -47,7 +61,7 @@ internal val SCOPED_KEYS = listOf(
     "recent_searches", "ext_audio_v1", "home_catalogs_v1", "sub_size", "sub_bg",
     "pref_audio", "pref_max_quality", "pref_hero_trailer", "trakt_v1",
     "home_layout_v1", "home_hero_v1", "pref_subtitle_on", "pref_sub_lang", "collections_v1",
-    "pref_theme", "pref_motion", "pref_menu_style", "pref_ui_size", "home_keep_v1", "home_seen_v1", "import_log_v1", "pref_auto_switch", "pref_source_timeout", "pref_auto_upgrade", "pref_debrid_cached_only", "pref_simkl_token", "pref_mdblist_key", "pref_wetrakr_key", "pref_publicmetadb_key",
+    "pref_theme", "pref_motion", "pref_menu_style", "pref_menu_addons", "pref_ui_size", "home_keep_v1", "home_seen_v1", "import_log_v1", "pref_auto_switch", "pref_source_timeout", "pref_auto_upgrade", "pref_debrid_cached_only", "pref_simkl_token", "pref_mdblist_key", "pref_wetrakr_key", "pref_publicmetadb_key",
 )
 
 @Singleton
@@ -97,13 +111,13 @@ class PlatformPrefs @Inject constructor(
         val arr = org.json.JSONArray(prefs.getString("profiles", "[]"))
         (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            Profile(o.getString("id"), o.optString("name", "Perfil"), o.optInt("color", 0), o.optBoolean("kids", false))
+            Profile(o.getString("id"), o.optString("name", "Perfil"), o.optInt("color", 0), o.optBoolean("kids", false), o.optString("avatar", ""))
         }
     }.getOrDefault(emptyList()).ifEmpty { listOf(Profile(MAIN_PROFILE, "Principal")) }
 
     private fun saveProfiles(list: List<Profile>) {
         val arr = org.json.JSONArray()
-        list.forEach { arr.put(org.json.JSONObject().put("id", it.id).put("name", it.name).put("color", it.color).put("kids", it.kids)) }
+        list.forEach { arr.put(org.json.JSONObject().put("id", it.id).put("name", it.name).put("color", it.color).put("kids", it.kids).put("avatar", it.avatar)) }
         prefs.edit().putString("profiles", arr.toString()).apply()
         _profiles.value = list
     }
@@ -133,6 +147,7 @@ class PlatformPrefs @Inject constructor(
         val ed = prefs.edit()
         SCOPED_KEYS.forEach { ed.remove(scopedKey(it, id)) }
         ed.apply()
+        ProfilePhotos.delete(context, id)
         saveProfiles(list.filterNot { it.id == id })
         if (_profileId.value == id) selectProfile(_profiles.value.first().id)
         return true
@@ -145,6 +160,7 @@ class PlatformPrefs @Inject constructor(
         refreshLayout()
         _appearance.value = readAppearance()
         _heroTrailer.value = prefs.getBoolean(sk("pref_hero_trailer"), true)
+        _menuAddons.value = prefs.getBoolean(sk("pref_menu_addons"), true)
         _importLog.value = readImportLog()
     }
 
@@ -161,6 +177,14 @@ class PlatformPrefs @Inject constructor(
     private val _importLog = MutableStateFlow(readImportLog())
     val importLogFlow: StateFlow<com.joabtv.app.data.accounts.ImportLog> = _importLog.asStateFlow()
     val importLog: com.joabtv.app.data.accounts.ImportLog get() = _importLog.value
+
+    /**
+     * Registro de importação de um perfil pelo id, sem depender de qual é o ativo agora. O sync lê o do perfil que ele está
+     * atendendo. Em selectProfile o id do perfil troca antes do registro, e quem lê o registro ativo logo em seguida
+     * pegaria o do perfil anterior (e misturaria o perfil do Nuvio de um com o histórico do outro).
+     */
+    fun importLogOf(profileId: String): com.joabtv.app.data.accounts.ImportLog =
+        com.joabtv.app.data.accounts.ImportLog.decode(prefs.getString(scopedKey("import_log_v1", profileId), null))
 
     private fun writeImportLog(v: com.joabtv.app.data.accounts.ImportLog) {
         prefs.edit().putString(sk("import_log_v1"), v.encode()).apply()
@@ -215,6 +239,13 @@ class PlatformPrefs @Inject constructor(
      * Trailer mudo no destaque da Início. Observável porque a Início fica viva enquanto a pessoa
      * muda a opção em Configurações ou em Personalizar Início, e antes só via a troca ao reabrir o app.
      */
+    // Aba Addons no menu da TV (por perfil). Desligada, os addons seguem em Configurações, em Seu catálogo.
+    private val _menuAddons = MutableStateFlow(prefs.getBoolean(sk("pref_menu_addons"), true))
+    val menuAddonsFlow: StateFlow<Boolean> = _menuAddons.asStateFlow()
+    var menuAddons: Boolean
+        get() = _menuAddons.value
+        set(value) { prefs.edit().putBoolean(sk("pref_menu_addons"), value).apply(); _menuAddons.value = value }
+
     private val _heroTrailer = MutableStateFlow(prefs.getBoolean(sk("pref_hero_trailer"), true))
     val heroTrailerFlow: StateFlow<Boolean> = _heroTrailer.asStateFlow()
     var heroTrailer: Boolean

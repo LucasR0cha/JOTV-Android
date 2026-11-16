@@ -58,6 +58,8 @@ data class StremioStream(
     val headers: Map<String, String> = emptyMap(),
     val subtitles: List<ExternalSub> = emptyList(),
     val nzbUrl: String = "",
+    /** Nome que o addon deu à fonte (traz a etiqueta de debrid, tipo "[RD+] Torrentio"). Sem o resto do texto. */
+    val name: String = "",
 )
 
 private data class StremioStreamDto(
@@ -242,6 +244,7 @@ class StremioAddonService @Inject constructor(
                 headers = streamHeaders(s.behaviorHints),
                 subtitles = parseStreamSubtitles(s.subtitles, url, addonName),
                 nzbUrl = nzb,
+                name = s.name.orEmpty().take(200),
             )
         }.sortedByDescending { it.qualityRank } // 4K primeiro, depois 1080p, 720p…
     } }

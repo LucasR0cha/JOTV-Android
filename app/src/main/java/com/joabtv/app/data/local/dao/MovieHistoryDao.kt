@@ -20,4 +20,8 @@ interface MovieHistoryDao {
 
     @Query("DELETE FROM movie_history WHERE profileId = :profileId")
     suspend fun clear(profileId: String)
+
+    /** Todas as linhas do perfil, sem o teto de 30 da lista. Serve para o sync saber o que a limpeza do histórico levou. */
+    @Query("SELECT * FROM movie_history WHERE profileId = :profileId")
+    suspend fun allOf(profileId: String): List<MovieHistoryEntity>
 }

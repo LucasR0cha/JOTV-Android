@@ -4,6 +4,7 @@ import com.joabtv.app.data.collections.CollectionsRepository
 import com.joabtv.app.data.debrid.DebridProvider
 import com.joabtv.app.data.debrid.DebridService
 import com.joabtv.app.data.local.PlatformPrefs
+import com.joabtv.app.data.local.nearestProfileColor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -85,7 +86,12 @@ class AccountsHub @Inject constructor(
     @Synchronized
     fun runImport(a: Account, parts: List<ImportPart> = a.parts): Deferred<Map<ImportPart, PartRecord>> {
         jobs[a.key]?.takeIf { it.isActive }?.let { return it }
-        val list = parts.filter { it in a.parts }.ifEmpty { a.parts }
+        var list = parts.filter { it in a.parts }.ifEmpty { a.parts }
+        // Nome e foto só entram no Trazer tudo da primeira vez com esta conta. Depois só pedindo a parte sozinha.
+        val before = prefs.importLog[a]
+        if (list == a.parts && ImportPart.PROFILE in list && before?.part(ImportPart.PROFILE)?.ok == true &&
+            before.email.equals((if (a == Account.NUVIO) nuvio.session.value?.email else stremio.session.value?.email).orEmpty(), true)
+        ) list = list - ImportPart.PROFILE
         _running.update { it + (a.key to ImportRun(list)) }
         return scope.async { doRun(a, list) }.also { jobs[a.key] = it }
     }
@@ -126,6 +132,20 @@ class AccountsHub @Inject constructor(
     private fun addonRowsOn() = prefs.homeLayout.count { it.ref != null && it.enabled }
 
     private suspend fun partJob(a: Account, p: ImportPart, prof: NuvioProfile?, step: (String) -> Unit): PartRecord = when (p) {
+        // Nome, foto e cor do perfil do Nuvio passam para o perfil ativo do JOTV.
+        ImportPart.PROFILE -> {
+            var np = prof!!
+            // A lista de perfis pode não ter chegado ainda (escolha vinda do registro). Sem foto nem cor, busca de novo.
+            if (np.avatarUrl.isBlank() && np.colorHex.isBlank()) np = nuvio.profiles().getOrNull()?.firstOrNull { it.index == np.index } ?: np
+            val cur = prefs.profile
+            val next = cur.copy(
+                name = np.name.trim().take(20).ifBlank { cur.name },
+                avatar = np.avatarUrl.ifBlank { cur.avatar },
+                color = nearestProfileColor(np.colorHex) ?: cur.color,
+            )
+            prefs.updateProfile(next)
+            PartRecord(ok = true, n = if (np.avatarUrl.isNotBlank()) 1 else 0, label = next.name)
+        }
         ImportPart.ADDONS -> {
             val rows = addonRows()
             val rowsOn = addonRowsOn()

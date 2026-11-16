@@ -37,6 +37,10 @@ import com.joabtv.app.data.local.MAX_PROFILES
 import com.joabtv.app.data.local.PROFILE_COLORS
 import com.joabtv.app.data.local.PlatformPrefs
 import com.joabtv.app.data.local.Profile
+import com.joabtv.app.data.local.ProfilePhotos
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import com.joabtv.app.data.repository.LibraryRepository
 import com.joabtv.app.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -45,17 +49,46 @@ import javax.inject.Inject
 
 @HiltViewModel
 class ProfilesViewModel @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
     private val prefs: PlatformPrefs,
     private val library: LibraryRepository,
+    private val hub: com.joabtv.app.data.accounts.AccountsHub,
+    private val nuvio: com.joabtv.app.data.accounts.NuvioAccountService,
 ) : ViewModel() {
     val profiles = prefs.profiles
     val profileId = prefs.profileId
 
+    /** A aba Addons aparece no menu da TV (por perfil)? */
+    val menuAddons = prefs.menuAddonsFlow
+
+    /** A conta Nuvio está conectada (a escolha de foto do catálogo só aparece então). */
+    val nuvioConnected = hub.nuvioState.map { it.signedIn }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, hub.nuvioState.value.signedIn)
+
     fun select(id: String) = prefs.selectProfile(id)
-    fun add(name: String, kids: Boolean, color: Int) {
-        prefs.addProfile(name, kids)?.let { prefs.updateProfile(it.copy(color = color)) }
+    fun add(name: String, kids: Boolean, color: Int, avatar: String = "") {
+        prefs.addProfile(name, kids)?.let { prefs.updateProfile(it.copy(color = color, avatar = ProfilePhotos.adopt(context, it.id, avatar))) }
     }
-    fun update(p: Profile) = prefs.updateProfile(p)
+    fun update(p: Profile) {
+        // Trocou a foto de arquivo por outra coisa, então o arquivo velho não serve mais.
+        if (!ProfilePhotos.isFile(p.avatar)) ProfilePhotos.delete(context, p.id)
+        prefs.updateProfile(p)
+    }
+
+    /** Foto escolhida na galeria, reduzida e guardada no app. [profileId] vazio é de perfil novo. null se não leu a imagem. */
+    suspend fun savePhoto(uri: android.net.Uri, profileId: String): String? =
+        ProfilePhotos.savePicked(context, uri, profileId.ifBlank { ProfilePhotos.NEW_PROFILE })
+
+    /** A foto do perfil do Nuvio escolhido na importação (se tiver) e depois o catálogo de fotos do Nuvio. */
+    suspend fun nuvioPhotos(): Result<List<com.joabtv.app.data.accounts.NuvioAvatar>> {
+        val catalog = nuvio.avatarCatalog().getOrElse { return Result.failure(it) }
+        val pick = hub.nuvioPick().index
+        val own = nuvio.profiles().getOrNull()?.firstOrNull { it.index == pick }?.avatarUrl.orEmpty()
+        return Result.success(
+            if (own.isBlank() || catalog.any { it.url == own }) catalog
+            else listOf(com.joabtv.app.data.accounts.NuvioAvatar("own", "Foto do seu perfil", "", own)) + catalog,
+        )
+    }
     fun remove(id: String) {
         if (prefs.removeProfile(id)) viewModelScope.launch { library.dropProfile(id) }
     }
@@ -80,21 +113,32 @@ fun ProfileAvatar(profile: Profile, size: Dp, modifier: Modifier = Modifier) {
             trim = androidx.compose.ui.text.style.LineHeightStyle.Trim.Both,
         ),
     )
+    // Foto do perfil (do Nuvio, do Stremio ou da galeria). Enquanto não chega, ou se falhar, a inicial segue valendo.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val photo = remember(profile.avatar) { ProfilePhotos.model(context, profile.avatar) }
+    var photoShown by remember(photo) { mutableStateOf(false) }
     Box(
         modifier.size(size).clip(RoundedCornerShape(size * 0.28f))
             .background(Color(PROFILE_COLORS[profile.color.mod(PROFILE_COLORS.size)])),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
+        if (!photoShown) Text(
             profile.name.trim().take(1).uppercase().ifBlank { "?" },
             color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = initialSize,
             lineHeight = initialSize, textAlign = TextAlign.Center, style = avatarText,
+        )
+        if (photo != null) coil.compose.AsyncImage(
+            model = photo, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier.matchParentSize(),
+            onSuccess = { photoShown = true }, onError = { photoShown = false },
         )
         if (profile.kids && size >= 48.dp) {
             Text(
                 "KIDS", color = Color.White, fontSize = kidsSize, lineHeight = kidsSize,
                 fontWeight = FontWeight.Black, textAlign = TextAlign.Center, style = avatarText,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = size * 0.06f),
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = size * 0.06f)
+                    // Sobre foto o texto branco precisa de fundo para ler.
+                    .then(if (photoShown) Modifier.background(Color(0x99000000), RoundedCornerShape(4.dp)).padding(horizontal = 3.dp) else Modifier),
             )
         }
     }
@@ -201,7 +245,7 @@ fun ProfilesScreen(
             onDismiss = { panel = null },
             onSave = { edited ->
                 val becameKids = edited.kids && !p.kids
-                if (edited.id.isEmpty()) vm.add(edited.name, edited.kids, edited.color) else vm.update(edited)
+                if (edited.id.isEmpty()) vm.add(edited.name, edited.kids, edited.color, edited.avatar) else vm.update(edited)
                 panel = null
                 // Marcou infantil pela 1ª vez sem PIN nenhum definido no aparelho: convida a criar
                 // um agora, senão o modo infantil não trava nada (qualquer um sai dele na hora).
@@ -269,8 +313,9 @@ private fun ProfileEditDialog(
     var name by remember { mutableStateOf(initial.name) }
     var kids by remember { mutableStateOf(initial.kids) }
     var color by remember { mutableIntStateOf(initial.color) }
+    var avatar by remember { mutableStateOf(initial.avatar) }
     var confirmRemove by remember { mutableStateOf(false) }
-    val draft = initial.copy(name = name, kids = kids, color = color)
+    val draft = initial.copy(name = name, kids = kids, color = color, avatar = avatar)
     // Na TV o nome vem do teclado na tela. Perfil novo já abre pedindo o nome.
     val tv = com.joabtv.app.ui.common.LocalIsTv.current
     var naming by remember { mutableStateOf(tv && initial.id.isEmpty()) }
@@ -291,9 +336,10 @@ private fun ProfileEditDialog(
         containerColor = BackgroundCard,
         title = { Text(if (initial.id.isEmpty()) "Novo perfil" else "Editar perfil", color = TextPrimary) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            // Rola quando a tela é baixa ou a fonte é grande, senão os botões de baixo ficam fora do alcance.
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    ProfileAvatar(draft.copy(name = name.ifBlank { "?" }), 56.dp)
+                    ProfileAvatar(draft.copy(name = name.ifBlank { "?" }), 64.dp)
                     if (tv) com.joabtv.app.ui.common.SettingsRow(
                         icon = Icons.Default.Edit, title = name.ifBlank { "Sem nome" }, sub = "Renomear",
                         modifier = Modifier.weight(1f), onClick = { naming = true },
@@ -306,6 +352,7 @@ private fun ProfileEditDialog(
                         ),
                     )
                 }
+                ProfilePhotoChooser(avatar = avatar, profileId = initial.id, onChange = { avatar = it })
                 Text("Cor", color = TextTertiary, fontSize = 12.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     PROFILE_COLORS.forEachIndexed { i, c ->

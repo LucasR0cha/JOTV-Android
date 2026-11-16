@@ -67,7 +67,7 @@ class CatalogModelTest {
         val v = nuvio(AccountSnap())
         assertNull(v.tag)
         assertEquals(listOf("Entrar com o celular", "Usar e-mail e senha"), v.acts.map { it.label })
-        assertEquals(listOf("Traz addons, Minha Lista, progresso, coleções e debrid"), v.lines)
+        assertEquals(listOf("Traz nome, foto, addons, Minha Lista, progresso, coleções e debrid"), v.lines)
         assertEquals(listOf("Traz addons, Minha Lista e progresso"), accountView(Account.STREMIO, AccountSnap(), null, null, now, utc).lines)
         assertFalse(v.pending)
     }
@@ -90,9 +90,9 @@ class CatalogModelTest {
 
     @Test
     fun `trazendo trava o botao e mostra a parte da vez`() {
-        val run = ImportRun(ImportPart.entries, index = 2)
+        val run = ImportRun(ImportPart.entries, index = 3)
         val v = nuvio(signed, allOk, run)
-        assertEquals("Trazendo coleções, 3 de 4 partes", v.lines.last())
+        assertEquals("Trazendo coleções, 4 de 5 partes", v.lines.last())
         assertTrue(v.acts[0].busy)
         assertEquals("Trazendo…", v.acts[0].label)
         assertTrue(v.acts[1].blocked)

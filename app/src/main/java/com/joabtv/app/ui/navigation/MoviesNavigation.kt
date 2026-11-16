@@ -530,6 +530,8 @@ fun MoviesNavigation(
     val profiles by profVm.profiles.collectAsStateWithLifecycle()
     val pid by profVm.profileId.collectAsStateWithLifecycle()
     val profile = profiles.firstOrNull { it.id == pid } ?: profiles.first()
+    // A aba Addons pode ser ocultada do menu da TV nas Configurações, em Aparência.
+    val menuAddons by profVm.menuAddons.collectAsStateWithLifecycle()
 
     // Foco da TV. Cada tela nova recebe o foco no conteúdo e Voltar na Início vai ao menu e
     // depois pergunta se quer sair, igual ao back() do webOS.
@@ -547,7 +549,7 @@ fun MoviesNavigation(
         add(TvMenuItem(MoviesRoute.Search.route, "Buscar", Icons.Default.Search, go(MoviesRoute.Search.route)))
         add(TvMenuItem(MoviesRoute.Descobrir.route, "Descobrir", Icons.Default.Explore, go(MoviesRoute.Descobrir.route)))
         add(TvMenuItem(MoviesRoute.MinhaLista.route, "Minha Lista", Icons.Default.Bookmark, go(MoviesRoute.MinhaLista.route)))
-        add(TvMenuItem(MoviesRoute.Addons.route, "Addons", Icons.Default.Extension, go(MoviesRoute.Addons.route)))
+        if (menuAddons) add(TvMenuItem(MoviesRoute.Addons.route, "Addons", Icons.Default.Extension, go(MoviesRoute.Addons.route)))
     }
     fun tvBottomItems() = listOf(
         TvMenuItem(MoviesRoute.Profiles.route, profile.name, null, go(MoviesRoute.Profiles.route), avatar = profile),

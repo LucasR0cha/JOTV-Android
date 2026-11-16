@@ -114,6 +114,58 @@ class StremioAccountService @Inject constructor(
             .map { added }
     }
 
+    // ── Biblioteca para o sync de histórico ─────────────────────────────────────
+
+    /** Hora da última alteração de cada item da biblioteca (id e milissegundos), sem baixar os itens. */
+    suspend fun libraryMeta(): Result<Map<String, Long>> = withContext(Dispatchers.IO) {
+        val s = _session.value ?: return@withContext Result.failure(IllegalStateException("Entre na conta Stremio"))
+        val r = api("datastoreMeta", JSONObject().put("authKey", s.authKey).put("collection", "libraryItem"))
+            .getOrElse { return@withContext Result.failure(it) }
+        val arr = r as? JSONArray ?: return@withContext Result.failure(IllegalStateException("Resposta inesperada do Stremio"))
+        Result.success(
+            (0 until arr.length()).mapNotNull { i ->
+                val pair = arr.optJSONArray(i) ?: return@mapNotNull null
+                val id = pair.optString(0).takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val raw = pair.opt(1)
+                id to (if (raw is Number) raw.toLong() else isoMsOrZero(raw?.toString()))
+            }.toMap(),
+        )
+    }
+
+    /** Biblioteca inteira, itens crus (com o state). */
+    suspend fun libraryAll(): Result<JSONArray> = withContext(Dispatchers.IO) {
+        val s = _session.value ?: return@withContext Result.failure(IllegalStateException("Entre na conta Stremio"))
+        api("datastoreGet", JSONObject().put("authKey", s.authKey).put("collection", "libraryItem").put("ids", JSONArray()).put("all", true))
+            // Resposta que não é lista (erro, página de login) não pode virar "biblioteca vazia", senão o sync grava o mapa de horas e nunca mais baixa nada.
+            .mapCatching { it as? JSONArray ?: throw IllegalStateException("Resposta inesperada do Stremio") }
+    }
+
+    /** Só os itens pedidos (em lotes de 100). */
+    suspend fun libraryItems(ids: List<String>): Result<JSONArray> = withContext(Dispatchers.IO) {
+        val s = _session.value ?: return@withContext Result.failure(IllegalStateException("Entre na conta Stremio"))
+        val out = JSONArray()
+        for (chunk in ids.distinct().chunked(100)) {
+            val r = api("datastoreGet", JSONObject().put("authKey", s.authKey).put("collection", "libraryItem").put("ids", JSONArray(chunk)).put("all", false))
+                .getOrElse { return@withContext Result.failure(it) }
+            (r as? JSONArray)?.let { a -> for (i in 0 until a.length()) out.put(a.get(i)) }
+        }
+        Result.success(out)
+    }
+
+    /** Grava itens da biblioteca (datastorePut), em lotes de 100. */
+    suspend fun putLibrary(changes: JSONArray): Result<Unit> = withContext(Dispatchers.IO) {
+        val s = _session.value ?: return@withContext Result.failure(IllegalStateException("Entre na conta Stremio"))
+        var i = 0
+        while (i < changes.length()) {
+            val chunk = JSONArray()
+            for (j in i until minOf(i + 100, changes.length())) chunk.put(changes.get(j))
+            api("datastorePut", JSONObject().put("authKey", s.authKey).put("collection", "libraryItem").put("changes", chunk))
+                .getOrElse { return@withContext Result.failure(it) }
+            i += 100
+        }
+        Result.success(Unit)
+    }
+
     fun logout() {
         val key = _session.value?.authKey
         prefs.edit().remove("stremio_auth").remove("stremio_email").remove("stremio_since").remove("stremio_lost").apply()

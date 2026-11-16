@@ -91,4 +91,20 @@ class BackupTransferTest {
         assertEquals("refresh-falso", restored.getJSONObject("SIMKL").getString("refresh_token"))
         assertEquals("legado", backupTrackerToken(JSONObject().put("apiKey", "legado")))
     }
+
+    @Test fun mdblistPorCodigoSobreviveARestauracao() {
+        val sessions = """{"MDBLIST":{"client_id":"cliente","refresh_token":"refresh-falso","expires_at":1800000000000,"oauth":true}}"""
+        val trackers = portableTrackers(mapOf("mdblist" to "token-falso"), sessions)
+        val item = trackers.getJSONObject("mdblist")
+        assertFalse(item.has("key"))
+        assertEquals("oauth", item.getString("auth"))
+        assertEquals("token-falso", backupTrackerToken(item))
+        val restored = JSONObject(androidTrackerSessions(trackers, "{}")).getJSONObject("MDBLIST")
+        assertTrue(restored.getBoolean("oauth"))
+        assertEquals("refresh-falso", restored.getString("refresh_token"))
+        // Chave da API continua chave depois de restaurar.
+        val key = portableTrackers(mapOf("mdblist" to "chave"), """{"MDBLIST":{"client_id":"cliente","refresh_token":"","expires_at":0,"oauth":false}}""")
+        assertEquals("chave", key.getJSONObject("mdblist").getString("key"))
+        assertFalse(JSONObject(androidTrackerSessions(key, "{}")).getJSONObject("MDBLIST").getBoolean("oauth"))
+    }
 }

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -423,6 +424,15 @@ private fun MorePanel(a: Account, st: AccountsViewModel.Ui, vm: AccountsViewMode
         if (showProfile) LiveItem(
             "Perfil do Nuvio", { pickProfile = true }, req(), icon = Icons.Default.Person, sub = "OK mostra os perfis", tag = st.pick.name,
         )
+        // Histórico igual nos dois lados, para o perfil que está em uso. Tocar liga ou desliga.
+        val sync = st.sync[a]
+        val syncOn = sync?.enabled == true
+        LiveItem(
+            "Sincronizar histórico", { vm.setSync(a, !syncOn) }, req(),
+            icon = Icons.Default.Sync, sub = syncText(sync), tag = if (syncOn) "Ligado" else "Desligado",
+            busy = syncOn && sync?.state == com.joabtv.app.data.sync.HistorySync.State.RUNNING,
+        )
+        if (syncOn) LiveItem("Sincronizar agora", { vm.syncNow(a) }, icon = Icons.Default.Refresh, sub = "Puxa e manda o histórico neste instante")
         Text(
             "TRAZER SÓ UMA PARTE", color = Accent, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.6.sp, fontFamily = Inter,
             modifier = Modifier.padding(start = 4.dp, top = 8.dp),
@@ -471,7 +481,26 @@ private fun MorePanel(a: Account, st: AccountsViewModel.Ui, vm: AccountsViewMode
     )
 }
 
+/** Linha de baixo do item Sincronizar histórico. */
+private fun syncText(s: com.joabtv.app.data.sync.HistorySync.Status?): String = when {
+    s == null || !s.enabled -> "Desligado. O histórico fica só neste aparelho"
+    s.state == com.joabtv.app.data.sync.HistorySync.State.RUNNING -> "Sincronizando…"
+    s.state == com.joabtv.app.data.sync.HistorySync.State.ERROR -> "Falhou. " + s.error.ifBlank { "Tente de novo." }
+    s.okAt > 0 -> "Em dia, " + syncAgo(s.okAt)
+    else -> "Ligado. A primeira sincronia vem já"
+}
+
+private fun syncAgo(at: Long): String {
+    val sec = ((System.currentTimeMillis() - at) / 1000).coerceAtLeast(0)
+    return when {
+        sec < 90 -> "agora mesmo"
+        sec < 3600 -> "há ${sec / 60} min"
+        else -> whenText(at)
+    }
+}
+
 private fun partIcon(p: ImportPart) = when (p) {
+    ImportPart.PROFILE -> Icons.Default.Person
     ImportPart.ADDONS -> Icons.Default.Tune
     ImportPart.LIBRARY -> Icons.Default.Dashboard
     ImportPart.COLLECTIONS -> Icons.Default.Dashboard

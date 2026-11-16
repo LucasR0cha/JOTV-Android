@@ -38,9 +38,15 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
     private val _status = MutableStateFlow(TrackerProvider.entries.associateWith { TrackerStatus() })
     val status = _status.asStateFlow()
     private val queues = TrackerProvider.entries.associateWith { Channel<suspend () -> Unit>(Channel.UNLIMITED) }
+    private val cooldown = java.util.concurrent.ConcurrentHashMap<TrackerProvider, Long>()
 
     init {
-        queues.forEach { (_, queue) -> scope.launch { for (work in queue) work() } }
+        // Depois de um 429 a fila espera o Retry-After antes do próximo item, sem repetir o que falhou.
+        queues.forEach { (provider, queue) -> scope.launch { for (work in queue) {
+            val wait = (cooldown[provider] ?: 0L) - System.currentTimeMillis()
+            if (wait > 0) delay(wait)
+            work()
+        } } }
         scope.launch { prefs.profileId.collect {
             _status.value = TrackerProvider.entries.associateWith { provider ->
                 TrackerStatus(message = if (credentials(provider).token.isBlank()) "Desconectado" else "Credencial salva. Verifique a conexão")
@@ -68,20 +74,45 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
         val builtIn = when (provider) {
             TrackerProvider.SIMKL -> BuildConfig.SIMKL_CLIENT_ID
             TrackerProvider.WETRAKR -> BuildConfig.WETRAKR_CLIENT_ID
+            TrackerProvider.MDBLIST -> BuildConfig.MDBLIST_CLIENT_ID
             else -> ""
         }
+        // Token sem sessão (backup antigo ou chave colada) continua como chave da API no MDBList.
         return TrackerCredentials(token(provider), saved?.optString("client_id").orEmpty().ifBlank { builtIn },
-            saved?.optString("refresh_token").orEmpty(), saved?.optLong("expires_at") ?: 0)
+            saved?.optString("refresh_token").orEmpty(), saved?.optLong("expires_at") ?: 0, trackerSessionIsOAuth(saved))
     }
 
     fun clientId(provider: TrackerProvider): String = credentials(provider).clientId
     fun savedToken(provider: TrackerProvider): String = token(provider)
+    fun usesCode(provider: TrackerProvider): Boolean = credentials(provider).oauth
+
+    // [keep] mantém os outros campos da sessão (carimbos da sincronia) quando só o token foi renovado.
+    // Login novo começa do zero, porque pode ser outra conta.
+    private fun writeSession(provider: TrackerProvider, credentials: TrackerCredentials, keep: Boolean = false) {
+        val all = sessions()
+        val base = if (keep) all.optJSONObject(provider.name) ?: JSONObject() else JSONObject()
+        prefs.trackerSessions = all.put(provider.name, base.put("client_id", credentials.clientId)
+            .put("refresh_token", credentials.refresh).put("expires_at", credentials.expiresAt).put("oauth", credentials.oauth)).toString()
+        setToken(provider, credentials.token)
+    }
+
+    /** Carimbo da última sincronia completa guardado na sessão do serviço (por perfil). */
+    internal fun syncMark(provider: TrackerProvider, key: String): String =
+        sessions().optJSONObject(provider.name)?.optJSONObject("sync")?.optString(key).orEmpty()
+
+    internal suspend fun setSyncMark(provider: TrackerProvider, key: String, value: String, profile: String) = sessionLock.withLock {
+        if (prefs.profileId.value != profile) return@withLock
+        val all = sessions()
+        if (token(provider).isBlank()) return@withLock
+        // Chave antiga sem sessão ganha uma só com o carimbo. Sem refresh nem marcador, segue como chave da API.
+        val session = all.optJSONObject(provider.name) ?: JSONObject()
+        session.put("sync", (session.optJSONObject("sync") ?: JSONObject()).put(key, value))
+        prefs.trackerSessions = all.put(provider.name, session).toString()
+    }
 
     private suspend fun save(provider: TrackerProvider, credentials: TrackerCredentials, profile: String) = sessionLock.withLock {
         check(prefs.profileId.value == profile) { "O perfil mudou. Abra a conexão novamente" }
-        prefs.trackerSessions = sessions().put(provider.name, JSONObject().put("client_id", credentials.clientId)
-            .put("refresh_token", credentials.refresh).put("expires_at", credentials.expiresAt)).toString()
-        setToken(provider, credentials.token)
+        writeSession(provider, credentials)
     }
 
     fun disconnect(provider: TrackerProvider) {
@@ -96,11 +127,11 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
 
     private suspend fun raw(provider: TrackerProvider, path: String, credentials: TrackerCredentials, body: RequestBody? = null, authenticate: Boolean = true, method: String? = null): Reply = withContext(Dispatchers.IO) {
         val url = (provider.baseUrl + path).toHttpUrl().newBuilder().apply {
-            if (authenticate && provider == TrackerProvider.MDBLIST) addQueryParameter("apikey", credentials.token)
+            if (authenticate && trackerUsesApiKey(provider, credentials)) addQueryParameter("apikey", credentials.token)
         }.build()
         val request = Request.Builder().url(url).header("User-Agent", "JOTV/${BuildConfig.VERSION_NAME}")
             .header("Accept", "application/json").apply {
-                if (authenticate && provider != TrackerProvider.MDBLIST) header("Authorization", "Bearer ${credentials.token}")
+                if (authenticate && !trackerUsesApiKey(provider, credentials)) header("Authorization", "Bearer ${credentials.token}")
                 if (provider == TrackerProvider.SIMKL && credentials.clientId.isNotBlank()) header("simkl-api-key", credentials.clientId)
                 if (provider == TrackerProvider.WETRAKR) {
                     header("wetrakr-api-version", "1")
@@ -112,6 +143,7 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
         client.newCall(request).execute().use { response ->
             val contentType = response.body?.contentType()?.subtype.orEmpty()
             val text = response.body?.string().orEmpty()
+            if (response.code == 429) cooldown[provider] = System.currentTimeMillis() + trackerRetryAfterMs(response.header("Retry-After"))
             if (response.isSuccessful && response.code != 204 &&
                 ("json" !in contentType || text.trimStart().firstOrNull() !in listOf('{', '[')))
                 error("O serviço devolveu uma resposta inválida")
@@ -120,6 +152,7 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
     }
 
     private fun JSONObject.body() = toString().toRequestBody(jsonType)
+    private fun TrackerForm.body() = FormBody.Builder().apply { fields.forEach { (k, v) -> add(k, v) } }.build()
     private class ServiceError(val status: Int, message: String) : Exception(message)
     private fun requireSuccess(reply: Reply) {
         if (reply.code !in 200..299) throw ServiceError(reply.code, when (reply.code) {
@@ -185,19 +218,20 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
         val saved = credentials(provider)
         require(saved.token.isNotBlank()) { "Desconectado" }
         require(!provider.needsClientId || saved.clientId.isNotBlank()) { "Informe o ID de aplicativo registrado no serviço" }
-        if (saved.refresh.isBlank() || saved.expiresAt > System.currentTimeMillis() + 60_000) return@withLock saved
-        val request = if (provider == TrackerProvider.SIMKL) FormBody.Builder()
-            .add("grant_type", "refresh_token").add("client_id", saved.clientId).add("refresh_token", saved.refresh).build()
-        else JSONObject().put("refresh_token", saved.refresh).body()
-        val reply = raw(provider, if (provider == TrackerProvider.SIMKL) "/oauth2/token" else "/oauth/token/refresh", saved, request, false)
+        if (!trackerNeedsRefresh(provider, saved, System.currentTimeMillis())) return@withLock saved
+        val form = trackerRefreshForm(provider, saved.clientId, saved.refresh)
+        val reply = if (form != null) raw(provider, form.path, saved, form.body(), false)
+        else raw(provider, "/oauth/token/refresh", saved, JSONObject().put("refresh_token", saved.refresh).body(), false)
+        // Refresh recusado (invalid_grant e afins) pede novo login em vez de mostrar o código HTTP.
+        if (reply.code in 400..401 || reply.json().optString("error") == "invalid_grant")
+            throw ServiceError(401, "A sessão expirou. Conecte novamente")
         requireSuccess(reply)
         val data = reply.json()
-        val next = saved.copy(token = data.getString("access_token"), refresh = data.optString("refresh_token", saved.refresh),
-            expiresAt = System.currentTimeMillis() + data.optLong("expires_in", 604800) * 1000)
+        // O refresh pode girar. Guarda o novo quando vier.
+        val next = saved.copy(token = data.getString("access_token"), refresh = data.optString("refresh_token").ifBlank { saved.refresh },
+            expiresAt = System.currentTimeMillis() + data.optLong("expires_in", 604800) * 1000, oauth = true)
         check(prefs.profileId.value == profile) { "O perfil mudou" }
-        prefs.trackerSessions = sessions().put(provider.name, JSONObject().put("client_id", next.clientId)
-            .put("refresh_token", next.refresh).put("expires_at", next.expiresAt)).toString()
-        setToken(provider, next.token)
+        writeSession(provider, next, keep = true)
         next
     }
 
@@ -207,9 +241,9 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
         require(provider.needsClientId && clientId.isNotBlank()) { "Informe o ID de aplicativo registrado no serviço" }
         val profile = prefs.profileId.value
         val saved = TrackerCredentials("", clientId.trim())
-        val body = if (provider == TrackerProvider.SIMKL) FormBody.Builder().add("client_id", saved.clientId).add("scope", "media:read media:write").build()
-        else JSONObject().put("client_id", saved.clientId).body()
-        val reply = raw(provider, if (provider == TrackerProvider.SIMKL) "/oauth2/device" else "/oauth/device/code", saved, body, false)
+        val form = trackerDeviceForm(provider, saved.clientId)
+        val reply = if (form != null) raw(provider, form.path, saved, form.body(), false)
+        else raw(provider, "/oauth/device/code", saved, JSONObject().put("client_id", saved.clientId).body(), false)
         requireSuccess(reply)
         val data = reply.json()
         return DeviceCode(data.getString("user_code"), data.optString("verification_uri_complete")
@@ -223,23 +257,22 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
         while (System.currentTimeMillis() < code.expiresAt) {
             delay(interval)
             check(prefs.profileId.value == code.profile) { "O perfil mudou" }
-            val body = if (provider == TrackerProvider.SIMKL) FormBody.Builder()
-                .add("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
-                .add("client_id", code.clientId).add("device_code", code.device).build()
-            else JSONObject().put("client_id", code.clientId).put("code", code.device).body()
-            val reply = raw(provider, if (provider == TrackerProvider.SIMKL) "/oauth2/token" else "/oauth/device/token", TrackerCredentials("", code.clientId), body, false)
+            val form = trackerPollForm(provider, code.clientId, code.device)
+            val anonymous = TrackerCredentials("", code.clientId)
+            val reply = if (form != null) raw(provider, form.path, anonymous, form.body(), false)
+            else raw(provider, "/oauth/device/token", anonymous, JSONObject().put("client_id", code.clientId).put("code", code.device).body(), false)
             val data = reply.json()
-            if (reply.code == 200 && data.has("access_token")) {
-                val credentials = TrackerCredentials(data.getString("access_token"), code.clientId,
-                    data.optString("refresh_token"), System.currentTimeMillis() + data.optLong("expires_in", 604800) * 1000)
-                validate(provider, credentials)
-                save(provider, credentials, code.profile)
-                return@guarded
-            }
-            when (data.optString("error")) {
-                "authorization_pending" -> Unit
-                "slow_down" -> interval += 5000
-                else -> { requireSuccess(reply); error("O código não foi autorizado. Gere outro código") }
+            when (val step = trackerDevicePoll(reply.code, data)) {
+                DevicePoll.Token -> {
+                    val credentials = TrackerCredentials(data.getString("access_token"), code.clientId,
+                        data.optString("refresh_token"), System.currentTimeMillis() + data.optLong("expires_in", 604800) * 1000, oauth = true)
+                    validate(provider, credentials)
+                    save(provider, credentials, code.profile)
+                    return@guarded
+                }
+                DevicePoll.Pending -> Unit
+                DevicePoll.SlowDown -> interval += 5000
+                is DevicePoll.Fail -> error(step.message)
             }
         }
         error("O código expirou. Gere outro código")
@@ -331,6 +364,10 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
 
     internal fun syncResult(provider: TrackerProvider, profile: String, success: Boolean) {
         if (prefs.profileId.value == profile) _status.update { it + (provider to TrackerStatus(success || it[provider]?.connected == true, false,
-            if (success) "Conectado. Histórico sincronizado" else "A sincronização falhou. Verifique a conexão e tente novamente")) }
+            when {
+                success -> "Conectado. Histórico sincronizado"
+                (cooldown[provider] ?: 0L) > System.currentTimeMillis() -> "Limite do serviço atingido. Tente mais tarde"
+                else -> "A sincronização falhou. Verifique a conexão e tente novamente"
+            })) }
     }
 }

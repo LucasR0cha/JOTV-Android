@@ -43,6 +43,7 @@ class AccountImporter @Inject constructor(
     private val tmdb: TmdbApiService,
     private val library: LibraryRepository,
     private val stremio: StremioAddonService,
+    private val syncIds: com.joabtv.app.data.sync.SyncIds,
 ) {
     private val ids = ConcurrentHashMap<String, Pair<Int, com.joabtv.app.domain.model.MovieItem?>>()
 
@@ -129,13 +130,94 @@ class AccountImporter @Inject constructor(
     private suspend fun resolve(id: String, series: Boolean): Pair<Int, com.joabtv.app.domain.model.MovieItem?>? {
         val key = "$series|$id"
         ids[key]?.let { return it }
-        Regex("^tmdb:(\\d+)").find(id)?.groupValues?.get(1)?.toIntOrNull()?.let { return (it to null).also { r -> ids[key] = r } }
+        // O mapa do aparelho vale entre uma abertura do app e a outra (a busca no TMDB só roda na primeira vez).
+        syncIds.tmdbFor(id, series)?.let { n -> return (n to null).also { r -> ids[key] = r; syncIds.remember(id, series, n) } }
         val tt = Regex("^tt\\d+").find(id)?.value ?: return null
         val apiKey = prefs.tmdbApiKey.ifBlank { return null }
         val r = runCatching { tmdb.findByImdb(tt, apiKey = apiKey) }.getOrNull() ?: return null
         val hit = if (series) r.tvResults.firstOrNull() ?: r.movieResults.firstOrNull() else r.movieResults.firstOrNull() ?: r.tvResults.firstOrNull()
         val item = hit?.toMovieItem() ?: return null
-        return (item.tmdbId to item).also { ids[key] = it }
+        return (item.tmdbId to item).also { ids[key] = it; syncIds.remember(id, series, item.tmdbId) }
+    }
+
+    /**
+     * Puxada do sync. Igual a [importProgress], mas sem rede quando já se sabe o id do título e o aparelho já tem o
+     * mesmo progresso ou um mais novo (uma sincronia a cada minuto não pode virar 60 buscas no TMDB). O resultado
+     * conta 0 para gravado, 1 para ignorado (já estava em dia) e 2 para título sem par.
+     */
+    suspend fun importProgressSync(items: List<RemoteProgress>, profile: String): ImportReport {
+        val latest = items.filter { it.positionMs > 0 }
+            .groupBy { baseId(it.id) + it.series }
+            .map { (_, g) -> g.maxBy { it.watchedAt } }
+            .sortedByDescending { it.watchedAt }
+            .take(60)
+        val budget = java.util.concurrent.atomic.AtomicInteger(com.joabtv.app.data.sync.SyncPlan.LOOKUPS_PER_RUN)
+        val results = parallel(latest) { p ->
+            val type = if (p.series) MediaType.SERIES.name else MediaType.MOVIE.name
+            val known = syncIds.tmdbFor(baseId(p.id), p.series)
+            if (known != null) {
+                val local = library.getPlayback(known, type, profile)
+                if (local != null && local.lastWatchedAt >= p.watchedAt) return@parallel 1
+                if (p.watchedAt <= com.joabtv.app.data.local.playbackHiddenBefore(prefs.historyHidden(profile), com.joabtv.app.data.local.playbackKey(known, type))) return@parallel 1
+            } else if (budget.decrementAndGet() < 0) return@parallel 1
+            val (tmdbId, found) = resolve(baseId(p.id), p.series) ?: return@parallel 2
+            val prev = library.getPlayback(tmdbId, type, profile)
+            val meta = found ?: if ((prev == null || prev.title.isBlank() || prev.posterUrl.isBlank()) && (p.name.isBlank() || p.poster.isBlank())) details(tmdbId, p.series) else null
+            val ok = library.importPlayback(
+                tmdbId, type, p.name.ifBlank { meta?.title.orEmpty() }, meta?.posterUrl?.ifBlank { null } ?: p.poster,
+                p.positionMs, p.durationMs, if (p.series && p.season > 0) "T${p.season}:E${p.episode}" else "",
+                p.watchedAt, profile,
+            )
+            if (ok) 0 else 1
+        }
+        return ImportReport(results.count { it == 0 }, results.count { it == 1 }, results.count { it == 2 })
+    }
+
+    /**
+     * Itens vistos de outra conta. Episódio entra como visto se ainda não estava. Filme visto vira concluído quando o
+     * aparelho não tem nada mais novo. Só busca no TMDB o que ainda não tem par no mapa, até o orçamento da rodada
+     * (os mais recentes primeiro). O resto entra nas próximas.
+     */
+    suspend fun importSeen(items: List<com.joabtv.app.data.sync.RemoteSeen>, profile: String): ImportReport {
+        val sync = com.joabtv.app.data.sync.SyncPlan
+        val groups = items.groupBy { it.series to sync.baseId(it.contentId) }.entries
+            .sortedByDescending { e -> e.value.maxOf { it.at } }
+        val mine = library.watchedRows(profile).map { "${it.seriesTmdbId}|${it.season}|${it.episode}" }.toHashSet()
+        val budget = java.util.concurrent.atomic.AtomicInteger(sync.LOOKUPS_PER_RUN)
+        val results = parallel(groups) { (key, list) ->
+            val (series, cid) = key
+            val known = syncIds.tmdbFor(cid, series)
+            val tmdbId: Int
+            var found: com.joabtv.app.domain.model.MovieItem? = null
+            if (known != null) tmdbId = known else {
+                if (budget.decrementAndGet() < 0) return@parallel 1
+                val r = resolve(cid, series) ?: return@parallel 2
+                tmdbId = r.first
+                found = r.second
+            }
+            if (series) {
+                val fresh = list.filter { it.season > 0 && it.episode > 0 && "$tmdbId|${it.season}|${it.episode}" !in mine }
+                val todo = fresh.map { it.season to it.episode }.distinct()
+                if (todo.isEmpty()) return@parallel 1
+                // Cada episódio entra com a hora que a conta registrou. Com a hora da importação, desmarcar lá logo depois não chegaria aqui.
+                library.markEpisodesWatched(tmdbId, todo, profile, silent = true, times = fresh.associate { (it.season to it.episode) to sync.clampRemote(it.at) })
+                0
+            } else {
+                val type = MediaType.MOVIE.name
+                val at = sync.clampRemote(list.maxOf { it.at })
+                val local = library.getPlayback(tmdbId, type, profile)
+                if (local != null && (local.lastWatchedAt >= at || sync.finished(local.positionMs, local.durationMs))) return@parallel 1
+                if (at <= com.joabtv.app.data.local.playbackHiddenBefore(prefs.historyHidden(profile), com.joabtv.app.data.local.playbackKey(tmdbId, type))) return@parallel 1
+                val meta = found ?: if (local == null || local.title.isBlank()) details(tmdbId, false) else null
+                val d = local?.durationMs?.takeIf { it > 0 } ?: 1L
+                val ok = library.importPlayback(
+                    tmdbId, type, list.firstOrNull { it.title.isNotBlank() }?.title ?: meta?.title.orEmpty(),
+                    meta?.posterUrl.orEmpty(), d, d, "", at, profile,
+                )
+                if (ok) 0 else 1
+            }
+        }
+        return ImportReport(results.count { it == 0 }, results.count { it == 1 }, results.count { it == 2 })
     }
 
     private suspend fun <T> parallel(items: List<T>, block: suspend (T) -> Int): List<Int> = coroutineScope {

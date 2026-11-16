@@ -129,6 +129,9 @@ class SettingsViewModel @Inject constructor(
     fun setUiSize(size: com.joabtv.app.data.local.InterfaceSize) {
         platformPrefs.appearance = platformPrefs.appearance.copy(uiSize = size)
     }
+    /** A aba Addons aparece no menu da TV? Por perfil. */
+    val menuAddons: StateFlow<Boolean> = platformPrefs.menuAddonsFlow
+    fun setMenuAddons(on: Boolean) { platformPrefs.menuAddons = on }
 
     val frameMeter: StateFlow<Boolean> = platformPrefs.frameMeterFlow
     fun setFrameMeter(on: Boolean) { platformPrefs.frameMeter = on }
@@ -187,6 +190,7 @@ class SettingsViewModel @Inject constructor(
     val trackerStatus = trackers.status
     fun trackerClientId(provider: com.joabtv.app.data.remote.TrackerProvider) = trackers.clientId(provider)
     fun trackerToken(provider: com.joabtv.app.data.remote.TrackerProvider) = trackers.savedToken(provider)
+    fun trackerUsesCode(provider: com.joabtv.app.data.remote.TrackerProvider) = trackers.usesCode(provider)
     suspend fun connectTracker(provider: com.joabtv.app.data.remote.TrackerProvider, token: String, clientId: String): Boolean {
         if (!trackers.connect(provider, token, clientId)) return false
         trackerSync.syncInBackground(provider)
