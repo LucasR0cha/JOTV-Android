@@ -6,6 +6,10 @@ import com.joabtv.app.data.local.PlatformPrefs
 import com.joabtv.app.data.repository.LibraryRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 
 /**
@@ -18,6 +22,7 @@ class PlayerProgressViewModel @Inject constructor(
     private val prefs: PlatformPrefs,
     private val trakt: com.joabtv.app.data.remote.TraktService,
 ) : ViewModel() {
+    private val progressWrites = Mutex()
 
     /** Avisa o Trakt e os outros serviços (start, pause ou stop). Não faz nada sem conta conectada. */
     fun scrobble(action: String, tmdbId: Int, type: String, season: Int, episode: Int, positionMs: Long, durationMs: Long) {
@@ -60,6 +65,7 @@ class PlayerProgressViewModel @Inject constructor(
         get() = prefs.subtitleOn
         set(v) { prefs.subtitleOn = v }
     val subLang: String get() = prefs.subLang
+    val forcedSubs: Boolean get() = prefs.forcedSubs
 
     /** Som de outra fonte salvo para o título, ou null. */
     fun extAudio(key: String): com.joabtv.app.data.local.ExtAudioPick? = prefs.extAudioPicks[key]
@@ -84,12 +90,28 @@ class PlayerProgressViewModel @Inject constructor(
         addon: String = "",
     ) {
         if (tmdbId <= 0 || sourceUrl.isBlank() || positionMs <= 0) return
+        val profile = prefs.profileId.value
         viewModelScope.launch {
-            library.saveProgress(
-                tmdbId = tmdbId, type = type, title = title, posterUrl = posterUrl,
-                positionMs = positionMs, durationMs = durationMs,
-                lastEpisode = lastEpisode, lastSourceUrl = sourceUrl, lastAddon = addon,
-            )
+            withContext(NonCancellable) {
+                progressWrites.withLock {
+                    library.saveProgress(
+                        tmdbId = tmdbId, type = type, title = title, posterUrl = posterUrl,
+                        positionMs = positionMs, durationMs = durationMs,
+                        lastEpisode = lastEpisode, lastSourceUrl = sourceUrl, lastAddon = addon, profileId = profile,
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun complete(tmdbId: Int, type: String, title: String, posterUrl: String, durationMs: Long, lastEpisode: String, sourceUrl: String, addon: String) {
+        if (tmdbId <= 0 || sourceUrl.isBlank()) return
+        val profile = prefs.profileId.value
+        val duration = durationMs.coerceAtLeast(1L)
+        withContext(NonCancellable) {
+            progressWrites.withLock {
+                library.saveProgress(tmdbId, type, title, posterUrl, duration, duration, lastEpisode, sourceUrl, addon, profile)
+            }
         }
     }
 
@@ -115,7 +137,7 @@ class PlayerProgressViewModel @Inject constructor(
         val pb = runCatching { library.getPlayback(tmdbId, type) }.getOrNull() ?: return 0
         if (lastEpisode.isNotBlank() && pb.lastEpisode != lastEpisode) return 0
         // Quase no fim conta como visto: recomeça em vez de abrir nos créditos.
-        if (pb.durationMs > 0 && pb.positionMs >= pb.durationMs * 0.95) return 0
+        if (com.joabtv.app.data.local.playbackCompleted(pb.positionMs, pb.durationMs)) return 0
         return pb.positionMs.coerceAtLeast(0L)
     }
 

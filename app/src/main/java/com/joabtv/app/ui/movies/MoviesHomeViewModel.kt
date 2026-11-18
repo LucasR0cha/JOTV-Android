@@ -9,6 +9,7 @@ import com.joabtv.app.data.remote.dto.bestLogoUrl
 import com.joabtv.app.data.remote.dto.bestTrailer
 import com.joabtv.app.data.remote.dto.certBR
 import com.joabtv.app.data.remote.dto.trailerKeys
+import com.joabtv.app.data.remote.dto.TmdbEpisodeDto
 import com.joabtv.app.data.remote.dto.TmdbNextEpisodeDto
 import com.joabtv.app.data.remote.dto.toMovieItem
 import com.joabtv.app.data.remote.dto.toSeriesItem
@@ -315,11 +316,12 @@ class MoviesHomeViewModel @Inject constructor(
 
     /**
      * Resolve um item do histórico p/ o "Continuar assistindo": filme 90%+ assistido sai da
-     * lista (retorna null). Série 90%+ no episódio atual tenta trocar pelo PRÓXIMO episódio
-     * (mesma temporada, ou E1 da seguinte); sem próximo nenhum, também sai. Erro de rede mantém
-     * o item como está, p/ não sumir da lista por uma falha passageira do TMDB.
+     * lista (retorna null). Série 90%+ no episódio atual troca pelo PRÓXIMO episódio (mesma
+     * temporada, ou E1 da seguinte), mas só se ele já saiu ([nextUpEpisode]). Sem próximo lançado,
+     * sai. A linha continua salva, então a série volta sozinha quando sai episódio ou temporada
+     * nova. Erro de rede mantém o item como está, p/ não sumir da lista por uma falha passageira do TMDB.
      */
-    private suspend fun resolveHistoryItem(h: com.joabtv.app.data.local.entity.MovieHistoryEntity):
+    private suspend fun resolveHistoryItem(h: com.joabtv.app.data.local.entity.MovieHistoryEntity, now: Long):
         com.joabtv.app.data.local.entity.MovieHistoryEntity? {
         val finished = h.durationMs > 0 && h.positionMs >= h.durationMs * 0.9
         if (!finished) return h
@@ -330,11 +332,14 @@ class MoviesHomeViewModel @Inject constructor(
         if (season <= 0 || episode <= 0) return null
         val apiKey = prefs.tmdbApiKey
         if (apiKey.isBlank()) return h
-        val epsInSeason = runCatching { tmdb.getSeason(h.tmdbId, season, apiKey = apiKey).episodes.size }.getOrNull() ?: return h
-        if (episode in 1 until epsInSeason) return h.copy(lastEpisode = "T$season:E${episode + 1}", positionMs = 0, durationMs = 0)
-        val numberOfSeasons = runCatching { tmdb.getSeriesDetail(h.tmdbId, append = "", apiKey = apiKey).numberOfSeasons }.getOrNull() ?: return h
-        if (season < numberOfSeasons) return h.copy(lastEpisode = "T${season + 1}:E1", positionMs = 0, durationMs = 0)
-        return null
+        val thisSeason = runCatching { tmdb.getSeason(h.tmdbId, season, apiKey = apiKey).episodes }.getOrNull() ?: return h
+        // A temporada seguinte só é buscada no fim desta. 404 é "não existe", outro erro mantém o item.
+        val nextSeason: List<TmdbEpisodeDto> = if (thisSeason.any { it.episodeNumber == episode + 1 }) emptyList() else {
+            val r = runCatching { tmdb.getSeason(h.tmdbId, season + 1, apiKey = apiKey).episodes }
+            r.getOrNull() ?: if (r.exceptionOrNull() is retrofit2.HttpException) emptyList() else return h
+        }
+        val next = nextUpEpisode(season, episode, thisSeason, nextSeason, now) ?: return null
+        return h.copy(lastEpisode = next, positionMs = 0, durationMs = 0)
     }
 
     /** Troca a aba de trailers (usa cache quando já carregou). */
@@ -503,10 +508,11 @@ class MoviesHomeViewModel @Inject constructor(
         viewModelScope.launch {
             library.recentlyPlayed().collectLatest { list ->
                 // Terminado (90%+) some da lista; série nesse ponto mostra o PRÓXIMO episódio em
-                // vez do já visto (mesmo critério e cálculo de "terminado"/"próximo episódio" de
-                // DetailPrimary.kt: posição >= 90% da duração, próximo = +1 na temporada ou E1 da
-                // seguinte). Recomendações abaixo seguem usando o histórico cru (`list`).
-                val continueList = list.mapNotNull { resolveHistoryItem(it) }
+                // vez do já visto, só quando ele já saiu (posição >= 90% da duração, próximo = +1 na
+                // temporada ou E1 da seguinte). Em paralelo, porque cada série terminada consulta o TMDB.
+                // Recomendações abaixo seguem usando o histórico cru (`list`).
+                val now = System.currentTimeMillis()
+                val continueList = coroutineScope { list.map { async { resolveHistoryItem(it, now) } }.awaitAll().filterNotNull() }
                 val items = continueList.map { h ->
                     MovieItem(
                         tmdbId = h.tmdbId,
@@ -1029,6 +1035,20 @@ internal fun newEpisodeOf(item: MovieItem, last: TmdbNextEpisodeDto?, next: Tmdb
         return NewEpisode(item, d.take(5), "T${next.season} E${next.episode} estreia $d", nt, true)
     }
     return null
+}
+
+/** Já saiu? Mesma régua da fileira Novos episódios. Sem data o TMDB ainda não marcou, e conta como não lançado. */
+internal fun episodeReleased(airDate: String?, now: Long): Boolean = airDateMs(airDate)?.let { now >= it } == true
+
+/**
+ * Episódio que o Continuar mostra depois de terminar T[season]:E[episode], ou null enquanto o próximo
+ * não saiu (a série some até sair). [nextSeason] só importa no fim da temporada e vem vazia quando não existe.
+ */
+internal fun nextUpEpisode(season: Int, episode: Int, thisSeason: List<TmdbEpisodeDto>, nextSeason: List<TmdbEpisodeDto>, now: Long): String? {
+    val next = thisSeason.firstOrNull { it.episodeNumber == episode + 1 }
+    if (next != null) return "T$season:E${episode + 1}".takeIf { episodeReleased(next.airDate, now) }
+    val first = nextSeason.firstOrNull { it.episodeNumber == 1 }
+    return "T${season + 1}:E1".takeIf { first != null && episodeReleased(first.airDate, now) }
 }
 
 /** Os que já saíram primeiro (o mais recente na frente), depois as estreias pela mais próxima. */

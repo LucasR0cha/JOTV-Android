@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.map
+import com.joabtv.app.data.local.playbackCompleted
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -38,11 +40,14 @@ class MinhaListaViewModel @Inject constructor(
         )
 
     val recentlyPlayed: StateFlow<List<MovieHistoryEntity>> =
-        library.recentlyPlayed().stateIn(
+        library.recentlyPlayed().map { rows -> rows.filterNot { playbackCompleted(it.positionMs, it.durationMs) } }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList(),
         )
+
+    val watchedMovies: StateFlow<Set<Int>> = library.watchedMovies()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val recentArtwork = recentlyPlayed.mapLatest { list ->

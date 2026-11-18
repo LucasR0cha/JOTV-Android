@@ -39,6 +39,13 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
     val status = _status.asStateFlow()
     private val queues = TrackerProvider.entries.associateWith { Channel<suspend () -> Unit>(Channel.UNLIMITED) }
     private val cooldown = java.util.concurrent.ConcurrentHashMap<TrackerProvider, Long>()
+    /** Passou da cota do dia no WeTrakr. Até esse instante nenhuma chamada sai, em vez de gastar mais cota. */
+    private val quotaUntil = java.util.concurrent.ConcurrentHashMap<TrackerProvider, Long>()
+    private val holdLock = Any()
+    private var held: HeldPause? = null
+
+    /** Pausa do WeTrakr esperando 3 s por um start do mesmo título (o batimento de 5 minutos do player). */
+    private class HeldPause(val key: String, val dispatch: () -> Unit) { var timer: kotlinx.coroutines.Job? = null }
 
     init {
         // Depois de um 429 a fila espera o Retry-After antes do próximo item, sem repetir o que falhou.
@@ -116,9 +123,13 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
     }
 
     fun disconnect(provider: TrackerProvider) {
+        val old = credentials(provider)
         setToken(provider, "")
         prefs.trackerSessions = sessions().apply { remove(provider.name) }.toString()
         _status.update { it + (provider to TrackerStatus()) }
+        // O WeTrakr deixa encerrar a sessão no servidor. Se falhar, o token vence sozinho em 7 dias.
+        if (provider == TrackerProvider.WETRAKR && old.token.isNotBlank() && old.refresh.isNotBlank())
+            scope.launch { runCatching { raw(provider, "/oauth/logout", old, JSONObject().put("refresh_token", old.refresh).body()) } }
     }
 
     private data class Reply(val code: Int, val body: String) {
@@ -126,6 +137,7 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
     }
 
     private suspend fun raw(provider: TrackerProvider, path: String, credentials: TrackerCredentials, body: RequestBody? = null, authenticate: Boolean = true, method: String? = null): Reply = withContext(Dispatchers.IO) {
+        if ((quotaUntil[provider] ?: 0L) > System.currentTimeMillis()) throw ServiceError(429, "O limite diário do WeTrakr foi atingido. Volta a sincronizar sozinho")
         val url = (provider.baseUrl + path).toHttpUrl().newBuilder().apply {
             if (authenticate && trackerUsesApiKey(provider, credentials)) addQueryParameter("apikey", credentials.token)
         }.build()
@@ -143,7 +155,8 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
         client.newCall(request).execute().use { response ->
             val contentType = response.body?.contentType()?.subtype.orEmpty()
             val text = response.body?.string().orEmpty()
-            if (response.code == 429) cooldown[provider] = System.currentTimeMillis() + trackerRetryAfterMs(response.header("Retry-After"))
+            if (provider == TrackerProvider.WETRAKR && wetrakrQuotaExceeded(response.code, text)) quotaUntil[provider] = System.currentTimeMillis() + 30 * 60_000L
+            else if (response.code == 429) cooldown[provider] = System.currentTimeMillis() + trackerRetryAfterMs(response.header("Retry-After"))
             if (response.isSuccessful && response.code != 204 &&
                 ("json" !in contentType || text.trimStart().firstOrNull() !in listOf('{', '[')))
                 error("O serviço devolveu uma resposta inválida")
@@ -154,7 +167,11 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
     private fun JSONObject.body() = toString().toRequestBody(jsonType)
     private fun TrackerForm.body() = FormBody.Builder().apply { fields.forEach { (k, v) -> add(k, v) } }.build()
     private class ServiceError(val status: Int, message: String) : Exception(message)
-    private fun requireSuccess(reply: Reply) {
+    /**
+     * [strict] falso deixa passar notFound e errored, que o WeTrakr devolve como informação de uma escrita que deu certo
+     * (título que ele não conhece, play que já existia). Os outros serviços tratam isso como falha.
+     */
+    private fun requireSuccess(reply: Reply, strict: Boolean = true) {
         if (reply.code !in 200..299) throw ServiceError(reply.code, when (reply.code) {
             401, 403 -> "Credencial recusada ou sem permissão. Conecte novamente"
             429 -> "Limite do serviço atingido. Tente mais tarde"
@@ -162,7 +179,7 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
         })
         val json = reply.json()
         if (json.optBoolean("ignored") || !json.optBoolean("success", true) || json.optString("error").isNotBlank() ||
-            listOf("not_found", "notFound", "errored").any { key ->
+            strict && listOf("not_found", "notFound", "errored").any { key ->
                 val value = json.opt(key)
                 value is org.json.JSONArray && value.length() > 0 ||
                     value is JSONObject && value.keys().asSequence().any { (value.opt(it) as? org.json.JSONArray)?.length()?.let { n -> n > 0 } == true }
@@ -210,15 +227,29 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
 
     suspend fun verify(provider: TrackerProvider): Boolean {
         val profile = prefs.profileId.value
-        return guarded(provider, profile) { validate(provider, readyCredentials(provider, profile)) }
+        return guarded(provider, profile) {
+            val credentials = readyCredentials(provider, profile)
+            // O WeTrakr confere a sessão na primeira chamada da sincronia (last_activities). Outra chamada só gastaria cota.
+            if (provider != TrackerProvider.WETRAKR) validate(provider, credentials)
+        }
     }
 
-    private suspend fun readyCredentials(provider: TrackerProvider, profile: String): TrackerCredentials = sessionLock.withLock {
+    /**
+     * Faz a chamada com as credenciais prontas. O WeTrakr recusa (401) às vezes o token que ainda parecia valer
+     * (relógio do aparelho, sessão girada em outro lugar), então renova uma vez e repete.
+     */
+    private suspend fun send(provider: TrackerProvider, profile: String, call: suspend (TrackerCredentials) -> Reply): Reply {
+        val first = call(readyCredentials(provider, profile))
+        if (provider != TrackerProvider.WETRAKR || first.code != 401) return first
+        return call(readyCredentials(provider, profile, force = true))
+    }
+
+    private suspend fun readyCredentials(provider: TrackerProvider, profile: String, force: Boolean = false): TrackerCredentials = sessionLock.withLock {
         check(prefs.profileId.value == profile) { "O perfil mudou" }
         val saved = credentials(provider)
         require(saved.token.isNotBlank()) { "Desconectado" }
         require(!provider.needsClientId || saved.clientId.isNotBlank()) { "Informe o ID de aplicativo registrado no serviço" }
-        if (!trackerNeedsRefresh(provider, saved, System.currentTimeMillis())) return@withLock saved
+        if (!(force && saved.refresh.isNotBlank()) && !trackerNeedsRefresh(provider, saved, System.currentTimeMillis())) return@withLock saved
         val form = trackerRefreshForm(provider, saved.clientId, saved.refresh)
         val reply = if (form != null) raw(provider, form.path, saved, form.body(), false)
         else raw(provider, "/oauth/token/refresh", saved, JSONObject().put("refresh_token", saved.refresh).body(), false)
@@ -227,8 +258,9 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
             throw ServiceError(401, "A sessão expirou. Conecte novamente")
         requireSuccess(reply)
         val data = reply.json()
-        // O refresh pode girar. Guarda o novo quando vier.
-        val next = saved.copy(token = data.getString("access_token"), refresh = data.optString("refresh_token").ifBlank { saved.refresh },
+        // O refresh pode girar (o WeTrakr gira a cada renovação e aposenta o antigo em um minuto). Guarda o novo quando vier.
+        val next = saved.copy(token = data.getString("access_token"),
+            refresh = data.optString("new_refresh_token").ifBlank { data.optString("refresh_token") }.ifBlank { saved.refresh },
             expiresAt = System.currentTimeMillis() + data.optLong("expires_in", 604800) * 1000, oauth = true)
         check(prefs.profileId.value == profile) { "O perfil mudou" }
         writeSession(provider, next, keep = true)
@@ -283,6 +315,7 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
         val profile = prefs.profileId.value
         TrackerProvider.entries.filter { token(it).isNotBlank() }.forEach { provider ->
             if (provider == TrackerProvider.PUBLICMETA && (action == "start" || durationMs <= 0)) return@forEach
+            if (provider == TrackerProvider.WETRAKR) { wetrakrScrobble(action, tmdbId, isSeries, season, episode, progress, profile); return@forEach }
             queues.getValue(provider).trySend {
                 guarded(provider, profile) {
                     val credentials = readyCredentials(provider, profile)
@@ -300,6 +333,46 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
         }
     }
 
+    /**
+     * Scrobble do WeTrakr. A doc pede eventos e nunca temporizador, e quem manda batimento estoura o limite e pode perder a chave.
+     * O player salva o ponto a cada 5 minutos com uma pausa e, 1,5 s depois, um start. A pausa espera 3 s por esse start
+     * do mesmo título e, se ele vier, os dois somem. Pausa de verdade segue para o serviço depois dos 3 s.
+     */
+    private fun wetrakrScrobble(action: String, tmdbId: Int, isSeries: Boolean, season: Int, episode: Int, progress: Double, profile: String) {
+        val provider = TrackerProvider.WETRAKR
+        val key = "$isSeries:$tmdbId:$season:$episode"
+        val dispatch: () -> Unit = {
+            queues.getValue(provider).trySend {
+                guarded(provider, profile) {
+                    val body = trackerScrobbleBody(provider, tmdbId, isSeries, season, episode, progress * 100)
+                    val reply = send(provider, profile) { raw(provider, "/scrobble/$action", it, body.body()) }
+                    // 404 é título que o WeTrakr não conhece. Não é falha da conta, então fica quieto.
+                    if (reply.code != 404) requireSuccess(reply, strict = false)
+                }
+            }
+        }
+        synchronized(holdLock) {
+            val previous = held
+            held = null
+            if (previous != null) {
+                previous.timer?.cancel()
+                if (previous.key == key && action == "start") return
+                // O stop do mesmo título já diz tudo que a pausa diria. Qualquer outro evento solta a pausa antes.
+                if (!(previous.key == key && action == "stop")) previous.dispatch()
+            }
+            if (action == "pause") {
+                val mine = HeldPause(key, dispatch)
+                mine.timer = scope.launch {
+                    delay(3000)
+                    synchronized(holdLock) { if (held === mine) { held = null; mine.dispatch() } }
+                }
+                held = mine
+                return
+            }
+            dispatch()
+        }
+    }
+
     fun watchlist(title: String, imdb: String, tmdbId: Int, isSeries: Boolean, inList: Boolean) {
         val profile = prefs.profileId.value
         TrackerProvider.entries.filter { token(it).isNotBlank() }.forEach { provider ->
@@ -309,13 +382,13 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
             }
             val request = trackerWatchlistRequest(provider, tmdbId, isSeries, inList) ?: return@forEach
             queues.getValue(provider).trySend { guarded(provider, profile) {
-                requireSuccess(raw(provider, request.path, readyCredentials(provider, profile), request.body.body()))
+                requireSuccess(send(provider, profile) { raw(provider, request.path, it, request.body.body()) }, strict = provider != TrackerProvider.WETRAKR)
             } }
         }
     }
 
     internal suspend fun read(provider: TrackerProvider, path: String, profile: String): String {
-        val reply = raw(provider, path, readyCredentials(provider, profile))
+        val reply = send(provider, profile) { raw(provider, path, it) }
         requireSuccess(reply)
         return reply.body
     }
@@ -366,6 +439,7 @@ class MultiTrackerService @Inject constructor(private val prefs: PlatformPrefs) 
         if (prefs.profileId.value == profile) _status.update { it + (provider to TrackerStatus(success || it[provider]?.connected == true, false,
             when {
                 success -> "Conectado. Histórico sincronizado"
+                (quotaUntil[provider] ?: 0L) > System.currentTimeMillis() -> "O limite diário do WeTrakr foi atingido. Volta a sincronizar sozinho"
                 (cooldown[provider] ?: 0L) > System.currentTimeMillis() -> "Limite do serviço atingido. Tente mais tarde"
                 else -> "A sincronização falhou. Verifique a conexão e tente novamente"
             })) }

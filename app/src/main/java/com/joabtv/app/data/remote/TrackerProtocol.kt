@@ -75,8 +75,9 @@ internal fun trackerScrobbleBody(provider: TrackerProvider, tmdbId: Int, series:
                                  appVersion: String = com.joabtv.app.BuildConfig.VERSION_NAME): JSONObject {
     val item = JSONObject().put("ids", JSONObject().put("tmdb", tmdbId))
     val body = JSONObject().put("progress", progress.coerceIn(0.0, 100.0))
-    // O MDBList mostra ao usuário de qual app veio o scrobble.
+    // O MDBList mostra ao usuário de qual app veio o scrobble. O WeTrakr usa a versão só para suporte.
     if (provider == TrackerProvider.MDBLIST) body.put("app_name", "JOTV").put("app_version", appVersion)
+    else if (provider == TrackerProvider.WETRAKR) body.put("app_version", appVersion)
     if (series) {
         if (provider == TrackerProvider.MDBLIST) item.put("season", JSONObject().put("number", season).put("episode", JSONObject().put("number", episode)))
         else body.put("episode", JSONObject().put("season", season).put("number", episode))

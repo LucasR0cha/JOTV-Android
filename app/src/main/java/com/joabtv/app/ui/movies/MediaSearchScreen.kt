@@ -1,7 +1,5 @@
 package com.joabtv.app.ui.movies
 
-import androidx.compose.ui.focus.focusProperties
-
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,10 +12,12 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.LocalMovies
 import androidx.compose.material3.*
@@ -25,9 +25,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -45,6 +48,7 @@ import com.joabtv.app.domain.model.MovieItem
 import com.joabtv.app.ui.common.GlassCircleButton
 import com.joabtv.app.ui.common.JoabEmptyState
 import com.joabtv.app.ui.common.MediaPosterCard
+import com.joabtv.app.ui.common.TvTextFieldGate
 import com.joabtv.app.ui.common.pressScale
 import com.joabtv.app.ui.common.topInsetsPadding
 import com.joabtv.app.ui.theme.*
@@ -132,10 +136,30 @@ fun MediaSearchScreen(
     // TV. Teclado do controle à esquerda e resultados à direita, como o search.js do webOS.
     if (tv) {
         val firstKey = remember { androidx.compose.ui.focus.FocusRequester() }
+        val keyboard = LocalSoftwareKeyboardController.current
+        val focusManager = LocalFocusManager.current
         androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(150); runCatching { firstKey.requestFocus() } }
         Row(Modifier.fillMaxSize().background(Background).padding(top = 28.dp)) {
             Column(Modifier.width(400.dp).padding(start = 28.dp, end = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                SearchPill(value = query, onValueChange = viewModel::onQueryChange, readOnly = true)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // OK na busca abre o teclado do sistema. No Google TV, o app do celular digita por ele.
+                    TvTextFieldGate(Modifier.fillMaxWidth(), label = "Buscar filmes ou séries") { gate ->
+                        SearchPill(
+                            value = query, onValueChange = viewModel::onQueryChange, tv = true, fieldModifier = gate,
+                            onSearch = {
+                                keyboard?.hide()
+                                // Pesquisar fecha o teclado e leva o foco aos resultados (sem nenhum ainda, ao teclado do app).
+                                if (!focusManager.moveFocus(FocusDirection.Right)) focusManager.moveFocus(FocusDirection.Down)
+                            },
+                        )
+                    }
+                    Text(
+                        // Espaços sem quebra no nome do app, para ele não ficar partido entre duas linhas.
+                        "OK na busca abre o teclado do Google. Com o app Google TV no celular, dá para digitar por lá.",
+                        color = TextSecondary, fontSize = 13.sp, lineHeight = 18.sp, fontFamily = ManropeFontFamily,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
                 com.joabtv.app.ui.common.TvKeyboard(
                     onKey = { viewModel.onQueryChange(com.joabtv.app.ui.common.typeKey(query, it)) },
                     onBackspace = { viewModel.onQueryChange(query.dropLast(1)) },
@@ -307,8 +331,12 @@ private fun SearchPill(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    /** Só mostra o texto (TV, digitado pelo teclado na tela). Fica fora do caminho do foco. */
-    readOnly: Boolean = false,
+    /** TV. Sem o X de limpar (o teclado do app já tem Limpar) e com o ícone de teclado, que mostra que o OK abre o teclado. */
+    tv: Boolean = false,
+    /** TV. O que o TvTextFieldGate pede do campo (foco só depois do OK, cima e baixo saindo dele). */
+    fieldModifier: Modifier = Modifier,
+    /** TV. Tecla Pesquisar do teclado do sistema. */
+    onSearch: () -> Unit = {},
 ) {
     val src = remember { MutableInteractionSource() }
     val focused by src.collectIsFocusedAsState()
@@ -355,12 +383,12 @@ private fun SearchPill(
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                     imeAction = ImeAction.Search,
                 ),
-                readOnly = readOnly,
-                modifier = Modifier.fillMaxWidth()
-                    .then(if (readOnly) Modifier.focusProperties { canFocus = false } else Modifier),
+                keyboardActions = if (tv) KeyboardActions(onSearch = { onSearch() }) else KeyboardActions.Default,
+                modifier = Modifier.fillMaxWidth().then(fieldModifier),
             )
         }
-        if (value.isNotEmpty() && !readOnly) {
+        if (tv) Icon(Icons.Default.Keyboard, contentDescription = null, tint = TextTertiary, modifier = Modifier.size(20.dp))
+        if (value.isNotEmpty() && !tv) {
             val clearSrc = remember { MutableInteractionSource() }
             Box(
                 Modifier

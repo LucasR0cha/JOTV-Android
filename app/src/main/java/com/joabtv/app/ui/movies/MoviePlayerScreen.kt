@@ -465,7 +465,7 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
         var sinceSave = 0L
         while (streamUrl != null) {
             val p = currentPlayer()
-            position = p.currentPosition.coerceAtLeast(0L)
+            position = if (p.playbackState == Player.STATE_ENDED) maxOf(p.currentPosition, duration, 1L) else p.currentPosition.coerceAtLeast(0L)
             duration = p.duration.coerceAtLeast(0L).let { if (it > 0) it else duration }
             isPlaying = p.isPlaying
             sinceSave += 500
@@ -485,7 +485,7 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
             // cedo demais em episódios longos).
             val waitingPostCredits = skipSegs?.postCredits?.end?.let { position < it } == true
             if (hasNextEpisode && duration > 60_000 && position >= duration - 60_000 && nextPromptEp != curEpisode && !waitingPostCredits) {
-                nextPromptEp = curEpisode; promptIsSeason = false; nextCountdown = 10; showNextPrompt = true
+                nextPromptEp = curEpisode; promptIsSeason = false; nextCountdown = -1; showNextPrompt = true
             }
             // PRÉ-CARREGA o próximo (ou a próxima temporada) na METADE do episódio atual. Quando
             // o usuário aperta "Próximo", as fontes já estão na memória e a troca é instantânea.
@@ -501,7 +501,7 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
             if (!hasNextEpisode && hasNextSeason && duration > 60_000 && !waitingPostCredits &&
                 position >= duration - 60_000 && nextPromptEp != curEpisode
             ) {
-                nextPromptEp = curEpisode; promptIsSeason = true; nextCountdown = 15; showNextPrompt = true
+                nextPromptEp = curEpisode; promptIsSeason = true; nextCountdown = -1; showNextPrompt = true
             }
             delay(500)
         }
@@ -573,9 +573,9 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
         PipState.enter = if (streamUrl != null) ({ enterPip() }) else null
         onDispose { PipState.enter = null }
     }
-    // Contagem regressiva do prompt — 0 = avança automaticamente (próximo ep OU próxima temporada).
-    LaunchedEffect(showNextPrompt) {
-        if (!showNextPrompt) return@LaunchedEffect
+    // A contagem só começa depois que o vídeo termina.
+    LaunchedEffect(showNextPrompt, nextCountdown >= 0) {
+        if (!showNextPrompt || nextCountdown < 0) return@LaunchedEffect
         while (nextCountdown > 0) { delay(1000); nextCountdown -= 1 }
         showNextPrompt = false
         if (promptIsSeason) goToNextSeason() else playNextEpisode()
@@ -584,8 +584,11 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
     // não avança/sai sozinho. Filme ou último episódio → salva e volta ao detalhe.
     LaunchedEffect(playbackEnded) {
         if (!playbackEnded) return@LaunchedEffect
+        position = maxOf(position, duration, 1L)
+        duration = position
+        val completedEpisode = if (type == "SERIES" && curEpisode > 0) "T$curSeason:E$curEpisode" else lastEpisode
+        progressVm.complete(tmdbId, type, title, posterUrl, duration, completedEpisode, streamUrl ?: activeUrl, preferredAddon)
         playbackEnded = false
-        saveNow()
         when {
             // Tem próximo episódio na temporada → card "Próximo episódio".
             type == "SERIES" && hasNextEpisode -> { promptIsSeason = false; nextPromptEp = curEpisode; nextCountdown = 10; showNextPrompt = true }
@@ -795,7 +798,7 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
     val tapInteraction = remember { MutableInteractionSource() }
     val focusRequester = remember { FocusRequester() }
     // Root é dono do foco (D-pad), inclusive enquanto a fonte ainda está sendo resolvida.
-    LaunchedEffect(activeUrl, streamUrl, sourceFailed) { if (!sourceFailed) runCatching { focusRequester.requestFocus() } }
+    LaunchedEffect(activeUrl, streamUrl, sourceFailed) { if (!sourceFailed && !showNextPrompt) runCatching { focusRequester.requestFocus() } }
 
     Box(
         Modifier
@@ -806,6 +809,16 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                 if (sourceFailed) return@onKeyEvent false
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                 val kc = ev.nativeKeyEvent.keyCode
+                if (showNextPrompt) {
+                    return@onKeyEvent when (kc) {
+                        KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
+                            showNextPrompt = false
+                            runCatching { focusRequester.requestFocus() }
+                            true
+                        }
+                        else -> false
+                    }
+                }
                 // Barra de sincronia do som. Setas mudam o atraso e segurar acelera.
                 if (syncBarOpen) {
                     val r = ev.nativeKeyEvent.repeatCount
@@ -857,6 +870,8 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                             if (panelKind == "episodes" && sourcePanelIdx == 0 && numSeasons > 1) {
                                 val step = if (kc == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1
                                 selectPanelSeason((panelSeason + step - 1 + numSeasons) % numSeasons + 1)
+                            } else if (panelKind == "sources" && sourcePanelIdx == 0 && (panelActions.firstOrNull()?.chips?.size ?: 0) > 1) {
+                                moveSourceChip(if (kc == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1)
                             } else if (kc == KeyEvent.KEYCODE_DPAD_LEFT) sourcePanelOpen = false
                             true
                         }
@@ -869,7 +884,7 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                     return@onKeyEvent when (kc) {
                         KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { onBack(); true }
                         KeyEvent.KEYCODE_DPAD_UP -> {
-                            if (sourceActions.size > 1) { panelKind = "sources"; sourcePanelIdx = 0; sourcePanelOpen = true; true } else false
+                            if (sourceActions.size > 1) { openDpadPanel("sources"); true } else false
                         }
                         else -> false
                     }
@@ -893,7 +908,7 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                     KeyEvent.KEYCODE_DPAD_LEFT -> { seekBy(-10_000); true }
                     KeyEvent.KEYCODE_DPAD_RIGHT -> { seekBy(10_000); true }
                     // CIMA abre o painel de Fontes + Episódios (D-pad navegável).
-                    KeyEvent.KEYCODE_DPAD_UP -> { if (sourceActions.size > 1) { panelKind = "sources"; sourcePanelIdx = 0; sourcePanelOpen = true }; true }
+                    KeyEvent.KEYCODE_DPAD_UP -> { if (sourceActions.size > 1) openDpadPanel("sources"); true }
                     // BAIXO foca a barra de chips (Zoom/Velocidade/Legendas/Áudio/Fontes).
                     KeyEvent.KEYCODE_DPAD_DOWN -> { controlsVisible = true; if (tvChips.isNotEmpty()) { chipFocused = true; chipIdx = 0 }; true }
                     KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD -> { playNextEpisode(); true }
@@ -1035,11 +1050,11 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                         line = if (promptIsSeason) "Temporada ${curSeason + 1}" else "T$curSeason · E${curEpisode + 1}",
                         countdown = nextCountdown,
                         onPlay = { if (promptIsSeason) goToNextSeason() else playNextEpisode() },
-                        onCancel = { showNextPrompt = false },
+                        onCancel = { showNextPrompt = false; runCatching { focusRequester.requestFocus() } },
                     )
                 }
 
-                AnimatedVisibility(controlsVisible && !inPip && !syncBarOpen, enter = fadeIn(), exit = fadeOut()) {
+                AnimatedVisibility(controlsVisible && !inPip && !syncBarOpen && !showNextPrompt, enter = fadeIn(), exit = fadeOut()) {
                     CustomPlayerControls(
                         title = displayTitle,
                         clock = clockLine(System.currentTimeMillis(), position, duration, speeds[speedIdx]),
@@ -1239,6 +1254,11 @@ internal class PlayerSession(
     var panelEpisodesLoading by mutableStateOf(false)
     private var episodePanelJob: kotlinx.coroutines.Job? = null
     private var sourceLimit by mutableIntStateOf(30)
+    // Filtros do painel de fontes (SourceFilters.kt). Voltam a Todas a cada abertura do painel.
+    private var sourceFilter by mutableStateOf("all")
+    private var sourceAddon by mutableStateOf("all")
+    // Pílula em que o foco do controle está na barra de filtros. As setas andam e OK escolhe.
+    var sourceChipCursor by mutableIntStateOf(0)
     var currentSources by run { mutableStateOf(sources) }
     var currentSourceLabel by run { mutableStateOf(sources.firstOrNull { it.url == embedUrl }?.label ?: "Fonte") }
     // Preferência de fonte que ATRAVESSA episódio e temporada.
@@ -1271,7 +1291,7 @@ internal class PlayerSession(
     val hasNextEpisode get() = type == "SERIES" && curEpisode in 1 until epTotal
     // Tem PRÓXIMA TEMPORADA? (fim do último episódio da temporada e existe temporada seguinte).
     val hasNextSeason get() = type == "SERIES" && numSeasons > 0 && curSeason in 1 until numSeasons
-    // Auto-play próximo episódio: prompt aparece a ~90% (antes dos créditos), conta 10s e avança.
+    // O aviso permite avançar à mão. A contagem automática só vale depois do fim real.
     var nextPromptEp by run { mutableIntStateOf(-1) }
     var showNextPrompt by run { mutableStateOf(false) }
     var nextCountdown by run { mutableIntStateOf(10) }
@@ -1437,12 +1457,21 @@ internal class PlayerSession(
             .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
             .build()
     }
-    // Legenda que liga sozinha quando o perfil deixou a legenda ligada. A ordem está em
-    // SubLangs.choose (faixa do vídeo e externa no idioma do perfil, depois o idioma vizinho).
-    // Escolha à mão no vídeo atual manda, e idioma que a pessoa não escolheu não liga.
+    // Legenda que liga sozinha. Com a legenda ligada no perfil (subWanted) é a completa, na ordem de
+    // SubLangs.choose (faixa do vídeo e externa no idioma do perfil, depois o idioma vizinho). Sem completa,
+    // ou com a legenda desligada, é a forçada do mesmo idioma quando "Legenda forçada automática" está
+    // ligada. Escolha à mão no vídeo atual manda, e idioma que a pessoa não escolheu não liga.
     fun pickAutoSub() {
-        if (!subWanted || subPicked) return
-        val pick = SubLangs.choose(textGroups.map { it.getTrackFormat(0).language }, externalSubs.map { it.lang }, subLang) ?: return
+        val forcedOn = progressVm.forcedSubs
+        if (subPicked || (!subWanted && !forcedOn)) return
+        val formats = textGroups.map { it.getTrackFormat(0) }
+        val embeddedLang = formats.map { it.language }
+        val embeddedForced = formats.map { SubLangs.isForced((it.selectionFlags and androidx.media3.common.C.SELECTION_FLAG_FORCED) != 0, it.label) }
+        val externalLang = externalSubs.map { it.lang }
+        val externalForced = externalSubs.map { SubLangs.isForced(false, it.label) }
+        val pick = (if (subWanted) SubLangs.choose(embeddedLang, externalLang, subLang, embeddedForced, externalForced) else null)
+            ?: (if (forcedOn) SubLangs.chooseForced(embeddedLang, externalLang, subLang, embeddedForced, externalForced) else null)
+            ?: return
         if (pick.embedded) {
             selectedSubUrl = null
             enableTextGroup(textGroups[pick.index])
@@ -1759,8 +1788,22 @@ internal class PlayerSession(
         val groups = groupReleases(currentSources.map { it.stream ?: com.joabtv.app.data.remote.StremioStream(it.label, it.url, it.addon,
             qualityRank = com.joabtv.app.data.remote.qualityRankOf(it.label)) })
             .sortedByDescending { g -> g.members.any { it.url == playing } }
-        val page = pageOf(groups, sourceLimit)
+        // Mesma barra do detalhe (SourceFilters.kt), sobre o que se sabe de cada fonte.
+        val known = facts().associateBy { it.url }
+        val fact = { s: com.joabtv.app.data.remote.StremioStream ->
+            known[s.url] ?: com.joabtv.app.data.remote.SourceFacts(s.url, s.addon, s.releaseText.ifBlank { s.label }, s.qualityRank)
+        }
+        val chips = sourceChips(groups, fact, sourceFilter, sourceAddon)
+        val filtered = sourceFilter != "all" || sourceAddon != "all"
+        val shown = if (filtered) filterReleases(groups, fact, sourceFilter, sourceAddon) else groups
+        val page = pageOf(shown, sourceLimit)
         return buildList {
+            if (chips.isNotEmpty()) add(TvPlayerAction("Filtros", false, false, keepOpen = true,
+                chips = chips.map { c -> PanelChip(c.label, c.selected) { pickSourceChip(c.key) } },
+                chipCursor = sourceChipCursor.coerceIn(0, chips.lastIndex),
+                summary = sourceSummary(groups.size, shown.size, currentSources.size, filtered)) {
+                chips.getOrNull(sourceChipCursor)?.let { pickSourceChip(it.key) }
+            })
             page.forEach { group ->
                 val active = group.members.any { it.url == playing }
                 val src = group.members.firstOrNull { it.url == playing } ?: group.lead
@@ -1769,9 +1812,23 @@ internal class PlayerSession(
                     if (!active) applyMovieSource(currentSources.indexOfFirst { it.url == src.url }, manual = true)
                 })
             }
-            if (groups.size > page.size) add(TvPlayerAction("Mostrar mais", false, false,
-                sub = "${groups.size - page.size} versões", keepOpen = true) { sourceLimit += 30 })
+            if (shown.isEmpty() && groups.isNotEmpty()) add(TvPlayerAction("Nenhuma versão neste filtro", false, false, disabled = true, keepOpen = true) {})
+            if (shown.size > page.size) add(TvPlayerAction("Mostrar mais", false, false,
+                sub = "${shown.size - page.size} versões", keepOpen = true) { sourceLimit += 30 })
         }
+    }
+
+    // Pílula da barra de filtros do painel de fontes. A de addon liga e desliga, as outras trocam o filtro.
+    private fun pickSourceChip(key: String) {
+        if (key.startsWith("f:")) sourceFilter = key.removePrefix("f:")
+        else key.removePrefix("a:").let { adn -> sourceAddon = if (sourceAddon == adn) "all" else adn }
+        sourceLimit = 30
+    }
+
+    /** Seta do controle na barra de filtros. Dá a volta nas pontas, como as temporadas. */
+    fun moveSourceChip(step: Int) {
+        val n = sourceActions.firstOrNull()?.chips?.size ?: 0
+        if (n > 1) sourceChipCursor = (sourceChipCursor.coerceIn(0, n - 1) + step + n) % n
     }
     val subActions: List<TvPlayerAction> get() = buildList {
         add(TvPlayerAction("Desativada", false, selectedSubUrl == null && !subtitleOn) { pickSub(null, null) })
@@ -1779,7 +1836,10 @@ internal class PlayerSession(
         if (textGroups.isNotEmpty()) {
             textGroups.sortedBy { SubLangs.rank(it.getTrackFormat(0).language, subLang) }.forEachIndexed { i, g ->
                 val f = g.getTrackFormat(0)
-                val name = f.label?.takeIf { it.isNotBlank() } ?: SubLangs.label(f.language)
+                val base = f.label?.takeIf { it.isNotBlank() } ?: SubLangs.label(f.language)
+                // A forçada se reconhece na lista, mesmo quando o arquivo não escreve isso no nome.
+                val flagged = (f.selectionFlags and androidx.media3.common.C.SELECTION_FLAG_FORCED) != 0
+                val name = if (flagged && !SubLangs.isForced(false, base)) "$base (forçada)" else base
                 add(TvPlayerAction(name, false, subtitleOn && g.isSelected, header = if (i == 0) "No vídeo" else "") { pickSub(g, null) })
             }
         }
@@ -1918,7 +1978,11 @@ internal class PlayerSession(
         chipFocused = false
         sourcePanelIdx = 0
         sourcePanelOpen = true
-        if (kind == "sources") sourceLimit = 30
+        if (kind == "sources") {
+            sourceLimit = 30; sourceFilter = "all"; sourceAddon = "all"; sourceChipCursor = 0
+            // Na TV o foco abre na versão que toca. A barra de filtros fica uma seta para cima.
+            if (isTv && sourceActions.firstOrNull()?.chips?.isNotEmpty() == true) sourcePanelIdx = 1
+        }
         if (kind == "episodes") selectPanelSeason(curSeason.coerceAtLeast(1))
     }
     val tvChips: List<PlayerChipItem> get() = buildList {

@@ -12,6 +12,7 @@ import com.joabtv.app.data.local.playbackKey
 import com.joabtv.app.data.local.playbackHiddenBefore
 import com.joabtv.app.data.local.hidePlayback
 import com.joabtv.app.data.local.unhidePlayback
+import com.joabtv.app.data.local.playbackCompleted
 import androidx.room.withTransaction
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import com.joabtv.app.data.sync.HistoryChange
@@ -21,6 +22,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -39,6 +44,8 @@ class LibraryRepository @Inject constructor(
     private val db: com.joabtv.app.data.local.AppDatabase,
 ) {
     private val pid get() = prefs.profileId.value
+    private val watchedMoviesVersion = MutableStateFlow(0L)
+    private val movieCompletionLock = Mutex()
 
     // Sem descarte. Se o buffer encher, quem emite espera o sync ler (ele só grava em preferências, então anda rápido).
     // Sem nenhum ouvinte (sync desligado) o emit volta na hora.
@@ -62,7 +69,7 @@ class LibraryRepository @Inject constructor(
         emit(HistoryChange.ProfileDropped(profileId))
     }
 
-    /** Linhas do Continuar assistindo de um perfil (até 30, mais recentes primeiro), para o sync. */
+    /** Histórico de um perfil, com até 250 títulos mais recentes para o sync. */
     suspend fun historyRows(profileId: String): List<MovieHistoryEntity> = movieHistoryDao.getAll(profileId).first()
 
     /** Episódios vistos de um perfil, para o sync. */
@@ -107,8 +114,43 @@ class LibraryRepository @Inject constructor(
 
     // ----- Continuar Assistindo / Reproducoes recentes (MovieHistory) -----
 
-    /** Reproducoes recentes (max 30), mais recentes primeiro. */
+    /** Reproduções recentes, com até 250 títulos mais recentes primeiro. */
     fun recentlyPlayed(): Flow<List<MovieHistoryEntity>> = prefs.profileId.flatMapLatest { movieHistoryDao.getAll(it) }
+
+    fun watchedMovies(): Flow<Set<Int>> = prefs.profileId.flatMapLatest { profile ->
+        combine(movieHistoryDao.getWatchedMovies(profile), watchedMoviesVersion) { completed, _ ->
+            movieCompletionLock.withLock {
+                val saved = prefs.watchedMovieIds(profile)
+                val ids = saved + completed
+                if (ids != saved) prefs.saveWatchedMovies(ids, profile)
+                ids
+            }
+        }
+    }
+
+    suspend fun markMoviesWatched(ids: Set<Int>, profileId: String? = null) {
+        val profile = profileId ?: pid
+        movieCompletionLock.withLock {
+            val previous = prefs.watchedMovieIds(profile)
+            val merged = previous + ids.filter { it > 0 }
+            if (merged != previous) {
+                prefs.saveWatchedMovies(merged, profile)
+                watchedMoviesVersion.value += 1
+            }
+        }
+    }
+
+    private suspend fun rememberCompletion(profile: String, tmdbId: Int, type: String, episode: String, position: Long, duration: Long, silent: Boolean = false) {
+        if (!playbackCompleted(position, duration)) return
+        if (type == MediaType.MOVIE.name) {
+            markMoviesWatched(setOf(tmdbId), profile)
+        } else {
+            val parts = Regex("(?:T)?(\\d+):(?:E)?(\\d+)", RegexOption.IGNORE_CASE).matchEntire(episode) ?: return
+            val season = parts.groupValues[1].toIntOrNull() ?: return
+            val number = parts.groupValues[2].toIntOrNull() ?: return
+            if (season > 0 && number > 0 && !watchedEpisodeDao.isWatched(profile, tmdbId, season, number)) markEpisodeWatched(tmdbId, season, number, profile, silent)
+        }
+    }
 
     /** Progresso salvo de um item (posição/fonte/episódio), ou null. Com [profileId], lê desse
      * perfil em vez do ativo. */
@@ -129,6 +171,7 @@ class LibraryRepository @Inject constructor(
             }
             val duration = current.durationMs.takeIf { episode == current.lastEpisode && it > 0 } ?: 1L
             movieHistoryDao.upsert(current.copy(lastEpisode = episode, positionMs = duration, durationMs = duration, lastWatchedAt = maxOf(System.currentTimeMillis(), current.lastWatchedAt)))
+            rememberCompletion(profile, tmdbId, type, episode, duration, duration)
             emit(HistoryChange.Progress(profile, tmdbId, type))
         }
     }
@@ -190,6 +233,7 @@ class LibraryRepository @Inject constructor(
                 lastAddon = lastAddon.ifBlank { prev?.lastAddon ?: "" },
             )
         )
+        rememberCompletion(targetPid, tmdbId, type, lastEpisode.ifBlank { prev?.lastEpisode.orEmpty() }, positionMs, durationMs)
         emit(HistoryChange.Progress(targetPid, tmdbId, type))
     }
 
@@ -216,6 +260,7 @@ class LibraryRepository @Inject constructor(
                 lastAddon = lastAddon ?: if (prev?.lastEpisode.orEmpty() == lastEpisode) prev?.lastAddon.orEmpty() else "",
             )
         )
+        rememberCompletion(target, tmdbId, type, lastEpisode, positionMs, durationMs, silent = true)
         return true
     }
 

@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.joabtv.app.data.live.LiveChannel
 import com.joabtv.app.data.live.LiveProgram
 import com.joabtv.app.data.live.LiveTvRepository
+import com.joabtv.app.data.live.LiveBrowseFilter
+import com.joabtv.app.data.live.LiveChannelBrowser
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +35,8 @@ class LiveTvViewModel @Inject constructor(private val repo: LiveTvRepository) : 
         val total: Int = 0,
         val filter: String = ALL,
         val query: String = "",
+        val sourceId: String = "",
+        val sources: List<Pair<String, String>> = emptyList(),
         val loading: Boolean = false,
         val epgLoading: Boolean = false,
         val error: String? = null,
@@ -42,22 +46,24 @@ class LiveTvViewModel @Inject constructor(private val repo: LiveTvRepository) : 
     private val filter = MutableStateFlow(ALL)
     private val query = MutableStateFlow("")
     private val clock = MutableStateFlow(System.currentTimeMillis())
+    private val sourceId = MutableStateFlow("")
 
-    val view: StateFlow<View> = combine(repo.state, filter, query, clock) { st, f, q, now ->
+    val view: StateFlow<View> = combine(repo.state, filter, query, clock, sourceId) { st, f, q, now, selectedSource ->
         val favs = st.favorites
-        val byId = st.channels.associateBy { it.id }
-        val base = when {
-            f == FAV -> st.channels.filter { it.id in favs }
-            f == RECENT -> st.recents.mapNotNull { byId[it] }
-            f.startsWith("g:") -> f.removePrefix("g:").let { g -> st.channels.filter { g in groupsOf(it) } }
-            else -> st.channels
-        }
-        val needle = q.trim().lowercase()
-        val list = if (needle.isEmpty()) base else base.filter { it.name.lowercase().contains(needle) || it.group.lowercase().contains(needle) }
+        val sources = st.sources.filter { it.enabled }
+        val activeSource = selectedSource.takeIf { id -> sources.any { it.id == id } }.orEmpty()
+        val channels = st.channels.filter { activeSource.isBlank() || it.sourceId == activeSource }
+        val byId = channels.associateBy { it.id }
         // Grupos na ordem em que aparecem na lista, com a contagem (uma passada só).
         val counts = LinkedHashMap<String, Int>()
-        st.channels.forEach { c -> groupsOf(c).forEach { g -> counts[g] = (counts[g] ?: 0) + 1 } }
+        channels.forEach { c -> groupsOf(c).forEach { g -> counts[g] = (counts[g] ?: 0) + 1 } }
         val groups = counts.toList()
+        val activeFilter = if (f.startsWith("g:") && f.removePrefix("g:") !in counts) ALL else f
+        val selection = LiveBrowseFilter(
+            mode = if (activeFilter == FAV || activeFilter == RECENT) activeFilter else ALL,
+            sourceId = activeSource, group = if (activeFilter.startsWith("g:")) activeFilter.removePrefix("g:") else "", query = q,
+        )
+        val list = LiveChannelBrowser.filter(st.channels, sources, st.epg, favs, st.recents, selection, now)
         View(
             hasSources = st.hasSources,
             rows = list.map { c ->
@@ -65,10 +71,11 @@ class LiveTvViewModel @Inject constructor(private val repo: LiveTvRepository) : 
                 LiveRow(c, n, nx, c.id in favs)
             },
             groups = groups,
-            favoriteCount = st.channels.count { it.id in favs },
+            favoriteCount = channels.count { it.id in favs },
             recentCount = st.recents.count { it in byId },
-            total = st.channels.size,
-            filter = f, query = q, loading = st.loading, epgLoading = st.epgLoading, error = st.error, now = now,
+            total = channels.size,
+            filter = activeFilter, query = q, sourceId = activeSource, sources = sources.map { it.id to it.name },
+            loading = st.loading, epgLoading = st.epgLoading, error = st.error, now = now,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), View())
 
@@ -81,6 +88,7 @@ class LiveTvViewModel @Inject constructor(private val repo: LiveTvRepository) : 
     fun reload() { viewModelScope.launch { repo.refresh(true) } }
     fun setFilter(f: String) { filter.value = f }
     fun setQuery(q: String) { query.value = q }
+    fun setSource(id: String) { sourceId.value = id; if (filter.value.startsWith("g:")) filter.value = ALL }
     fun toggleFavorite(id: String) = repo.toggleFavorite(id)
 
     companion object {

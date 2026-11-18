@@ -61,17 +61,7 @@ class TrackerSyncService @Inject constructor(
                     }
                     importSeasonHistory(all, profile)
                 }
-                TrackerProvider.WETRAKR -> {
-                    for ((status, target) in listOf("planning" to "movies", "planning" to "shows", "playing" to "movies", "playing" to "episodes", "watched" to "episodes")) {
-                        paged(provider, "/sync/tracking/$status/$target?extended=show_level_1,episode_level_1", profile, target != "movies") { item ->
-                            when (status) {
-                                "planning" -> importList(item, profile)
-                                "playing" -> importPlayback(item, profile)
-                                else -> importWatched(item, profile)
-                            }
-                        }
-                    }
-                }
+                TrackerProvider.WETRAKR -> syncWetrakr(profile)
             }
             trackers.syncResult(provider, profile, true)
             true
@@ -79,7 +69,11 @@ class TrackerSyncService @Inject constructor(
         catch (_: Exception) { trackers.syncResult(provider, profile, false); false }
     }
 
-    private suspend fun paged(provider: TrackerProvider, path: String, profile: String, series: Boolean? = null, onItem: suspend (TrackerRemoteItem) -> Unit) {
+    private suspend fun paged(provider: TrackerProvider, path: String, profile: String, series: Boolean? = null, onItem: suspend (TrackerRemoteItem) -> Unit) =
+        pagedPages(provider, path, profile, { trackerItems(it, series) }) { items -> items.forEach { onItem(it) } }
+
+    /** Anda pelas páginas de 100 e entrega cada página já lida por [parse]. Para no teto de 100 páginas. */
+    private suspend fun pagedPages(provider: TrackerProvider, path: String, profile: String, parse: (String) -> List<TrackerRemoteItem>, onPage: suspend (List<TrackerRemoteItem>) -> Unit) {
         var page = 1
         do {
             val suffix = if ('?' in path) "&" else "?"
@@ -90,11 +84,64 @@ class TrackerSyncService @Inject constructor(
                 is JSONObject -> (raw.optJSONArray("items") ?: raw.optJSONArray("data"))?.length() ?: 0
                 else -> 0
             }
-            trackerItems(text, series).forEach { onItem(it) }
+            onPage(parse(text))
             if (length < 100) break
             page++
         } while (page <= 100 && prefs.profileId.value == profile)
         check(page <= 100) { "A lista é muito grande para uma única sincronização" }
+    }
+
+    /**
+     * Sincronia econômica do WeTrakr. A doc cobra isso e a cota é curta (1000 chamadas por dia para cada usuário grátis,
+     * 2000 no total da chave de desenvolvimento). Primeiro last_activities, uma chamada só, e depois só as seções que mudaram,
+     * com from_date. Sem mudança nenhuma é uma chamada por sincronia.
+     */
+    private suspend fun syncWetrakr(profile: String) {
+        val provider = TrackerProvider.WETRAKR
+        val activities = JSONObject(trackers.read(provider, "/sync/last_activities", profile))
+        for (section in wetrakrSections(activities)) {
+            if (section.signature == trackers.syncMark(provider, section.key)) continue
+            // Seção que a pessoa nunca usou não tem o que puxar.
+            if (section.newest.isNotBlank()) {
+                val from = trackers.syncMark(provider, section.key + "From")
+                val query = if (from.isBlank()) "" else "from_date=" + java.net.URLEncoder.encode(from, "UTF-8")
+                when (section.key) {
+                    "list" -> {
+                        val q = if (query.isBlank()) "" else "?$query"
+                        pagedPages(provider, "/sync/tracking/planning/movies$q", profile, { wetrakrListItems(it, false) }) { items -> items.forEach { importList(it, profile) } }
+                        pagedPages(provider, "/sync/tracking/planning/shows$q", profile, { wetrakrListItems(it, true) }) { items -> items.forEach { importList(it, profile) } }
+                    }
+                    "playing" -> for (target in listOf("movies", "episodes")) {
+                        pagedPages(provider, "/sync/tracking/playing/$target" + if (query.isBlank()) "" else "?$query", profile, ::wetrakrPlaybackItems) { items ->
+                            items.forEach { importPlayback(it, profile) }
+                        }
+                    }
+                    else -> importWetrakrWatched(query, profile)
+                }
+            }
+            // O carimbo só é guardado depois de puxar tudo, senão uma falha no meio pularia linhas para sempre.
+            trackers.setSyncMark(provider, section.key, section.signature, profile)
+            trackers.setSyncMark(provider, section.key + "From", section.newest, profile)
+        }
+    }
+
+    /** Episódios vistos em página compacta (até 5000 linhas). Se vier cheia, repete nas páginas de 100 para não perder linha. */
+    private suspend fun importWetrakrWatched(query: String, profile: String) {
+        val provider = TrackerProvider.WETRAKR
+        val path = "/sync/tracking/watched/episodes"
+        val text = trackers.read(provider, "$path?compact=true&limit=$WETRAKR_COMPACT" + if (query.isBlank()) "" else "&$query", profile)
+        markWatched(wetrakrWatchedItems(text), profile)
+        if (runCatching { JSONArray(text).length() }.getOrDefault(0) >= WETRAKR_COMPACT)
+            pagedPages(provider, path + if (query.isBlank()) "" else "?$query", profile, ::wetrakrWatchedItems) { markWatched(it, profile) }
+    }
+
+    /** Marca os episódios por série em lote e em silêncio, porque vieram de fora e não podem mexer na ordem do Continuar assistindo. */
+    private suspend fun markWatched(items: List<TrackerRemoteItem>, profile: String) {
+        for ((show, rows) in items.filter { it.series && it.season >= 0 && it.episode > 0 }.groupBy { it.tmdbId }) {
+            if (prefs.profileId.value != profile) return
+            library.markEpisodesWatched(show, rows.map { it.season to it.episode }, profile, silent = true,
+                times = rows.filter { it.changedAt > 0 }.associate { (it.season to it.episode) to it.changedAt })
+        }
     }
 
     /** Segue o next_cursor do MDBList até acabar (teto de 100 páginas, como o paged). */
@@ -127,16 +174,17 @@ class TrackerSyncService @Inject constructor(
         val type = if (item.series) "SERIES" else "MOVIE"
         if (library.watchlist(profile).first().any { it.tmdbId == item.tmdbId && it.type == type }) return
         var title = item.title
-        var poster = ""
-        if (prefs.tmdbApiKey.isNotBlank()) {
+        var poster = item.poster
+        // O WeTrakr já manda título e pôster. Os outros serviços mandam só o título, e o pôster vem do TMDB.
+        if ((title.isBlank() || poster.isBlank()) && prefs.tmdbApiKey.isNotBlank()) {
             if (item.series) {
                 val detail = tmdb.getSeriesDetail(item.tmdbId, apiKey = prefs.tmdbApiKey)
                 title = title.ifBlank { detail.name.orEmpty() }
-                poster = detail.posterPath?.let { "https://image.tmdb.org/t/p/w342$it" }.orEmpty()
+                poster = poster.ifBlank { detail.posterPath?.let { "https://image.tmdb.org/t/p/w342$it" }.orEmpty() }
             } else {
                 val detail = tmdb.getMovieDetail(item.tmdbId, apiKey = prefs.tmdbApiKey)
                 title = title.ifBlank { detail.title.orEmpty() }
-                poster = detail.posterPath?.let { "https://image.tmdb.org/t/p/w342$it" }.orEmpty()
+                poster = poster.ifBlank { detail.posterPath?.let { "https://image.tmdb.org/t/p/w342$it" }.orEmpty() }
             }
         }
         library.importToList(item.tmdbId, type, title.ifBlank { item.tmdbId.toString() }, poster, "", item.changedAt, profile)
@@ -153,18 +201,19 @@ class TrackerSyncService @Inject constructor(
         if ((library.getPlayback(item.tmdbId, type, profile)?.lastWatchedAt ?: 0) >= item.changedAt) return
         var duration = item.durationMs
         var title = item.title
-        var poster = ""
+        var poster = item.poster
         if (duration <= 0 && prefs.tmdbApiKey.isNotBlank()) {
             if (item.series) {
                 val detail = tmdb.getSeriesDetail(item.tmdbId, apiKey = prefs.tmdbApiKey)
                 title = title.ifBlank { detail.name.orEmpty() }
+                poster = poster.ifBlank { detail.posterPath?.let { "https://image.tmdb.org/t/p/w342$it" }.orEmpty() }
                 val episode = tmdb.getSeason(item.tmdbId, item.season, apiKey = prefs.tmdbApiKey).episodes.firstOrNull { it.episodeNumber == item.episode }
                 duration = (episode?.runtime ?: 0) * 60_000L
             } else {
                 val detail = tmdb.getMovieDetail(item.tmdbId, apiKey = prefs.tmdbApiKey)
                 title = title.ifBlank { detail.title.orEmpty() }
                 duration = (detail.runtime ?: 0) * 60_000L
-                poster = detail.posterPath?.let { "https://image.tmdb.org/t/p/w342$it" }.orEmpty()
+                poster = poster.ifBlank { detail.posterPath?.let { "https://image.tmdb.org/t/p/w342$it" }.orEmpty() }
             }
         }
         if (duration <= 0) return

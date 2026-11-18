@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,6 +30,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
@@ -254,25 +256,27 @@ internal fun BoxScope.ExtAudioLoading() {
 /** Cartão de próximo episódio ou próxima temporada (.pl-next), com contagem. */
 @Composable
 internal fun NextEpisodeCard(isSeason: Boolean, line: String, countdown: Int, onPlay: () -> Unit, onCancel: () -> Unit) {
-    // Foco automático no botão principal — senão o D-pad fica no player por trás e OK pausa o
-    // vídeo em vez de confirmar (mesmo padrão do TvExitDialog).
     val playFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { playFocus.requestFocus() } }
-    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)).padding(24.dp), contentAlignment = Alignment.BottomEnd) {
+    val cancelFocus = remember { FocusRequester() }
+    val tv = com.joabtv.app.ui.common.LocalIsTv.current
+    LaunchedEffect(tv) { if (tv) com.joabtv.app.ui.settings.liveFocusSoon(cancelFocus) }
+    Box(Modifier.fillMaxSize().zIndex(20f).windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)).padding(24.dp), contentAlignment = Alignment.BottomEnd) {
         Column(
             Modifier.widthIn(max = 340.dp).shadow(20.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp))
                 .background(Color(0xF5141414)).border(1.dp, Border, RoundedCornerShape(18.dp))
-                .padding(18.dp),
+                .padding(18.dp).focusGroup(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Eyebrow(if (isSeason) "Próxima temporada" else "Próximo episódio")
             Text(line, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, fontFamily = Inter)
             Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 com.joabtv.app.ui.common.JoabButton(
-                    "Assistir agora (${countdown}s)", onPlay, Modifier.weight(1f).focusRequester(playFocus),
+                    if (countdown < 0) "Assistir agora" else "Assistir agora (${countdown}s)", onPlay,
+                    Modifier.weight(1f).focusRequester(playFocus).focusProperties { right = cancelFocus; left = cancelFocus; down = cancelFocus; up = cancelFocus },
                     tone = com.joabtv.app.ui.common.ButtonTone.PRIMARY, compact = true,
                 )
-                com.joabtv.app.ui.common.JoabButton("Cancelar", onCancel, compact = true)
+                com.joabtv.app.ui.common.JoabButton("Cancelar", onCancel,
+                    Modifier.focusRequester(cancelFocus).focusProperties { left = playFocus; right = playFocus; up = playFocus; down = playFocus }, compact = true)
             }
         }
     }

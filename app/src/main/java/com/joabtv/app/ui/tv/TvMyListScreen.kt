@@ -46,6 +46,7 @@ private fun TvMyListScreenBody(
     vm: MinhaListaViewModel = hiltViewModel(),
 ) {
     val saved by vm.watchlist.collectAsStateWithLifecycle()
+    val watchedMovies by vm.watchedMovies.collectAsStateWithLifecycle()
     val recent by vm.recentlyPlayed.collectAsStateWithLifecycle()
     val artwork by vm.recentArtwork.collectAsStateWithLifecycle()
     var filter by remember { mutableStateOf("") }
@@ -163,6 +164,7 @@ private fun TvMyListScreenBody(
                     TvPoster(
                         stub(w.tmdbId, w.type, w.title, w.posterUrl, w.year), { onItemClick(stub(w.tmdbId, w.type, w.title, w.posterUrl, w.year)) },
                         width = Dp.Unspecified,
+                        badge = if (w.type == "MOVIE" && w.tmdbId in watchedMovies) "Assistido" else null,
                         onLongClick = { confirm = Triple("Tirar da Minha Lista?", w.title) { vm.removeFromWatchlist(w.tmdbId, w.type) } },
                     )
                 }

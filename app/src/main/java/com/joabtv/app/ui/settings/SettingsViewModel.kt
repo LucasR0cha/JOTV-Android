@@ -160,6 +160,10 @@ class SettingsViewModel @Inject constructor(
     val subLang: StateFlow<String> = _subLang.asStateFlow()
     fun setSubLang(v: String) { platformPrefs.subLang = v; _subLang.value = v }
 
+    private val _forcedSubs = MutableStateFlow(platformPrefs.forcedSubs)
+    val forcedSubs: StateFlow<Boolean> = _forcedSubs.asStateFlow()
+    fun setForcedSubs(v: Boolean) { platformPrefs.forcedSubs = v; _forcedSubs.value = v }
+
     // Tamanho e fundo da legenda. O player lê os mesmos valores do perfil.
     private val _subSize = MutableStateFlow(platformPrefs.subSize)
     val subSize: StateFlow<Float> = _subSize.asStateFlow()
@@ -355,6 +359,7 @@ class SettingsViewModel @Inject constructor(
         _maxQuality.value = platformPrefs.maxQuality
         _subOn.value = platformPrefs.subtitleOn
         _subLang.value = platformPrefs.subLang
+        _forcedSubs.value = platformPrefs.forcedSubs
         _subSize.value = platformPrefs.subSize
         _subBg.value = platformPrefs.subBg
         _autoSwitch.value = platformPrefs.autoSwitchSources

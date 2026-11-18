@@ -897,7 +897,8 @@ private fun EpisodeServersSheet(
 ) {
     // Scrim cobre a tela inteira; toque fora fecha.
     val scrimSrc = remember { MutableInteractionSource() }
-    Box(
+    val scrollState = rememberScrollState()
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.6f))
@@ -909,6 +910,7 @@ private fun EpisodeServersSheet(
         Column(
             Modifier
                 .fillMaxWidth()
+                .heightIn(max = maxHeight * 0.9f)
                 .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
                 .background(BackgroundCard)
                 .border(1.dp, Border, RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
@@ -933,7 +935,7 @@ private fun EpisodeServersSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom,
             ) {
-                Column {
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
                     Text(
                         "DISPONÍVEL EM",
                         color = Accent,
@@ -971,7 +973,10 @@ private fun EpisodeServersSheet(
             }
             Spacer(Modifier.height(16.dp))
 
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.weight(1f, fill = false).verticalScroll(scrollState),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 // Fontes dos addons, tocam no ExoPlayer.
                 SourceList(
                     streams = stremioStreams,
@@ -981,6 +986,7 @@ private fun EpisodeServersSheet(
                     onDownload = { s -> if (isDownloadable(s.url)) ({ onDownloadStremio(s) }) else null },
                     debridTag = debridTag,
                     loading = stremioLoading,
+                    scrolling = scrollState.isScrollInProgress,
                 )
                 if (stremioLoading) {
                     Text(

@@ -109,16 +109,41 @@ object SubLangs {
     fun undetermined(code: String?): Boolean =
         code.isNullOrBlank() || code.trim().lowercase() in setOf("und", "unk", "mis", "zxx", "mul")
 
+    // Sem letra colada dos dois lados, para "Reinforced" não passar. Só "forcé" com acento, "Force" é palavra comum.
+    private val FORCED_NAME = Regex("""(?<!\p{L})(?:forced|for[cç]ad[oa]s?|forzad[oa]s?|forcés?)(?!\p{L})""", RegexOption.IGNORE_CASE)
+
+    /** Faixa forçada (só falas em outro idioma e letreiros). Vale a marca do arquivo ou "forced", "forçada" no nome. */
+    fun isForced(flagged: Boolean, label: String?): Boolean = flagged || (label != null && FORCED_NAME.containsMatchIn(label))
+
     /**
-     * Legenda que liga sozinha. Ordem: faixa do vídeo no idioma, externa no idioma, faixa do vídeo
+     * Legenda completa que liga sozinha. Ordem: faixa do vídeo no idioma, externa no idioma, faixa do vídeo
      * no idioma vizinho, externa no vizinho e faixa do vídeo sem idioma marcado. Null quando nada
-     * serve, para não ligar legenda em idioma que a pessoa não escolheu.
+     * serve, para não ligar legenda em idioma que a pessoa não escolheu. [embeddedForced] e [externalForced]
+     * (mesma ordem das listas, vazias se não souber) tiram as forçadas da disputa, que são só um pedaço da fala.
      */
-    fun choose(embedded: List<String?>, external: List<String?>, pref: String): Pick? {
+    fun choose(
+        embedded: List<String?>, external: List<String?>, pref: String,
+        embeddedForced: List<Boolean> = emptyList(), externalForced: List<Boolean> = emptyList(),
+    ): Pick? = pick(embedded, external, pref, false, embeddedForced, externalForced)
+
+    /**
+     * Legenda forçada que liga sozinha quando a completa não ligou. Mesma ordem do [choose], só entre as
+     * forçadas. A forçada sem idioma marcado fica como último recurso, e só a do vídeo.
+     */
+    fun chooseForced(
+        embedded: List<String?>, external: List<String?>, pref: String,
+        embeddedForced: List<Boolean>, externalForced: List<Boolean>,
+    ): Pick? = pick(embedded, external, pref, true, embeddedForced, externalForced)
+
+    private fun pick(
+        embedded: List<String?>, external: List<String?>, pref: String, forced: Boolean,
+        embeddedForced: List<Boolean>, externalForced: List<Boolean>,
+    ): Pick? {
+        fun inGroup(flags: List<Boolean>, i: Int) = (flags.getOrNull(i) == true) == forced
         for (level in intArrayOf(2, 1)) {
-            embedded.indexOfFirst { match(it, pref) == level }.takeIf { it >= 0 }?.let { return Pick(true, it) }
-            external.indexOfFirst { match(it, pref) == level }.takeIf { it >= 0 }?.let { return Pick(false, it) }
+            embedded.indices.firstOrNull { inGroup(embeddedForced, it) && match(embedded[it], pref) == level }?.let { return Pick(true, it) }
+            external.indices.firstOrNull { inGroup(externalForced, it) && match(external[it], pref) == level }?.let { return Pick(false, it) }
         }
-        return embedded.indexOfFirst { undetermined(it) }.takeIf { it >= 0 }?.let { Pick(true, it) }
+        return embedded.indices.firstOrNull { inGroup(embeddedForced, it) && undetermined(embedded[it]) }?.let { Pick(true, it) }
     }
 }

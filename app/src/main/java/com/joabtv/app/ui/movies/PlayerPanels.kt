@@ -24,6 +24,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,8 +63,17 @@ internal data class TvPlayerAction(
     val onSeasonPick: ((Int) -> Unit)? = null,
     val stream: com.joabtv.app.data.remote.StremioStream? = null,
     val providers: List<String> = emptyList(),
+    /** Barra de filtros do painel de fontes (qualidade, idioma e addon). Só a primeira linha leva isto. */
+    val chips: List<PanelChip> = emptyList(),
+    /** Pílula em que o foco do controle está. Só vale com [chips], e a seleção é outra coisa (OK escolhe). */
+    val chipCursor: Int = 0,
+    /** Contagem acima da barra ("12 versões em 20 fontes"). */
+    val summary: String = "",
     val onRun: () -> Unit,
 )
+
+/** Uma pílula da barra de filtros do painel. [selected] diz se o filtro está ligado. */
+internal data class PanelChip(val label: String, val selected: Boolean, val onPick: () -> Unit)
 
 /** Painel aberto com a lista do tipo pedido. [focusIdx] é o item com foco do D-pad. */
 @Composable
@@ -118,7 +130,10 @@ private fun PlayerActionPanelBody(
     ) {
         val listState = rememberLazyListState()
         LaunchedEffect(focusIdx, actions.size) {
-            if (actions.isNotEmpty()) listState.animateScrollToItem(focusIdx.coerceIn(0, actions.lastIndex))
+            if (actions.isEmpty()) return@LaunchedEffect
+            // Com a barra de filtros no alto, o foco na primeira versão ainda deixa a barra visível acima dela.
+            val barAbove = focusIdx == 1 && actions[0].chips.isNotEmpty()
+            listState.animateScrollToItem(if (barAbove) 0 else focusIdx.coerceIn(0, actions.lastIndex))
         }
         LazyColumn(state = listState, modifier = Modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(actions) { i, act ->
@@ -146,6 +161,12 @@ private fun SourcePanelRow(action: TvPlayerAction, focused: Boolean, movieTitle:
 
     Column(Modifier.alpha(if (action.disabled) 0.45f else 1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (action.header.isNotBlank()) com.joabtv.app.ui.common.Eyebrow(action.header, Modifier.padding(top = 10.dp, start = 4.dp))
+        if (action.chips.isNotEmpty()) {
+            if (action.summary.isNotBlank()) Text(action.summary, color = TextTertiary, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp))
+            // No toque a pílula escolhe direto. O cursor branco é só do controle remoto.
+            PanelChipRow(action.chips, cursor = if (focused && com.joabtv.app.ui.common.LocalIsTv.current) action.chipCursor else -1)
+            return@Column
+        }
         if (action.seasonTabs.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 action.seasonTabs.forEach { season ->
@@ -191,6 +212,31 @@ private fun SourcePanelRow(action: TvPlayerAction, focused: Boolean, movieTitle:
             trailing()
         }
 
+    }
+}
+
+/**
+ * Barra de pílulas do painel de fontes, no desenho do FilterChipPill do detalhe (48 dp de altura). [cursor] é a
+ * pílula do foco do controle, -1 sem foco. Ligada fica em azul e o cursor em branco, como os cartões do painel.
+ */
+@Composable
+private fun PanelChipRow(chips: List<PanelChip>, cursor: Int) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        chips.forEachIndexed { i, chip ->
+            val atCursor = i == cursor
+            Box(
+                Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(999.dp))
+                    .background(if (atCursor) Color.White else if (chip.selected) AccentFill else Surface2)
+                    .semantics { selected = chip.selected }
+                    .focusProperties { canFocus = false }
+                    .clickable(role = Role.Button) { chip.onPick() }
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(chip.label, color = if (atCursor) TextOnLight else if (chip.selected) Color.White else TextSecondary,
+                    fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            }
+        }
     }
 }
 

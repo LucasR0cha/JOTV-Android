@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.ViewModule
 import com.joabtv.app.data.local.SubLangs
@@ -295,6 +296,15 @@ fun SettingsScreen(
                     onClick = { pickLang = true },
                 )
                 if (pickLang) SubLangDialog(subLang, onPick = { viewModel.setSubLang(it); pickLang = false }, onDismiss = { pickLang = false })
+                val forcedSubs by viewModel.forcedSubs.collectAsStateWithLifecycle()
+                com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Subtitles,
+                    title = "Legenda forçada automática",
+                    sub = if (forcedSubs) "Liga sozinha a faixa forçada em ${SubLangs.label(subLang)} (só as falas em outro idioma) quando a legenda completa não liga"
+                        else "Desligada. Dá para escolher a faixa forçada no player, em Legendas",
+                    trailing = { Switch(checked = forcedSubs, onCheckedChange = { viewModel.setForcedSubs(it) }, modifier = Modifier.focusProperties { canFocus = false }) },
+                    onClick = { viewModel.setForcedSubs(!forcedSubs) },
+                )
                 val subSize by viewModel.subSize.collectAsStateWithLifecycle()
                 val subBg by viewModel.subBg.collectAsStateWithLifecycle()
                 SettingsCard {

@@ -43,6 +43,16 @@ fun LiveTvScreen(
     val v by viewModel.view.collectAsStateWithLifecycle()
     val pad = com.joabtv.app.ui.common.pagePadding()
     var searching by remember { mutableStateOf(false) }
+    var pickingSource by remember { mutableStateOf(false) }
+
+    if (pickingSource) {
+        com.joabtv.app.ui.settings.LiveChoice(
+            title = "Fonte dos canais", sub = null,
+            choices = listOf(Triple("Todas as fontes", null, v.sourceId.isBlank())) + v.sources.map { (id, name) -> Triple(name, null, id == v.sourceId) },
+            onPick = { index -> viewModel.setSource(if (index == 0) "" else v.sources.getOrNull(index - 1)?.first.orEmpty()); pickingSource = false },
+            onDismiss = { pickingSource = false },
+        )
+    }
 
     Column(Modifier.fillMaxSize().background(Background).topInsetsPadding()) {
         Row(
@@ -93,6 +103,11 @@ fun LiveTvScreen(
                 ),
             )
         }
+
+        com.joabtv.app.ui.common.JoabButton(
+            "Fonte · ${v.sources.firstOrNull { it.first == v.sourceId }?.second ?: "Todas as fontes"}",
+            { pickingSource = true }, Modifier.fillMaxWidth().padding(horizontal = pad, vertical = 4.dp),
+        )
 
         LazyRow(
             contentPadding = PaddingValues(horizontal = pad, vertical = 8.dp),

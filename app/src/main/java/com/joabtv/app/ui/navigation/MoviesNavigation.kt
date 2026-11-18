@@ -870,6 +870,7 @@ private fun MinhaListaScreen(
     val vm: com.joabtv.app.ui.movies.MinhaListaViewModel =
         androidx.hilt.navigation.compose.hiltViewModel()
     val watchlist by vm.watchlist.collectAsStateWithLifecycle()
+    val watchedMovies by vm.watchedMovies.collectAsStateWithLifecycle()
     val recent by vm.recentlyPlayed.collectAsStateWithLifecycle()
     val recentArtwork by vm.recentArtwork.collectAsStateWithLifecycle()
 
@@ -1052,6 +1053,7 @@ private fun MinhaListaScreen(
                             item = item,
                             onClick = { onItemClick(item) },
                             modifier = Modifier.weight(1f),
+                            badge = if (w.type == "MOVIE" && w.tmdbId in watchedMovies) "Assistido" else null,
                             onLongClick = { pendingUnsave = w }, // segurar → tirar da lista
                         )
                     }

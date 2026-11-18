@@ -58,6 +58,7 @@ fun scopedKey(key: String, profileId: String): String =
 internal val SCOPED_KEYS = listOf(
     "pref_tracker_sessions",
     "history_hidden_v1",
+    "watched_movies_v1",
     "recent_searches", "ext_audio_v1", "home_catalogs_v1", "sub_size", "sub_bg",
     "pref_audio", "pref_max_quality", "pref_hero_trailer", "trakt_v1",
     "home_layout_v1", "home_hero_v1", "pref_subtitle_on", "pref_sub_lang", "collections_v1",
@@ -262,6 +263,11 @@ class PlatformPrefs @Inject constructor(
         get() = prefs.getString(sk("pref_sub_lang"), null)?.takeIf { SubLangs.of(it) != null } ?: SubLangs.DEFAULT
         set(value) { prefs.edit().putString(sk("pref_sub_lang"), value).apply() }
 
+    /** Liga sozinha a legenda forçada (só as falas em outro idioma) no idioma do perfil, quando a completa não ligou. */
+    var forcedSubs: Boolean
+        get() = prefs.getBoolean(sk("pref_forced_subs"), true)
+        set(value) { prefs.edit().putBoolean(sk("pref_forced_subs"), value).apply() }
+
     /** Fontes na ordem da preferência do perfil (estável, igual ao sortSources do webOS). */
     fun sortStreams(list: List<com.joabtv.app.data.remote.StremioStream>) =
         com.joabtv.app.data.remote.sortByPrefs(list, audioPref, maxQuality, { it.label }, { it.qualityRank })
@@ -300,6 +306,14 @@ class PlatformPrefs @Inject constructor(
 
     fun setHistoryHidden(value: String, profileId: String = _profileId.value) {
         prefs.edit().putString(scopedKey("history_hidden_v1", profileId), value).apply()
+    }
+
+    fun watchedMovieIds(profileId: String = _profileId.value): Set<Int> =
+        prefs.getStringSet(scopedKey("watched_movies_v1", profileId), emptySet()).orEmpty()
+            .mapNotNull { it.toIntOrNull()?.takeIf { id -> id > 0 } }.toSet()
+
+    fun saveWatchedMovies(ids: Set<Int>, profileId: String = _profileId.value) {
+        prefs.edit().putStringSet(scopedKey("watched_movies_v1", profileId), ids.filter { it > 0 }.map(Int::toString).toSet()).apply()
     }
 
     var mdblistKey: String

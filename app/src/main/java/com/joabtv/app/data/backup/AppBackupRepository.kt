@@ -138,6 +138,7 @@ class AppBackupRepository @Inject constructor(
             watchedObj.put(seriesId.toString(), arr)
         }
         root.put("watched", watchedObj)
+        root.put("watchedMovies", JSONArray(library.watchedMovies().first().toList()))
 
         val searchesArr = JSONArray()
         prefs.recentSearches.forEach { searchesArr.put(it) }
@@ -157,6 +158,7 @@ class AppBackupRepository @Inject constructor(
             put("subBg", prefs.subBg)
             put("subOn", prefs.subtitleOn)
             put("subLang", prefs.subLang)
+            put("forcedSubs", prefs.forcedSubs)
             put("heroTrailer", prefs.heroTrailer)
             put("autoSwitch", prefs.autoSwitchSources)
             put("switchTimeout", prefs.sourceTimeoutSec)
@@ -303,6 +305,11 @@ class AppBackupRepository @Inject constructor(
                 }
 
                 var epCount = 0
+                root.optJSONArray("watchedMovies")?.let { movies ->
+                    checkProfile()
+                    val ids = (0 until movies.length()).mapNotNull { movies.optInt(it).takeIf { id -> id > 0 } }.toSet()
+                    library.markMoviesWatched(ids, profile)
+                }
                 root.optJSONObject("watched")?.let { wObj ->
                     val keys = wObj.keys()
                     while (keys.hasNext()) {
@@ -352,6 +359,7 @@ class AppBackupRepository @Inject constructor(
                     if (p.has("subSize")) prefs.subSize = p.optDouble("subSize", prefs.subSize.toDouble()).toFloat()
                     if (p.has("subBg")) prefs.subBg = p.optBoolean("subBg", prefs.subBg)
                     if (p.has("subOn")) prefs.subtitleOn = p.optBoolean("subOn", prefs.subtitleOn)
+                    if (p.has("forcedSubs")) prefs.forcedSubs = p.optBoolean("forcedSubs", prefs.forcedSubs)
                     if (p.has("subLang")) {
                         val lang = p.optString("subLang")
                         if (SubLangs.of(lang) != null) prefs.subLang = lang

@@ -267,6 +267,12 @@ fun TvTextFieldGate(modifier: Modifier = Modifier, label: String? = null, field:
                 // Campo de uma linha. Cima e baixo saem dele, fecham o teclado e seguem a seta.
                 .onPreviewKeyEvent { ev ->
                     if (ev.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    // Voltar fecha o teclado e o campo segue com o foco. Com o teclado aberto o OK vai para ele e nem chega aqui,
+                    // então este OK só chega com o teclado fechado, e abre de novo (antes a tecla não fazia nada).
+                    if (ev.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER) {
+                        keyboard?.show()
+                        return@onPreviewKeyEvent true
+                    }
                     val dir = when (ev.nativeKeyEvent.keyCode) {
                         android.view.KeyEvent.KEYCODE_DPAD_DOWN -> androidx.compose.ui.focus.FocusDirection.Down
                         android.view.KeyEvent.KEYCODE_DPAD_UP -> androidx.compose.ui.focus.FocusDirection.Up
