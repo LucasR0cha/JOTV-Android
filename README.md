@@ -16,8 +16,8 @@ O catálogo vem do TMDB, em português. Os vídeos vêm dos addons e dos plugins
 [![Baixar para LG webOS](https://img.shields.io/badge/LG%20webOS-baixar%20o%20IPK-A50034?style=for-the-badge&logo=lg&logoColor=white)](../../releases/latest)
 [![Baixar para Samsung Tizen](https://img.shields.io/badge/Samsung%20Tizen-baixar%20o%20WGT-1428A0?style=for-the-badge&logo=samsung&logoColor=white)](../../releases/latest)
 [![Baixar para Windows](https://img.shields.io/badge/Windows-baixar%20o%20instalador-0078D4?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest)
-[![Baixar para Linux](https://img.shields.io/badge/Linux-Debian%20e%20AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.3)
-[![Baixar para Roku](https://img.shields.io/badge/Roku-baixar%20o%20ZIP-6C3C97?style=for-the-badge&logo=roku&logoColor=white)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.0)
+[![Baixar para Linux](https://img.shields.io/badge/Linux-Debian%20e%20AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.4)
+[![Baixar para Roku](https://img.shields.io/badge/Roku-baixar%20o%20ZIP-6C3C97?style=for-the-badge&logo=roku&logoColor=white)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2)
 
 [Novidades](#novidades) · [Na TV](#na-tv) · [No celular](#no-celular) · [No Windows](#no-windows) · [No Linux](#no-linux) · [No Roku](#no-roku) · [Tudo o que o app faz](#tudo-o-que-o-app-faz) · [Instalação](#instalação) · [Para desenvolvedores](#para-desenvolvedores)
 
@@ -38,6 +38,54 @@ próprio perfil com lista, histórico e progresso.
 O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-legal).
 
 ## Novidades
+
+### WeTrakr em todos os aparelhos
+
+O WeTrakr conecta por código de dispositivo, sem digitar senha no controle. O que você começa, pausa e termina de assistir vai
+para o serviço, e a Minha Lista, o que ficou pela metade e os episódios vistos voltam para o JOTV. A sincronia pergunta primeiro
+o que mudou e o player avisa uma vez por evento, para gastar pouco da cota. O JOTV usa a chave de desenvolvimento do WeTrakr,
+com cota diária dividida entre todos os usuários do app, e pausa as chamadas por 30 minutos quando ela acaba. Vale no celular,
+na Android TV, na LG, na Samsung, no Windows, no Linux e no Roku.
+
+### Minha Lista com 250 títulos e selo Assistido
+
+O histórico passou de 30 para 250 títulos. Filme que você terminou (90 por cento ou mais) sai do Continuar assistindo e fica nos
+salvos com o selo **Assistido**, e a série marca só o episódio. O Continuar assistindo só avança para o próximo episódio quando ele
+já foi lançado, e a série volta sozinha quando sai episódio ou temporada nova. Também foi corrigida a série que aparecia duas vezes
+no Continuar assistindo da LG, da Samsung, do Windows e do Linux, e segurar OK passou a remover também com controle que não repete a tecla.
+
+### Aviso de próximo episódio que não pula o fim
+
+No último minuto o aviso fica manual, sem contagem, e o **Cancelar** pega o foco do controle. A contagem de 10 segundos só começa
+depois do fim real do vídeo. Antes o aviso podia avançar sozinho no meio dos créditos.
+
+### Legenda forçada automática e filtros das fontes
+
+A opção **Legenda forçada automática**, ligada por padrão, coloca sozinha a faixa forçada (só as falas em outro idioma) quando a
+legenda completa não liga. O painel de fontes do player ganhou uma barra com a contagem e os filtros por qualidade e por addon. No
+celular Android, a lista de fontes de um episódio agora rola por arraste. A aba Ao vivo filtra por fonte, como o Descobrir.
+
+### Busca da Android TV pelo teclado do Google
+
+Na busca da Android TV, OK abre o teclado do sistema, o mesmo que o app Google TV do celular usa para digitar, e o teclado do app
+segue embaixo. Depois de fechar o teclado com Voltar, o OK do controle volta a funcionar no campo, em contas, PIN e addons.
+
+### Melhorar imagem no Windows e no Linux
+
+Botão novo no player, **desligado por padrão** e guardado por perfil, com quatro níveis. Desligado, Filmes e séries (tira as faixas de
+cor dos degradês e melhora o HDR em tela comum), Anime rápido e Anime qualidade (uma rede neural amplia e limpa o desenho, bom para
+anime antigo). Só gasta placa de vídeo quando a tela é bem maior que o vídeo, e um vigia baixa o nível sozinho se a máquina não
+aguentar. No Windows o anime usa o ArtCNN com Vulkan e o Anime4K com D3D11, e no Linux é sempre o Anime4K. Na placa integrada em que
+foi medido só o nível rápido roda liso. Os controles do player ficaram uns 20 por cento menores no Windows e no Linux, para a
+fileira de botões caber em uma linha com o botão novo. Os shaders são o [Anime4K](https://github.com/bloc97/Anime4K) e o
+[ArtCNN](https://github.com/Artoriuz/ArtCNN), os dois com licença MIT.
+
+### Windows 0.2.14, Linux 0.1.4 e Roku 1.0.2
+
+O Windows 0.2.14 e o Linux 0.1.4 levam a interface nova, com tudo o que está acima, mais o Melhorar imagem. O Roku 1.0.2 corrige as
+fontes dos seriados, amplia a interface para ler da sala e ganha o WeTrakr.
+
+[Baixar a v1.0.22](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.22) (Android, LG, Samsung e Windows), [baixar o Linux 0.1.4](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.4) e [baixar o Roku 1.0.2](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2).
 
 ### Sem teste automático das fontes
 
@@ -330,7 +378,7 @@ O mesmo app da TV no computador, leve e em tela cheia, com o vídeo tocando no m
 player iguais aos da TV. Funciona com teclado (setas, Enter e Esc) e com mouse. Para sair da tela
 cheia, aperte F11 ou leve o mouse ao topo da tela, que aparecem os botões de sair da tela cheia,
 minimizar e fechar. Torrent toca sem debrid pelo motor P2P embutido, e os menus Lateral, Superior e
-Oculto funcionam com o mouse.
+Oculto funcionam com o mouse. O botão Melhorar imagem do player amplia e limpa desenho de anime antigo com shaders no mpv, desligado por padrão.
 
 ## No Linux
 
@@ -342,11 +390,11 @@ minimizar e fechar.
 O pacote Debian usa o player da distribuição. O AppImage leva a libmpv e suas bibliotecas junto e
 pode ficar numa pasta da sua conta. Os dois formatos preservam addons, plugins, perfis, Minha Lista,
 histórico, coleções e preferências. O backup JSON permite trazer os dados de outra versão do JOTV.
-Os avisos de atualização identificam o formato instalado antes de escolher o download.
+Os avisos de atualização identificam o formato instalado antes de escolher o download. O botão Melhorar imagem do player usa o Anime4K na libmpv, desligado por padrão.
 
 As versões 0.1.0, 0.1.1 e 0.1.2 foram testadas em Linux isolado, com vídeo e legenda externa em 720p e 1080p. A 0.1.3 foi
 instalada e aberta nesse mesmo ambiente, e a interface nova apareceu no Debian e no AppImage, com a parte nativa igual à
-da 0.1.2. A validação
+da 0.1.2. A 0.1.4 também foi instalada e aberta em Linux isolado, e o Anime4K do Melhorar imagem foi provado na libmpv 0.34 com OpenGL por software. A validação
 em computador físico, saída HDMI, HDR e áudio multicanal continua pendente. A reprodução de torrent usa o mesmo motor do Windows e ainda não foi exercitada nessa validação.
 
 ## No Roku
@@ -355,7 +403,7 @@ O mesmo visual do webOS na TV Roku, escrito em BrightScript. Funciona pelo contr
 destaque, o detalhe com as fontes dos seus addons e o player do Roku com legenda, escolha de áudio e retomada de onde parou. O
 debrid (Real-Debrid, TorBox e Premiumize) transforma o torrent pronto em link direto. O Roku não roda JavaScript nem motor de
 torrent, então ficam de fora o P2P sem debrid, os plugins, o trailer do YouTube, o áudio de outra fonte, os downloads e o
-Chromecast. Para torrent use um addon com debrid. A versão 1.0.0 foi provada em simulador e em testes das bibliotecas, e ainda
+Chromecast. Para torrent use um addon com debrid. A versão 1.0.2 foi provada em simulador e em testes das bibliotecas, e ainda
 não rodou num Roku físico. Não tem aviso de atualização, então baixe o zip novo e instale por cima.
 
 ## Tudo o que o app faz
@@ -429,6 +477,7 @@ não rodou num Roku físico. Não tem aviso de atualização, então baixe o zip
 <summary><b>Contas, debrid e torrent</b></summary>
 
 - Stremio e Nuvio por e-mail ou QR, importando addons, Minha Lista, progresso e as chaves de debrid salvas na conta
+- WeTrakr, MDBList e Simkl por código de dispositivo, avisando o que você assiste e trazendo Minha Lista, o que ficou pela metade e os episódios vistos
 - Real-Debrid (por código ou chave), TorBox e Premiumize
 - Motor P2P no Android, no Windows, no Linux e na LG webOS recente, com o vídeo tocando enquanto baixa
 - Na Samsung o P2P é experimental e vem desligado, e sem ele o torrent toca pelo debrid
@@ -477,7 +526,7 @@ não rodou num Roku físico. Não tem aviso de atualização, então baixe o zip
 ## Instalação
 
 Todos os arquivos ficam na página de **[Releases](../../releases)**. Não precisa compilar nada.
-O Android, a LG, a Samsung e o Windows estão na [release v1.0.21](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.21). O Linux e o Roku têm cada um a sua release, a [linux-v0.1.3](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.3) e a [roku-v1.0.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.0).
+O Android, a LG, a Samsung e o Windows estão na [release v1.0.22](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.22). O Linux e o Roku têm cada um a sua release, a [linux-v0.1.4](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.4) e a [roku-v1.0.2](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2).
 
 | Aparelho | Arquivo | Precisa de |
 |---|---|---|
@@ -563,7 +612,7 @@ A TV de 2016 (Tizen 2.4) não é atendida.
 <details>
 <summary><b>Windows</b></summary>
 
-1. Baixe o `JOTV-Windows-v<versão>-setup.exe` da [release v1.0.21](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.21) e abra.
+1. Baixe o `JOTV-Windows-v<versão>-setup.exe` da [release v1.0.22](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.22) e abra.
 2. O instalador não tem assinatura digital paga, então o Windows pode avisar que protegeu o computador. Clique em **Mais informações** e depois em **Executar assim mesmo**.
 3. O JOTV abre em tela cheia. F11 ou Alt+Enter alternam a tela cheia, e o mouse no topo da tela mostra os botões de sair da tela cheia, minimizar e fechar.
 
@@ -572,33 +621,33 @@ A TV de 2016 (Tizen 2.4) não é atendida.
 <details>
 <summary><b>Linux</b></summary>
 
-Escolha um dos dois formatos da [release Linux 0.1.3](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.3).
+Escolha um dos dois formatos da [release Linux 0.1.4](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.4).
 
 **Debian ou Ubuntu compatível**
 
-Baixe [JOTV-Linux-v0.1.3-amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.3/JOTV-Linux-v0.1.3-amd64.deb)
+Baixe [JOTV-Linux-v0.1.4-amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.4/JOTV-Linux-v0.1.4-amd64.deb)
 e execute na pasta do arquivo. O instalador busca as dependências da distribuição.
 
 ```sh
-sudo apt install ./JOTV-Linux-v0.1.3-amd64.deb
+sudo apt install ./JOTV-Linux-v0.1.4-amd64.deb
 ```
 
 Depois, abra o JOTV pelo menu de aplicativos.
 
 **AppImage portátil**
 
-Baixe [JOTV-Linux-v0.1.3-x86_64.AppImage](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.3/JOTV-Linux-v0.1.3-x86_64.AppImage),
+Baixe [JOTV-Linux-v0.1.4-x86_64.AppImage](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.4/JOTV-Linux-v0.1.4-x86_64.AppImage),
 dê permissão de execução e abra o arquivo.
 
 ```sh
-chmod +x ./JOTV-Linux-v0.1.3-x86_64.AppImage
-./JOTV-Linux-v0.1.3-x86_64.AppImage
+chmod +x ./JOTV-Linux-v0.1.4-x86_64.AppImage
+./JOTV-Linux-v0.1.4-x86_64.AppImage
 ```
 
 Se o sistema não tiver FUSE, use a extração temporária do próprio AppImage.
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./JOTV-Linux-v0.1.3-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./JOTV-Linux-v0.1.4-x86_64.AppImage
 ```
 
 Em uma sessão Wayland, o JOTV usa XWayland, que precisa estar instalado. Faça um backup nas
@@ -611,7 +660,7 @@ As versões Linux têm numeração independente das outras plataformas.
 <summary><b>Roku</b></summary>
 
 1. Na TV, ligue o modo desenvolvedor. Aperte no controle Início três vezes, Cima duas, Direita, Esquerda, Direita, Esquerda, Direita. Anote o endereço IP, crie uma senha e confirme.
-2. Baixe o `JOTV-Roku-v1.0.0.zip` da [release do Roku](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.0).
+2. Baixe o `JOTV-Roku-v1.0.2.zip` da [release do Roku](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2).
 3. Abra `http://` seguido do IP da TV no navegador do computador, entre com o usuário `rokudev` e a senha criada, escolha o zip e instale.
 
 O canal fica na lista de aplicativos como JOTV. O modo desenvolvedor mantém o canal até a TV ser reiniciada com a opção desligada.
