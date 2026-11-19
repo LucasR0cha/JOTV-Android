@@ -15,7 +15,7 @@ O catálogo vem do TMDB, em português. Os vídeos vêm dos addons e dos plugins
 [![Baixar para Android](https://img.shields.io/badge/Android-baixar%20o%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](../../releases/latest)
 [![Baixar para LG webOS](https://img.shields.io/badge/LG%20webOS-baixar%20o%20IPK-A50034?style=for-the-badge&logo=lg&logoColor=white)](../../releases/latest)
 [![Baixar para Samsung Tizen](https://img.shields.io/badge/Samsung%20Tizen-baixar%20o%20WGT-1428A0?style=for-the-badge&logo=samsung&logoColor=white)](../../releases/latest)
-[![Baixar para Windows](https://img.shields.io/badge/Windows-baixar%20o%20instalador-0078D4?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest)
+[![Baixar para Windows](https://img.shields.io/badge/Windows-baixar%20o%20instalador-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15)
 [![Baixar para Linux](https://img.shields.io/badge/Linux-Debian%20e%20AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.4)
 [![Baixar para Roku](https://img.shields.io/badge/Roku-baixar%20o%20ZIP-6C3C97?style=for-the-badge&logo=roku&logoColor=white)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2)
 
@@ -38,6 +38,18 @@ próprio perfil com lista, histórico e progresso.
 O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-legal).
 
 ## Novidades
+
+### Melhorar imagem completo no Windows
+
+O botão Melhorar imagem do player agora abre um painel com três abas, Upscaler, Filtros e Desempenho. No Upscaler o **Auto** escolhe pela
+placa de vídeo, pelo vídeo e pela tela, e há os modelos **A, B, C, A+A, B+B e C+A** do Anime4K, os níveis Anime rápido e Anime qualidade,
+opções para filme e série e Retrô e pixel art. No modo Avançado você monta a cadeia com 29 etapas, sobe, desce e troca o tamanho da rede
+de cada uma. A aba Filtros mexe em cor, debanding, movimento suave e HDR sem precisar ampliar, e a aba Desempenho mostra quanto cada etapa
+gasta por quadro. Continua **desligado por padrão** e guardado por perfil, o botão **Comparar** mostra o vídeo sem a melhoria enquanto está
+apertado, e um vigia baixa a qualidade sozinho se a máquina perder quadros. O custo foi medido numa Intel UHD, e nas outras placas é
+estimado. São 67 shaders com licença MIT, BSD ou LGPL, sem alteração, e o texto das licenças acompanha o instalador.
+
+[Baixar o Windows 0.2.15](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15). O Linux 0.1.4 ainda tem o botão antigo.
 
 ### WeTrakr em todos os aparelhos
 
@@ -378,7 +390,7 @@ O mesmo app da TV no computador, leve e em tela cheia, com o vídeo tocando no m
 player iguais aos da TV. Funciona com teclado (setas, Enter e Esc) e com mouse. Para sair da tela
 cheia, aperte F11 ou leve o mouse ao topo da tela, que aparecem os botões de sair da tela cheia,
 minimizar e fechar. Torrent toca sem debrid pelo motor P2P embutido, e os menus Lateral, Superior e
-Oculto funcionam com o mouse. O botão Melhorar imagem do player amplia e limpa desenho de anime antigo com shaders no mpv, desligado por padrão.
+Oculto funcionam com o mouse. O botão Melhorar imagem do player abre um painel completo para ampliar e limpar a imagem com shaders no mpv, com o Auto, os modelos do Anime4K, filtros de cor e o Comparar, desligado por padrão.
 
 ## No Linux
 
@@ -526,7 +538,7 @@ não rodou num Roku físico. Não tem aviso de atualização, então baixe o zip
 ## Instalação
 
 Todos os arquivos ficam na página de **[Releases](../../releases)**. Não precisa compilar nada.
-O Android, a LG, a Samsung e o Windows estão na [release v1.0.22](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.22). O Linux e o Roku têm cada um a sua release, a [linux-v0.1.4](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.4) e a [roku-v1.0.2](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2).
+O Android, a LG e a Samsung estão na [release v1.0.22](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.22). O Windows, o Linux e o Roku têm cada um a sua release, a [windows-v0.2.15](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15), a [linux-v0.1.4](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.4) e a [roku-v1.0.2](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2).
 
 | Aparelho | Arquivo | Precisa de |
 |---|---|---|
@@ -612,7 +624,7 @@ A TV de 2016 (Tizen 2.4) não é atendida.
 <details>
 <summary><b>Windows</b></summary>
 
-1. Baixe o `JOTV-Windows-v<versão>-setup.exe` da [release v1.0.22](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.22) e abra.
+1. Baixe o `JOTV-Windows-v<versão>-setup.exe` da [release do Windows](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15) e abra.
 2. O instalador não tem assinatura digital paga, então o Windows pode avisar que protegeu o computador. Clique em **Mais informações** e depois em **Executar assim mesmo**.
 3. O JOTV abre em tela cheia. F11 ou Alt+Enter alternam a tela cheia, e o mouse no topo da tela mostra os botões de sair da tela cheia, minimizar e fechar.
 
