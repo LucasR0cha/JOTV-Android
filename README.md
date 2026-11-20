@@ -16,7 +16,7 @@ O catálogo vem do TMDB, em português. Os vídeos vêm dos addons e dos plugins
 [![Baixar para LG webOS](https://img.shields.io/badge/LG%20webOS-baixar%20o%20IPK-A50034?style=for-the-badge&logo=lg&logoColor=white)](../../releases/latest)
 [![Baixar para Samsung Tizen](https://img.shields.io/badge/Samsung%20Tizen-baixar%20o%20WGT-1428A0?style=for-the-badge&logo=samsung&logoColor=white)](../../releases/latest)
 [![Baixar para Windows](https://img.shields.io/badge/Windows-baixar%20o%20instalador-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15)
-[![Baixar para Linux](https://img.shields.io/badge/Linux-Debian%20e%20AppImage-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.4)
+[![Baixar para Linux](https://img.shields.io/badge/Linux-x64%20e%20ARM64-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.0)
 [![Baixar para Roku](https://img.shields.io/badge/Roku-baixar%20o%20ZIP-6C3C97?style=for-the-badge&logo=roku&logoColor=white)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2)
 
 [Novidades](#novidades) · [Na TV](#na-tv) · [No celular](#no-celular) · [No Windows](#no-windows) · [No Linux](#no-linux) · [No Roku](#no-roku) · [Tudo o que o app faz](#tudo-o-que-o-app-faz) · [Instalação](#instalação) · [Para desenvolvedores](#para-desenvolvedores)
@@ -39,6 +39,20 @@ O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-leg
 
 ## Novidades
 
+### Linux 0.2.0 com instalador completo
+
+O Linux recebe as melhorias do Windows 0.2.15 e instaladores completos para **Intel e AMD de 64 bits** e **ARM64 ou AArch64**.
+O player, os codecs, o WebKitGTK e as bibliotecas já vêm no pacote. A instalação vale para a conta atual, cria um atalho no menu
+e dispensa senha de administrador, FUSE e instalação manual de dependências do aplicativo.
+
+Foram corrigidas a inicialização do mpv com o idioma do sistema, a composição dos controles sobre o vídeo e a biblioteca GLES
+ausente no modo de software. HTTP e torrent/P2P passam com vídeo real de teste, e o player passa em 16 verificações na VM EndeavourOS.
+Usenet passa na resolução TorBox com respostas controladas, sem download em conta paga. O painel Melhorar imagem acompanha o atual do Windows,
+com Upscaler, Filtros e Desempenho. O Linux usa OpenGL e respeita a capacidade do backend.
+
+[Baixar o Linux 0.2.0 e ver o passo a passo](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.0).
+Quem usa AppImage deve executar o novo instalador uma vez. Perfis e configurações são preservados.
+
 ### Melhorar imagem completo no Windows
 
 O botão Melhorar imagem do player agora abre um painel com três abas, Upscaler, Filtros e Desempenho. No Upscaler o **Auto** escolhe pela
@@ -49,7 +63,7 @@ gasta por quadro. Continua **desligado por padrão** e guardado por perfil, o bo
 apertado, e um vigia baixa a qualidade sozinho se a máquina perder quadros. O custo foi medido numa Intel UHD, e nas outras placas é
 estimado. São 67 shaders com licença MIT, BSD ou LGPL, sem alteração, e o texto das licenças acompanha o instalador.
 
-[Baixar o Windows 0.2.15](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15). O Linux 0.1.4 ainda tem o botão antigo.
+[Baixar o Windows 0.2.15](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15). [O Linux 0.2.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.0) também recebe o painel completo, usando OpenGL.
 
 ### WeTrakr em todos os aparelhos
 
@@ -394,20 +408,19 @@ Oculto funcionam com o mouse. O botão Melhorar imagem do player abre um painel 
 
 ## No Linux
 
-O mesmo visual e os mesmos controles da versão Windows, com player libmpv integrado por OpenGL.
-Funciona com teclado e mouse, incluindo clique direito, clique prolongado, volume na tela e o texto
-das ações ao passar o mouse. F11 ou Alt+Enter alternam a tela cheia, e a barra no topo permite
-minimizar e fechar.
+O mesmo visual e os mesmos controles de computador do Windows 0.2.15, com player libmpv integrado por OpenGL.
+Teclado, mouse, clique direito, volume na tela, rótulos das ações e o painel completo Melhorar imagem acompanham a versão.
+F11 ou Alt+Enter alternam a tela cheia, e a barra no topo permite minimizar e fechar.
 
-O pacote Debian usa o player da distribuição. O AppImage leva a libmpv e suas bibliotecas junto e
-pode ficar numa pasta da sua conta. Os dois formatos preservam addons, plugins, perfis, Minha Lista,
-histórico, coleções e preferências. O backup JSON permite trazer os dados de outra versão do JOTV.
-Os avisos de atualização identificam o formato instalado antes de escolher o download. O botão Melhorar imagem do player usa o Anime4K na libmpv, desligado por padrão.
+Os instaladores completos para x64 e ARM64 levam player, codecs e bibliotecas e criam um atalho na conta atual.
+Não precisam de FUSE nem de instalação manual das dependências do aplicativo. Os pacotes Debian continuam disponíveis
+para amd64 e arm64 e usam bibliotecas da distribuição. Addons, plugins, perfis, Minha Lista, histórico, coleções,
+preferências e backup JSON permanecem compatíveis. O atualizador distingue formato e arquitetura.
 
-As versões 0.1.0, 0.1.1 e 0.1.2 foram testadas em Linux isolado, com vídeo e legenda externa em 720p e 1080p. A 0.1.3 foi
-instalada e aberta nesse mesmo ambiente, e a interface nova apareceu no Debian e no AppImage, com a parte nativa igual à
-da 0.1.2. A 0.1.4 também foi instalada e aberta em Linux isolado, e o Anime4K do Melhorar imagem foi provado na libmpv 0.34 com OpenGL por software. A validação
-em computador físico, saída HDMI, HDR e áudio multicanal continua pendente. A reprodução de torrent usa o mesmo motor do Windows e ainda não foi exercitada nessa validação.
+Na 0.2.0, HTTP e torrent/P2P passam com vídeo real de teste. A janela nativa passa em 16 verificações em 720p, 1080p e na VM EndeavourOS.
+Instalação, abertura e desinstalação passam em Ubuntu 22.04, Ubuntu 20.04, Alpine 3.22 e Ubuntu ARM64 emulado.
+Usenet é validado com respostas controladas do TorBox. ARM64 físico, todas as GPUs, áudio físico ou multicanal,
+HDMI e HDR permanecem fora da cobertura. É necessário um desktop com X11 ou XWayland.
 
 ## No Roku
 
@@ -538,7 +551,7 @@ não rodou num Roku físico. Não tem aviso de atualização, então baixe o zip
 ## Instalação
 
 Todos os arquivos ficam na página de **[Releases](../../releases)**. Não precisa compilar nada.
-O Android, a LG e a Samsung estão na [release v1.0.22](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.22). O Windows, o Linux e o Roku têm cada um a sua release, a [windows-v0.2.15](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15), a [linux-v0.1.4](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.4) e a [roku-v1.0.2](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2).
+O Android, a LG e a Samsung estão na [release v1.0.22](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.22). O Windows, o Linux e o Roku têm cada um a sua release, a [windows-v0.2.15](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15), a [linux-v0.2.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.0) e a [roku-v1.0.2](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2).
 
 | Aparelho | Arquivo | Precisa de |
 |---|---|---|
@@ -547,8 +560,9 @@ O Android, a LG e a Samsung estão na [release v1.0.22](https://github.com/Lucas
 | TV LG | `JOTV-webOS-v*.ipk` | webOS 4 ou mais novo, em modo desenvolvedor |
 | TV Samsung | `JOTV-Tizen-v*.wgt` | Tizen 3.0 ou mais novo (TVs de 2017 em diante), em modo desenvolvedor. De 2017 a 2019 abre no modo Tizen Legacy, sem Plugins e P2P |
 | Computador | `JOTV-Windows-v*-setup.exe` | Windows 10 ou 11 de 64 bits |
-| Linux Debian ou Ubuntu compatível | `JOTV-Linux-v*-amd64.deb` | x86_64, glibc 2.35 ou mais nova e X11 ou XWayland |
-| Linux portátil | `JOTV-Linux-v*-x86_64.AppImage` | x86_64, glibc 2.35 ou mais nova e X11 ou XWayland |
+| Linux Intel ou AMD de 64 bits | `JOTV-Linux-v*-x86_64-setup.run` | Desktop com X11 ou XWayland. Player e bibliotecas incluídos |
+| Linux ARM64 ou AArch64 | `JOTV-Linux-v*-aarch64-setup.run` | Desktop com X11 ou XWayland. Player e bibliotecas incluídos |
+| Linux Debian ou Ubuntu compatível | `JOTV-Linux-v*-amd64.deb` ou `JOTV-Linux-v*-arm64.deb` | Bibliotecas da distribuição e X11 ou XWayland |
 | TV ou aparelho Roku | `JOTV-Roku-v*.zip` | Roku com o modo desenvolvedor ligado |
 
 <details>
@@ -633,37 +647,30 @@ A TV de 2016 (Tizen 2.4) não é atendida.
 <details>
 <summary><b>Linux</b></summary>
 
-Escolha um dos dois formatos da [release Linux 0.1.4](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.1.4).
+Na [release Linux 0.2.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.0), escolha o instalador completo do processador.
 
-**Debian ou Ubuntu compatível**
+- [Intel ou AMD de 64 bits](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.0/JOTV-Linux-v0.2.0-x86_64-setup.run)
+- [ARM64 ou AArch64](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.0/JOTV-Linux-v0.2.0-aarch64-setup.run)
 
-Baixe [JOTV-Linux-v0.1.4-amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.4/JOTV-Linux-v0.1.4-amd64.deb)
-e execute na pasta do arquivo. O instalador busca as dependências da distribuição.
+1. Feche o JOTV. Nas propriedades do arquivo, habilite a permissão de execução.
+2. Abra o instalador e escolha **Instalar e abrir**. A instalação vale para a conta atual e dispensa senha de administrador.
+3. Nas próximas vezes, use **JOTV** no menu de aplicativos.
 
-```sh
-sudo apt install ./JOTV-Linux-v0.1.4-amd64.deb
-```
-
-Depois, abra o JOTV pelo menu de aplicativos.
-
-**AppImage portátil**
-
-Baixe [JOTV-Linux-v0.1.4-x86_64.AppImage](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.1.4/JOTV-Linux-v0.1.4-x86_64.AppImage),
-dê permissão de execução e abra o arquivo.
+Se o arquivo abrir como texto, execute na pasta do download. Esse comando dispensa marcar a permissão de execução.
 
 ```sh
-chmod +x ./JOTV-Linux-v0.1.4-x86_64.AppImage
-./JOTV-Linux-v0.1.4-x86_64.AppImage
+sh ./JOTV-Linux-v0.2.0-x86_64-setup.run
 ```
 
-Se o sistema não tiver FUSE, use a extração temporária do próprio AppImage.
+No ARM64, troque pelo nome do arquivo AArch64. Player, codecs, fontes, WebKitGTK e bibliotecas já vêm no pacote.
+Não é necessário FUSE nem instalar manualmente as dependências do aplicativo. É necessário X11 ou XWayland.
 
-```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./JOTV-Linux-v0.1.4-x86_64.AppImage
-```
+Quem usa AppImage deve executar o novo instalador uma vez. Perfis e configurações são preservados.
+O menu do atalho oferece **Desinstalar JOTV**, mantendo os dados da conta. Faça um backup nas Configurações antes de trocar de aparelho.
 
-Em uma sessão Wayland, o JOTV usa XWayland, que precisa estar instalado. Faça um backup nas
-Configurações antes de desinstalar ou trocar de aparelho. O backup pode ficar fora da pasta do app.
+Os pacotes [amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.0/JOTV-Linux-v0.2.0-amd64.deb)
+e [arm64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.0/JOTV-Linux-v0.2.0-arm64.deb)
+também estão disponíveis para Debian, Ubuntu e compatíveis. Eles usam as bibliotecas da distribuição.
 As versões Linux têm numeração independente das outras plataformas.
 
 </details>
@@ -787,7 +794,7 @@ sob a GPL. O código do mpv fica em [mpv-player/mpv](https://github.com/mpv-play
 usada vem de [zhongfly/mpv-winbuild](https://github.com/zhongfly/mpv-winbuild/releases/tag/2026-10-26-baa3e11d42).
 
 O Linux usa a [libmpv](https://github.com/mpv-player/mpv). O pacote Debian depende da biblioteca da
-distribuição, e o AppImage inclui a biblioteca, suas dependências e os arquivos de licença.
+distribuição, e o instalador completo inclui a biblioteca, suas dependências e os arquivos de licença.
 O código-fonte do pacote Ubuntu fica na [página do mpv no Launchpad](https://launchpad.net/ubuntu/+source/mpv).
 
 O motor de plugins leva o QuickJS e bibliotecas JavaScript de código aberto. As licenças ficam em
