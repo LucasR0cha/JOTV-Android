@@ -15,9 +15,9 @@ O catálogo vem do TMDB, em português. Os vídeos vêm dos addons e dos plugins
 [![Baixar para Android](https://img.shields.io/badge/Android-baixar%20o%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](../../releases/latest)
 [![Baixar para LG webOS](https://img.shields.io/badge/LG%20webOS-baixar%20o%20IPK-A50034?style=for-the-badge&logo=lg&logoColor=white)](../../releases/latest)
 [![Baixar para Samsung Tizen](https://img.shields.io/badge/Samsung%20Tizen-baixar%20o%20WGT-1428A0?style=for-the-badge&logo=samsung&logoColor=white)](../../releases/latest)
-[![Baixar para Windows](https://img.shields.io/badge/Windows-baixar%20o%20instalador-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15)
-[![Baixar para Linux](https://img.shields.io/badge/Linux-x64%20e%20ARM64-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.0)
-[![Baixar para Roku](https://img.shields.io/badge/Roku-baixar%20o%20ZIP-6C3C97?style=for-the-badge&logo=roku&logoColor=white)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2)
+[![Baixar para Windows](https://img.shields.io/badge/Windows-baixar%20o%20instalador-0078D4?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest)
+[![Baixar para Linux](https://img.shields.io/badge/Linux-x64%20e%20ARM64-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.1)
+[![Baixar para Roku](https://img.shields.io/badge/Roku-baixar%20o%20ZIP-6C3C97?style=for-the-badge&logo=roku&logoColor=white)](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.3)
 
 [Novidades](#novidades) · [Na TV](#na-tv) · [No celular](#no-celular) · [No Windows](#no-windows) · [No Linux](#no-linux) · [No Roku](#no-roku) · [Tudo o que o app faz](#tudo-o-que-o-app-faz) · [Instalação](#instalação) · [Para desenvolvedores](#para-desenvolvedores)
 
@@ -38,6 +38,40 @@ próprio perfil com lista, histórico e progresso.
 O JOTV não hospeda nem distribui vídeo nenhum. Leia o [aviso legal](#aviso-legal).
 
 ## Novidades
+
+### Perfis independentes
+
+Cada perfil agora tem os próprios **addons, plugins, catálogo e Início, TV ao vivo e debrid**, além da lista, do histórico e do progresso que já eram dele.
+Ao criar um perfil dá para começar do zero ou **copiar de outro perfil** (você marca o que leva, e o debrid vem de fora porque leva as chaves), e em
+Editar perfil o **Fontes e catálogo** mostra de quem é cada categoria, com Copiar de outro perfil (substituir ou somar) e **Usar o mesmo**, um vínculo vivo
+que dá para desfazer. Remover um perfil que outros usam deixa uma cópia para eles, e quem já usava o app recebe a cópia do que era do aparelho na
+primeira abertura.
+
+A importação da Nuvio pergunta de qual perfil da Nuvio e para qual perfil do aparelho, e ganhou **Todos os perfis**, em que cada perfil da Nuvio vira um
+perfil do JOTV com os próprios addons e plugins (os repositórios de plugins agora vêm junto, com os provedores desligados). O Stremio entra no perfil
+escolhido. As sessões da Nuvio e do Stremio ficam do aparelho, não do perfil. Vale no celular, na Android TV, na LG, na Samsung, no Windows, no Linux e no Roku.
+
+### Fontes em seções por addon
+
+Com mais de um addon, a lista de fontes abre uma seção por addon, na ordem de Gerenciar addons como no Nuvio, e a barra de filtros ganhou duas fileiras,
+**Mostrar** (idioma e qualidade) e **Addon**, com um resumo do que sobrou. O filtro passou a valer por versão, então escolher um addon abre a fonte dele,
+com o idioma e a qualidade dela, e o português é reconhecido por apelido. Vale no detalhe, nos episódios e no player. O Roku ganhou a barra e os títulos de
+grupo no painel do player.
+
+### Mais melhorias da v1.0.23
+
+O botão **Continuar** da série não exige mais fonte salva, então o progresso que chega da Nuvio, do Stremio ou do Trakt continua do ponto certo. O trailer
+do destaque começa mais cedo, o controle da Samsung responde às teclas de mídia, o player do celular abre deitado, o som de outra fonte não aplica mais a
+fonte errada e o Ao Vivo lê a programação que alguns addons mandam na descrição do canal. O backup agora leva addons, fontes ao vivo, catálogo e plugins do
+perfil, e o backup sem segredos tira usuário e senha dos endereços das listas M3U.
+
+### Windows 0.2.16, Linux 0.2.1 e Roku 1.0.3
+
+O Windows 0.2.16 leva a interface nova, com tudo o que está acima. O Linux 0.2.1 corrige a janela preta que aparecia com o aviso
+`Could not create default EGL display` em alguns Linux. O app confere o EGL antes de abrir e, se ele falhar, troca para a renderização por software.
+O Roku 1.0.3 ganha os perfis independentes e a barra de filtros nas fontes.
+
+[Baixar a v1.0.23](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.23) (Android, LG, Samsung e Windows), [baixar o Linux 0.2.1](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.1) e [baixar o Roku 1.0.3](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.3).
 
 ### Linux 0.2.0 com instalador completo
 
@@ -408,7 +442,7 @@ Oculto funcionam com o mouse. O botão Melhorar imagem do player abre um painel 
 
 ## No Linux
 
-O mesmo visual e os mesmos controles de computador do Windows 0.2.15, com player libmpv integrado por OpenGL.
+O mesmo visual e os mesmos controles de computador do Windows 0.2.16, com player libmpv integrado por OpenGL.
 Teclado, mouse, clique direito, volume na tela, rótulos das ações e o painel completo Melhorar imagem acompanham a versão.
 F11 ou Alt+Enter alternam a tela cheia, e a barra no topo permite minimizar e fechar.
 
@@ -417,6 +451,7 @@ Não precisam de FUSE nem de instalação manual das dependências do aplicativo
 para amd64 e arm64 e usam bibliotecas da distribuição. Addons, plugins, perfis, Minha Lista, histórico, coleções,
 preferências e backup JSON permanecem compatíveis. O atualizador distingue formato e arquitetura.
 
+Na 0.2.1 o app confere o EGL antes de abrir e, se o EGL do sistema não abrir, usa a renderização por software em vez de deixar a janela preta.
 Na 0.2.0, HTTP e torrent/P2P passam com vídeo real de teste. A janela nativa passa em 16 verificações em 720p, 1080p e na VM EndeavourOS.
 Instalação, abertura e desinstalação passam em Ubuntu 22.04, Ubuntu 20.04, Alpine 3.22 e Ubuntu ARM64 emulado.
 Usenet é validado com respostas controladas do TorBox. ARM64 físico, todas as GPUs, áudio físico ou multicanal,
@@ -428,7 +463,7 @@ O mesmo visual do webOS na TV Roku, escrito em BrightScript. Funciona pelo contr
 destaque, o detalhe com as fontes dos seus addons e o player do Roku com legenda, escolha de áudio e retomada de onde parou. O
 debrid (Real-Debrid, TorBox e Premiumize) transforma o torrent pronto em link direto. O Roku não roda JavaScript nem motor de
 torrent, então ficam de fora o P2P sem debrid, os plugins, o trailer do YouTube, o áudio de outra fonte, os downloads e o
-Chromecast. Para torrent use um addon com debrid. A versão 1.0.2 foi provada em simulador e em testes das bibliotecas, e ainda
+Chromecast. Para torrent use um addon com debrid. A versão 1.0.3 foi provada em simulador e em testes das bibliotecas, e ainda
 não rodou num Roku físico. Não tem aviso de atualização, então baixe o zip novo e instale por cima.
 
 ## Tudo o que o app faz
@@ -551,7 +586,7 @@ não rodou num Roku físico. Não tem aviso de atualização, então baixe o zip
 ## Instalação
 
 Todos os arquivos ficam na página de **[Releases](../../releases)**. Não precisa compilar nada.
-O Android, a LG e a Samsung estão na [release v1.0.22](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.22). O Windows, o Linux e o Roku têm cada um a sua release, a [windows-v0.2.15](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15), a [linux-v0.2.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.0) e a [roku-v1.0.2](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2).
+O Android, a LG, a Samsung e o Windows estão na [release v1.0.23](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.23). O Linux e o Roku têm cada um a sua release, a [linux-v0.2.1](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.1) e a [roku-v1.0.3](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.3).
 
 | Aparelho | Arquivo | Precisa de |
 |---|---|---|
@@ -638,7 +673,7 @@ A TV de 2016 (Tizen 2.4) não é atendida.
 <details>
 <summary><b>Windows</b></summary>
 
-1. Baixe o `JOTV-Windows-v<versão>-setup.exe` da [release do Windows](https://github.com/LucasR0cha/JOTV-Android/releases/tag/windows-v0.2.15) e abra.
+1. Baixe o `JOTV-Windows-v<versão>-setup.exe` da [release v1.0.23](https://github.com/LucasR0cha/JOTV-Android/releases/tag/v1.0.23) e abra.
 2. O instalador não tem assinatura digital paga, então o Windows pode avisar que protegeu o computador. Clique em **Mais informações** e depois em **Executar assim mesmo**.
 3. O JOTV abre em tela cheia. F11 ou Alt+Enter alternam a tela cheia, e o mouse no topo da tela mostra os botões de sair da tela cheia, minimizar e fechar.
 
@@ -647,10 +682,10 @@ A TV de 2016 (Tizen 2.4) não é atendida.
 <details>
 <summary><b>Linux</b></summary>
 
-Na [release Linux 0.2.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.0), escolha o instalador completo do processador.
+Na [release Linux 0.2.1](https://github.com/LucasR0cha/JOTV-Android/releases/tag/linux-v0.2.1), escolha o instalador completo do processador.
 
-- [Intel ou AMD de 64 bits](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.0/JOTV-Linux-v0.2.0-x86_64-setup.run)
-- [ARM64 ou AArch64](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.0/JOTV-Linux-v0.2.0-aarch64-setup.run)
+- [Intel ou AMD de 64 bits](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.1/JOTV-Linux-v0.2.1-x86_64-setup.run)
+- [ARM64 ou AArch64](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.1/JOTV-Linux-v0.2.1-aarch64-setup.run)
 
 1. Feche o JOTV. Nas propriedades do arquivo, habilite a permissão de execução.
 2. Abra o instalador e escolha **Instalar e abrir**. A instalação vale para a conta atual e dispensa senha de administrador.
@@ -659,7 +694,7 @@ Na [release Linux 0.2.0](https://github.com/LucasR0cha/JOTV-Android/releases/tag
 Se o arquivo abrir como texto, execute na pasta do download. Esse comando dispensa marcar a permissão de execução.
 
 ```sh
-sh ./JOTV-Linux-v0.2.0-x86_64-setup.run
+sh ./JOTV-Linux-v0.2.1-x86_64-setup.run
 ```
 
 No ARM64, troque pelo nome do arquivo AArch64. Player, codecs, fontes, WebKitGTK e bibliotecas já vêm no pacote.
@@ -668,8 +703,8 @@ Não é necessário FUSE nem instalar manualmente as dependências do aplicativo
 Quem usa AppImage deve executar o novo instalador uma vez. Perfis e configurações são preservados.
 O menu do atalho oferece **Desinstalar JOTV**, mantendo os dados da conta. Faça um backup nas Configurações antes de trocar de aparelho.
 
-Os pacotes [amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.0/JOTV-Linux-v0.2.0-amd64.deb)
-e [arm64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.0/JOTV-Linux-v0.2.0-arm64.deb)
+Os pacotes [amd64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.1/JOTV-Linux-v0.2.1-amd64.deb)
+e [arm64.deb](https://github.com/LucasR0cha/JOTV-Android/releases/download/linux-v0.2.1/JOTV-Linux-v0.2.1-arm64.deb)
 também estão disponíveis para Debian, Ubuntu e compatíveis. Eles usam as bibliotecas da distribuição.
 As versões Linux têm numeração independente das outras plataformas.
 
@@ -679,7 +714,7 @@ As versões Linux têm numeração independente das outras plataformas.
 <summary><b>Roku</b></summary>
 
 1. Na TV, ligue o modo desenvolvedor. Aperte no controle Início três vezes, Cima duas, Direita, Esquerda, Direita, Esquerda, Direita. Anote o endereço IP, crie uma senha e confirme.
-2. Baixe o `JOTV-Roku-v1.0.2.zip` da [release do Roku](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.2).
+2. Baixe o `JOTV-Roku-v1.0.3.zip` da [release do Roku](https://github.com/LucasR0cha/JOTV-Android/releases/tag/roku-v1.0.3).
 3. Abra `http://` seguido do IP da TV no navegador do computador, entre com o usuário `rokudev` e a senha criada, escolha o zip e instale.
 
 O canal fica na lista de aplicativos como JOTV. O modo desenvolvedor mantém o canal até a TV ser reiniciada com a opção desligada.
