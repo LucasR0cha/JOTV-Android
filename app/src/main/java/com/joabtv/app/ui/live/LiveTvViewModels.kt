@@ -90,6 +90,7 @@ class LiveTvViewModel @Inject constructor(private val repo: LiveTvRepository) : 
     fun setQuery(q: String) { query.value = q }
     fun setSource(id: String) { sourceId.value = id; if (filter.value.startsWith("g:")) filter.value = ALL }
     fun toggleFavorite(id: String) = repo.toggleFavorite(id)
+    fun ensureGuide(id: String) = repo.ensureGuide(id)
 
     companion object {
         const val ALL = "all"
@@ -133,6 +134,7 @@ class LivePlayerViewModel @Inject constructor(private val repo: LiveTvRepository
     fun watched(id: String) = repo.markWatched(id)
     fun toggleFavorite(id: String) = repo.toggleFavorite(id)
     fun nowNext(id: String, now: Long) = repo.nowNext(id, now)
+    fun ensureGuide(id: String) = repo.ensureGuide(id)
 }
 
 @HiltViewModel

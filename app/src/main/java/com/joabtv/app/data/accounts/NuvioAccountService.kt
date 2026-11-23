@@ -38,7 +38,12 @@ data class NuvioSession(
 data class NuvioProfile(
     val index: Int, val name: String, val usesPrimaryAddons: Boolean,
     val avatarUrl: String = "", val colorHex: String = "",
+    /** O perfil usa os plugins do principal (uses_primary_plugins). */
+    val usesPrimaryPlugins: Boolean = false,
 )
+
+/** Repositório de plugins de um perfil da Nuvio. [url] é o manifesto do repositório. */
+data class RemotePluginRepo(val url: String, val name: String, val enabled: Boolean, val sortOrder: Int)
 
 /** Foto pronta do catálogo do Nuvio. */
 data class NuvioAvatar(val id: String, val name: String, val category: String, val url: String)
@@ -156,11 +161,7 @@ class NuvioAccountService @Inject constructor(
         return Result.success(
             rows.map { o ->
                 val own = validPhotoUrl(o.text("avatar_url"))
-                val url = own ?: catalog[o.text("avatar_id")]?.url.orEmpty()
-                NuvioProfile(
-                    o.optInt("profile_index", 1), o.text("name").ifBlank { "Perfil" }, o.optBoolean("uses_primary_addons"),
-                    url, o.text("avatar_color_hex"),
-                )
+                profileFromRow(o, own ?: catalog[o.text("avatar_id")]?.url.orEmpty())
             }.sortedBy { it.index },
         )
     }
@@ -197,6 +198,18 @@ class NuvioAccountService @Inject constructor(
                 RemoteAddon(url, o.optString("name").ifBlank { host }, url.startsWith("http") && host.isNotBlank() && host != "localhost" && !host.startsWith("127."))
             }.distinctBy { it.url }
         )
+    }
+
+    /**
+     * Repositórios de plugins do perfil, na ordem da Nuvio (o mesmo que o PluginRepository.pullFromServer de lá lê).
+     * Perfil que usa os plugins do principal lê os do perfil 1.
+     */
+    suspend fun plugins(profile: NuvioProfile): Result<List<RemotePluginRepo>> = withContext(Dispatchers.IO) {
+        val idx = if (profile.index != 1 && profile.usesPrimaryPlugins) 1 else profile.index
+        val s = fresh() ?: return@withContext Result.failure(IllegalStateException("Entre na conta Nuvio"))
+        val r = getRaw("${s.server}/rest/v1/plugins?select=*&profile_id=eq.$idx&order=sort_order.asc", s.key, s.access)
+        parsePluginRows(r.second)?.let { Result.success(it) }
+            ?: Result.failure(IllegalStateException(errorOf(r.second, r.first)))
     }
 
     suspend fun library(profile: NuvioProfile): Result<List<RemoteLibraryItem>> {
@@ -483,5 +496,28 @@ class NuvioAccountService @Inject constructor(
 
     companion object {
         const val OFFICIAL = "https://api.nuvio.tv"
+
+        /** Perfil de uma linha do sync_pull_profiles. [photo] já vem resolvida (própria ou do catálogo). */
+        fun profileFromRow(o: JSONObject, photo: String): NuvioProfile {
+            fun text(n: String) = if (o.isNull(n)) "" else o.optString(n)
+            return NuvioProfile(
+                o.optInt("profile_index", 1), text("name").ifBlank { "Perfil" }, o.optBoolean("uses_primary_addons"),
+                photo, text("avatar_color_hex"), o.optBoolean("uses_primary_plugins"),
+            )
+        }
+
+        /**
+         * Linhas de rest/v1/plugins. null quando o corpo não é lista (erro ou página de login). Só endereço https
+         * entra, sem repetir, na ordem de sort_order.
+         */
+        fun parsePluginRows(text: String): List<RemotePluginRepo>? {
+            val arr = runCatching { JSONArray(text) }.getOrNull() ?: return null
+            return (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val url = (if (o.isNull("url")) "" else o.optString("url")).trim()
+                if (!url.startsWith("https://") || url.any(Char::isWhitespace)) return@mapNotNull null
+                RemotePluginRepo(url, if (o.isNull("name")) "" else o.optString("name"), o.optBoolean("enabled", true), o.optInt("sort_order", i))
+            }.distinctBy { it.url }.sortedBy { it.sortOrder }
+        }
     }
 }

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONArray
@@ -54,6 +55,12 @@ class LiveTvRepository @Inject constructor(
     }
 
     private val prefs = context.getSharedPreferences("joabtv_live", Context.MODE_PRIVATE)
+
+    /**
+     * Chave no espaço do perfil ativo (ou do perfil cujas fontes ele usa). Os arquivos de canais em filesDir/live
+     * seguem pelo id da fonte, que a cópia mantém, então são cache comum e não precisam do perfil no nome.
+     */
+    private fun k(key: String) = platformPrefs.categoryKey(com.joabtv.app.data.local.ProfileCategory.LIVE, key)
     private val dir = File(context.filesDir, "live").apply { mkdirs() }
     private val client = com.joabtv.app.data.remote.AppDns.mediaClient.newBuilder()
         .callTimeout(90, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
@@ -62,13 +69,17 @@ class LiveTvRepository @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var addonSignature = ""
     private var discoveredAt = 0L
+    private val guideTimes = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val guidePending = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private val guidePermits = kotlinx.coroutines.sync.Semaphore(4)
+    private val guideClient = client.newBuilder().callTimeout(12, TimeUnit.SECONDS).build()
 
     private val _state = MutableStateFlow(
         State(
             sources = readSources(),
-            favorites = prefs.getStringSet("favorites", emptySet()).orEmpty(),
-            recents = prefs.getString("recents", "").orEmpty().split('\n').filter { it.isNotBlank() },
-            showInBar = prefs.getBoolean("show_in_bar", true),
+            favorites = prefs.getStringSet(k("favorites"), emptySet()).orEmpty(),
+            recents = prefs.getString(k("recents"), "").orEmpty().split('\n').filter { it.isNotBlank() },
+            showInBar = prefs.getBoolean(k("show_in_bar"), true),
         )
     )
     val state: StateFlow<State> = _state.asStateFlow()
@@ -79,6 +90,19 @@ class LiveTvRepository @Inject constructor(
         val chans = s.flatMap { readChannels(it.id)?.first.orEmpty() }
         _state.update { it.copy(channels = chans, epg = readEpg()?.first.orEmpty()) }
         scope.launch { platformPrefs.addons.collectLatest { discoverAddons(false) } }
+        // Outro perfil (ou vínculo novo) traz outras fontes, favoritos e recentes.
+        platformPrefs.onProfileDataChanged {
+            val sources = readSources()
+            addonSignature = ""
+            _state.value = State(
+                sources = sources,
+                channels = sources.filter { it.enabled }.flatMap { readChannels(it.id)?.first.orEmpty() },
+                epg = readEpg()?.first.orEmpty(),
+                favorites = prefs.getStringSet(k("favorites"), emptySet()).orEmpty(),
+                recents = prefs.getString(k("recents"), "").orEmpty().split('\n').filter { it.isNotBlank() },
+                showInBar = prefs.getBoolean(k("show_in_bar"), true),
+            )
+        }
     }
 
     private suspend fun discoverAddons(force: Boolean) = discoveryLock.withLock {
@@ -92,7 +116,7 @@ class LiveTvRepository @Inject constructor(
                 val manifest = addons.getManifest(url) ?: run { failed = true; return@async old }
                 if (manifest.tvCatalogs.isEmpty()) return@async null
                 val id = "a" + java.security.MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).take(10).joinToString("") { "%02x".format(it) }
-                LiveSource(id, manifest.name, LiveSourceType.ADDON, url = url, enabled = old?.enabled ?: (id !in prefs.getStringSet("addon_off", emptySet()).orEmpty()), catalogs = manifest.tvCatalogs)
+                LiveSource(id, manifest.name, LiveSourceType.ADDON, url = url, enabled = old?.enabled ?: (id !in prefs.getStringSet(k("addon_off"), emptySet()).orEmpty()), catalogs = manifest.tvCatalogs)
             } }.awaitAll().filterNotNull()
         }
         addonSignature = sig
@@ -124,9 +148,9 @@ class LiveTvRepository @Inject constructor(
 
     fun setEnabled(id: String, on: Boolean) {
         if (_state.value.sources.any { it.id == id && it.type == LiveSourceType.ADDON }) {
-            val off = prefs.getStringSet("addon_off", emptySet()).orEmpty().toMutableSet()
+            val off = prefs.getStringSet(k("addon_off"), emptySet()).orEmpty().toMutableSet()
             if (on) off.remove(id) else off.add(id)
-            prefs.edit().putStringSet("addon_off", off).apply()
+            prefs.edit().putStringSet(k("addon_off"), off).apply()
         }
         writeSources(_state.value.sources.map { if (it.id == id) it.copy(enabled = on) else it })
         val s = _state.value.sources.filter { it.enabled }
@@ -135,12 +159,16 @@ class LiveTvRepository @Inject constructor(
 
     fun remove(id: String) {
         writeSources(_state.value.sources.filterNot { it.id == id })
-        File(dir, "ch_$id.json").delete()
+        // Fonte copiada para outro perfil tem o mesmo id e usa o mesmo arquivo de canais.
+        val elsewhere = platformPrefs.profiles.value.any { p ->
+            prefs.getString(platformPrefs.categoryKey(com.joabtv.app.data.local.ProfileCategory.LIVE, "sources", p.id), "").orEmpty().contains("\"$id\"")
+        }
+        if (!elsewhere) File(dir, "ch_$id.json").delete()
         _state.update { st -> st.copy(channels = st.channels.filterNot { it.sourceId == id }, accounts = st.accounts - id) }
     }
 
     fun setShowInBar(on: Boolean) {
-        prefs.edit().putBoolean("show_in_bar", on).apply()
+        prefs.edit().putBoolean(k("show_in_bar"), on).apply()
         _state.update { it.copy(showInBar = on) }
     }
 
@@ -213,6 +241,15 @@ class LiveTvRepository @Inject constructor(
                     val response = getText(resourceUrl(source.url, "catalog/${catalog.type}/${enc(catalog.id)}$extras.json"))
                         ?.let { runCatching { JSONObject(it) }.getOrNull() } ?: break
                     val channels = LiveAddonParser.channels(response, source, catalog, genre)
+                    val metas = response.optJSONArray("metas")
+                    val programs = buildMap<String, List<LiveProgram>> {
+                        for (i in 0 until minOf(metas?.length() ?: 0, 10000)) {
+                            val meta = metas?.optJSONObject(i) ?: continue
+                            val p = LiveAddonParser.programs(meta)
+                            if (p.isNotEmpty()) put("${source.id}:${meta.optString("id")}", p)
+                        }
+                    }
+                    if (programs.isNotEmpty()) _state.update { it.copy(epg = it.epg + programs) }
                     val added = channels.count { it.id !in out }
                     channels.forEach { if (out.size < 10000 && it.id !in out) out[it.id] = it }
                     val count = response.optJSONArray("metas")?.length() ?: 0
@@ -240,12 +277,12 @@ class LiveTvRepository @Inject constructor(
     }
 
     fun playerFilter(): LiveBrowseFilter = runCatching {
-        val o = JSONObject(prefs.getString("player_filter", "{}").orEmpty())
+        val o = JSONObject(prefs.getString(k("player_filter"), "{}").orEmpty())
         LiveBrowseFilter(o.optString("mode", "all"), o.optString("source"), o.optString("group"), o.optString("query"))
     }.getOrDefault(LiveBrowseFilter())
 
     fun savePlayerFilter(filter: LiveBrowseFilter) {
-        prefs.edit().putString("player_filter", JSONObject().put("mode", filter.mode).put("source", filter.sourceId).put("group", filter.group).put("query", filter.query).toString()).apply()
+        prefs.edit().putString(k("player_filter"), JSONObject().put("mode", filter.mode).put("source", filter.sourceId).put("group", filter.group).put("query", filter.query).toString()).apply()
     }
 
     private fun refreshEpg(channels: List<LiveChannel>, urls: List<String>, force: Boolean) {
@@ -253,7 +290,7 @@ class LiveTvRepository @Inject constructor(
         val sig = (urls.sorted().joinToString("|") + channels.size).hashCode().toString()
         val cached = readEpg()
         if (!force && cached != null && cached.second == sig && System.currentTimeMillis() - cached.third < TTL) {
-            _state.update { it.copy(epg = cached.first) }
+            _state.update { it.copy(epg = it.epg + cached.first) }
             return
         }
         _state.update { it.copy(epgLoading = true) }
@@ -278,34 +315,98 @@ class LiveTvRepository @Inject constructor(
             }
         }
         if (merged.isNotEmpty()) writeEpg(merged, sig)
-        _state.update { it.copy(epg = if (merged.isNotEmpty()) merged else cached?.first ?: it.epg, epgLoading = false) }
+        _state.update { it.copy(epg = it.epg + (if (merged.isNotEmpty()) merged else cached?.first.orEmpty()), epgLoading = false) }
     }
 
     fun channel(id: String): LiveChannel? = _state.value.channels.firstOrNull { it.id == id }
 
     /** Programa de agora e o próximo. */
     fun nowNext(id: String, now: Long = System.currentTimeMillis()): Pair<LiveProgram?, LiveProgram?> {
+        ensureGuide(id)
         val list = _state.value.epg[id] ?: return null to null
         val i = list.indexOfFirst { it.isNow(now) }
         if (i < 0) return null to list.firstOrNull { it.start > now }
         return list[i] to list.getOrNull(i + 1)
     }
 
+    fun ensureGuide(id: String) {
+        val channel = channel(id) ?: return
+        if (channel.addonBase.isBlank() || System.currentTimeMillis() - (guideTimes[id] ?: 0L) < 300000L) return
+        if (guidePending.size >= 64 || guidePending.putIfAbsent(id, true) != null) return
+        scope.launch {
+            try {
+                guidePermits.withPermit {
+                    val meta = runCatching {
+                        val url = resourceUrl(channel.addonBase, "meta/${enc(channel.addonType)}/${enc(channel.addonId)}.json")
+                        guideClient.newCall(Request.Builder().url(url).header("User-Agent", "JOTV").build()).execute().use { r ->
+                            if (!r.isSuccessful) null else r.body?.source()?.let { input ->
+                                if (input.request(2L * 1024 * 1024 + 1)) null else JSONObject(input.readUtf8()).optJSONObject("meta")
+                            }
+                        }
+                    }.getOrNull()
+                    guideTimes[id] = System.currentTimeMillis() - if (meta == null) 270000L else 0L
+                    if (meta != null) {
+                        val programs = LiveAddonParser.programs(meta)
+                        if (programs.isNotEmpty()) _state.update { it.copy(epg = it.epg + (id to programs)) }
+                    }
+                }
+            } finally { guidePending.remove(id) }
+        }
+    }
+
     fun toggleFavorite(id: String) {
         val f = _state.value.favorites.let { if (id in it) it - id else it + id }
-        prefs.edit().putStringSet("favorites", f).apply()
+        prefs.edit().putStringSet(k("favorites"), f).apply()
         _state.update { it.copy(favorites = f) }
     }
 
     fun markWatched(id: String) {
         val r = (listOf(id) + _state.value.recents.filterNot { it == id }).take(30)
-        prefs.edit().putString("recents", r.joinToString("\n")).apply()
+        prefs.edit().putString(k("recents"), r.joinToString("\n")).apply()
         _state.update { it.copy(recents = r) }
     }
 
     fun clearRecents() {
-        prefs.edit().remove("recents").apply()
+        prefs.edit().remove(k("recents")).apply()
         _state.update { it.copy(recents = emptyList()) }
+    }
+
+    // ── Backup do perfil ────────────────────────────────────────────────────────
+
+    /**
+     * Fontes ao vivo do perfil ativo para o backup. As de addon ficam de fora (voltam sozinhas com os addons).
+     * A senha das contas Xtream só vai com [secrets].
+     */
+    fun exportBackupJson(secrets: Boolean): JSONObject {
+        val arr = JSONArray()
+        _state.value.sources.filter { it.type != LiveSourceType.ADDON }.forEach {
+            // Sem segredos o endereço também sai sem usuário, senha e chave que a lista leva na consulta.
+            arr.put(JSONObject().put("name", it.name).put("type", it.type.name).put("url", if (secrets) it.url else LiveCredentials.strip(it.url)).put("server", it.server)
+                .put("user", it.user).put("pass", if (secrets) it.pass else "").put("epg", if (secrets) it.epgUrl else LiveCredentials.strip(it.epgUrl)).put("on", it.enabled).put("id", it.id))
+        }
+        return JSONObject().put("sources", arr).put("favorites", JSONArray(_state.value.favorites.toList())).put("showInBar", _state.value.showInBar)
+    }
+
+    /** Restaura no perfil ativo. Fonte que já existe (mesmo endereço) fica como está. Devolve quantas entraram. */
+    fun importBackupJson(o: JSONObject): Int {
+        val cur = _state.value.sources
+        val have = cur.map { (it.url + "|" + it.server + "|" + it.user).lowercase() }.toHashSet()
+        val incoming = o.optJSONArray("sources") ?: JSONArray()
+        val added = (0 until incoming.length()).mapNotNull { i ->
+            val s = incoming.optJSONObject(i) ?: return@mapNotNull null
+            val type = runCatching { LiveSourceType.valueOf(s.optString("type")) }.getOrNull()?.takeIf { it != LiveSourceType.ADDON } ?: return@mapNotNull null
+            val src = LiveSource(newId() + i, s.optString("name"), type, s.optString("url"), s.optString("server"), s.optString("user"), s.optString("pass"), s.optString("epg"), s.optBoolean("on", true))
+            if (src.url.isBlank() && src.server.isBlank()) return@mapNotNull null
+            src.takeIf { have.add((it.url + "|" + it.server + "|" + it.user).lowercase()) }
+        }
+        if (added.isNotEmpty()) writeSources(cur + added)
+        o.optJSONArray("favorites")?.let { f ->
+            val fav = _state.value.favorites + (0 until f.length()).map { f.optString(it) }.filter { it.isNotBlank() }
+            prefs.edit().putStringSet(k("favorites"), fav).apply()
+            _state.update { it.copy(favorites = fav) }
+        }
+        if (o.has("showInBar")) setShowInBar(o.optBoolean("showInBar", true))
+        return added.size
     }
 
     // ── Rede e arquivos ─────────────────────────────────────────────────────────
@@ -317,7 +418,7 @@ class LiveTvRepository @Inject constructor(
     }.getOrNull()
 
     private fun readSources(): List<LiveSource> = runCatching {
-        val a = JSONArray(prefs.getString("sources", "[]"))
+        val a = JSONArray(prefs.getString(k("sources"), "[]"))
         (0 until a.length()).mapNotNull { i ->
             val o = a.optJSONObject(i) ?: return@mapNotNull null
             LiveSource(
@@ -340,7 +441,7 @@ class LiveTvRepository @Inject constructor(
                     .put("catalogs", JSONArray().apply { it.catalogs.forEach { c -> put(JSONObject().put("type", c.type).put("id", c.id).put("name", c.name).put("genres", JSONArray(c.genres)).put("required", c.genreRequired).put("skip", c.paginated)) } })
             )
         }
-        prefs.edit().putString("sources", a.toString()).apply()
+        prefs.edit().putString(k("sources"), a.toString()).apply()
         _state.update { it.copy(sources = list) }
     }
 

@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Download
@@ -92,7 +93,7 @@ internal fun accountAct(vm: AccountsViewModel, a: Account, act: String, openPane
     when (act) {
         "login" -> vm.startCode(a, intent)
         "email" -> vm.startEmail(a, intent)
-        "all" -> vm.runAndTell(a)
+        "all" -> vm.startImport(a)
         "retry" -> vm.runAndTell(a, vm.ui.value.log[a]?.failedParts.orEmpty())
         "what" -> openPanel(AccountPanel.What(a))
         "more" -> openPanel(AccountPanel.More(a))
@@ -277,6 +278,16 @@ private fun ImportStepDialog(s: AccountsViewModel.LoginFlow.Step, st: AccountsVi
     var choosing by remember { mutableStateOf(s.intent != null) }
     var started by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<Map<ImportPart, PartRecord>?>(null) }
+    // Todos os perfis da Nuvio (cada um para um perfil deste aparelho), ou o fim de uma importação que parou no meio.
+    var batchRes by remember { mutableStateOf<com.joabtv.app.data.accounts.BatchImport?>(null) }
+    var all by remember { mutableStateOf(false) }
+    // Perfil deste aparelho que recebe, ou NEW_PROFILE para criar um.
+    var dest by remember { mutableStateOf(st.currentId) }
+    var destName by remember { mutableStateOf<String?>(null) }
+    var usedPick by remember { mutableStateOf("") }
+    // Perfil da Nuvio escolhido aqui. Fica só no diálogo e não muda o do perfil ativo ao tocar no chip.
+    // Começa no que o perfil ativo já acompanha.
+    var picked by remember { mutableStateOf(st.pick) }
     val scope = rememberCoroutineScope()
     val goFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
@@ -285,27 +296,61 @@ private fun ImportStepDialog(s: AccountsViewModel.LoginFlow.Step, st: AccountsVi
 
     val profiles = st.profiles
     val loading = a == Account.NUVIO && (profiles.state == Load.IDLE || profiles.state == Load.LOADING)
-    val phase = if (results != null) Phase.DONE else if (started) Phase.RUN else Phase.ASK
+    val phase = if (results != null || batchRes != null) Phase.DONE else if (started) Phase.RUN else Phase.ASK
     val chosen = parts.filter { sel[it] == true }
     val run = st.running[a.key]
+    val multiNuvio = a == Account.NUVIO && profiles.state == Load.OK && profiles.list.size > 1
+    val multiJotv = st.jotv.size > 1
     LaunchedEffect(Unit) { if (a == Account.NUVIO && profiles.state == Load.FAIL) vm.retryProfiles() }
 
     fun go(list: List<ImportPart>) {
         if (list.isEmpty()) return
         results = null
+        batchRes = null
         started = true
-        scope.launch { results = vm.runImport(a, list).await() }
+        val np = picked
+        usedPick = np.name
+        if (all || dest != st.currentId) {
+            val wasAll = all
+            scope.launch {
+                val b = vm.importBatch(a, list, wasAll, dest, np).await()
+                val first = b.items.firstOrNull()
+                if (wasAll || b.error.isNotBlank() || first == null) batchRes = b
+                else {
+                    // Perfil novo já nasceu, então Tentar o que faltou volta para ele e não cria outro.
+                    dest = first.profileId
+                    destName = first.profileName
+                    results = first.results
+                }
+            }
+        } else {
+            destName = null
+            scope.launch { results = vm.runImport(a, list, if (a == Account.NUVIO) np else null).await() }
+        }
     }
 
     val bad = parts.filter { results?.get(it)?.ok == false }
     val body: @Composable ColumnScope.() -> Unit = {
         val email = st.snap(a).email.ifBlank { "Conta conectada" }
-        if (phase == Phase.DONE) {
+        val b = batchRes
+        // Saída da última fileira de escolhas. Com as partes marcáveis vai à primeira, senão ao botão de trazer.
+        val chipsDown = Modifier.focusProperties { down = if (choosing) firstLine else goFocus }
+        if (phase == Phase.DONE && b != null) {
+            // Trazer todos. Uma linha por perfil, com o que veio e o que faltou.
+            LiveDialogTitle("O que veio do ${a.label}")
+            LiveDialogBody(batchSummaryBody(b))
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                b.items.forEach { item ->
+                    val (line, missed) = batchItemLine(item)
+                    LiveLine(if (missed) LiveMark.BAD else LiveMark.OK, item.profileName, sub = line.ifBlank { null })
+                }
+            }
+        } else if (phase == Phase.DONE) {
             val res = results.orEmpty()
             LiveDialogTitle("O que veio do ${a.label}")
             LiveDialogBody(
-                "Agora mesmo" + (if (a == Account.NUVIO) ", perfil ${st.pick.name} do Nuvio" else "") +
-                    ". Foi para o perfil ${st.profileName} deste aparelho.",
+                "Agora mesmo" + (if (a == Account.NUVIO) ", perfil ${usedPick.ifBlank { st.pick.name }} do Nuvio" else "") +
+                    ". Foi para o perfil ${destName ?: st.profileName} deste aparelho.",
             )
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 parts.filter { res[it] != null }.forEach { p -> PartLine(p, res.getValue(p)) }
@@ -313,22 +358,47 @@ private fun ImportStepDialog(s: AccountsViewModel.LoginFlow.Step, st: AccountsVi
         } else {
             LiveDialogTitle("${a.label} conectado")
             LiveDialogBody(email)
-            if (a == Account.NUVIO && profiles.state == Load.OK && profiles.list.size > 1) {
-                Text("De qual perfil do Nuvio?", color = TextSecondary, fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = Inter)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (multiNuvio) {
+                ChoiceHead("De qual perfil do Nuvio?")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val last = if (all || !multiJotv) chipsDown else Modifier
                     profiles.list.forEach { p ->
+                        val on = !all && p.index == picked.index
                         FilterChipPill(
-                            p.name, p.index == st.pick.index, { if (phase == Phase.ASK) vm.pickNuvioProfile(p) },
-                            modifier = Modifier.focusProperties { down = goFocus },
-                            icon = if (p.index == st.pick.index) Icons.Default.Check else null,
+                            p.name, on, { if (phase == Phase.ASK) { all = false; picked = p } },
+                            modifier = last, icon = if (on) Icons.Default.Check else null,
                         )
                     }
+                    FilterChipPill(
+                        "Todos os perfis", all, { if (phase == Phase.ASK) all = true },
+                        modifier = last, icon = if (all) Icons.Default.Check else Icons.Default.Person,
+                    )
                 }
             }
             if (a == Account.NUVIO && profiles.state == Load.FAIL) {
                 Text("Não deu para ver os perfis. Vai do Principal.", color = Gold, fontSize = 14.sp, fontFamily = Inter)
             }
-            Text("Vai para o perfil ${st.profileName} deste aparelho", color = TextSecondary, fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = Inter)
+            if (all) {
+                ChoiceHead("Cada perfil do Nuvio vira um perfil deste aparelho")
+                LiveDialogBody(remember(profiles, st.jotv, st.currentId) { vm.allPlanText() })
+            } else if (multiJotv) {
+                ChoiceHead("Para qual perfil deste aparelho?")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    st.jotv.forEach { p ->
+                        FilterChipPill(
+                            p.name, dest == p.id, { if (phase == Phase.ASK) dest = p.id },
+                            modifier = chipsDown, icon = if (dest == p.id) Icons.Default.Check else null,
+                        )
+                    }
+                    if (st.jotv.size < com.joabtv.app.data.local.MAX_PROFILES) FilterChipPill(
+                        "Novo perfil", dest == NEW_PROFILE, { if (phase == Phase.ASK) dest = NEW_PROFILE },
+                        modifier = chipsDown, icon = if (dest == NEW_PROFILE) Icons.Default.Check else Icons.Default.Add,
+                    )
+                }
+            } else {
+                ChoiceHead("Vai para o perfil ${st.profileName} deste aparelho")
+            }
+            if (phase == Phase.RUN) batchStepText(st.batch)?.let { ChoiceHead(it) }
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 parts.forEach { p ->
                     val done = run?.done?.get(p)
@@ -348,7 +418,13 @@ private fun ImportStepDialog(s: AccountsViewModel.LoginFlow.Step, st: AccountsVi
     }
     val actions: @Composable () -> Unit = {
         LiveDialogActions {
-            if (phase == Phase.DONE) {
+            if (phase == Phase.DONE && batchRes != null) {
+                JoabButton(
+                    "Ver minha Início", { vm.closeLogin(); onOpenHome() }, Modifier.focusRequester(homeFocus),
+                    icon = Icons.Default.Dashboard, tone = ButtonTone.PRIMARY, compact = true,
+                )
+                JoabButton("Fechar", vm::closeLogin, compact = true)
+            } else if (phase == Phase.DONE) {
                 if (bad.isNotEmpty()) JoabButton(
                     "Tentar o que faltou", {
                         sel = parts.associateWith { it in bad }
@@ -361,11 +437,7 @@ private fun ImportStepDialog(s: AccountsViewModel.LoginFlow.Step, st: AccountsVi
                 )
                 JoabButton("Fechar", vm::closeLogin, compact = true)
             } else {
-                val label = when (chosen.size) {
-                    parts.size -> "Trazer tudo"
-                    1 -> "Trazer ${chosen[0].what}"
-                    else -> "Trazer ${chosen.size} de ${parts.size}"
-                }
+                val label = importGoLabel(chosen, parts.size, all)
                 when {
                     phase == Phase.RUN -> JoabButton("Trazendo…", {}, Modifier.focusRequester(goFocus), icon = Icons.Default.Download, tone = ButtonTone.PRIMARY, busy = true, busyLabel = "Trazendo…", compact = true)
                     loading -> JoabButton("Buscando perfis…", {}, Modifier.focusRequester(goFocus), icon = Icons.Default.Download, tone = ButtonTone.PRIMARY, busy = true, busyLabel = "Buscando perfis…", compact = true)
@@ -383,6 +455,12 @@ private fun ImportStepDialog(s: AccountsViewModel.LoginFlow.Step, st: AccountsVi
     if (tv && s.intent == null) LaunchedEffect(choosing) { if (choosing) liveFocusSoon(firstLine) }
     // O foco acompanha a fase. Perguntando e trazendo no Trazer tudo, no fim em Ver minha Início (ou no que faltou).
     if (tv) LaunchedEffect(phase, bad.isEmpty()) { liveFocusSoon(if (phase != Phase.DONE) goFocus else if (bad.isEmpty()) homeFocus else retryFocus) }
+}
+
+/** Título de um grupo de escolhas no diálogo de trazer. */
+@Composable
+private fun ChoiceHead(text: String) {
+    Text(text, color = TextSecondary, fontSize = 15.sp, fontWeight = FontWeight.Bold, fontFamily = Inter)
 }
 
 /** Uma parte trazida, em duas linhas. */
@@ -502,6 +580,7 @@ private fun syncAgo(at: Long): String {
 private fun partIcon(p: ImportPart) = when (p) {
     ImportPart.PROFILE -> Icons.Default.Person
     ImportPart.ADDONS -> Icons.Default.Tune
+    ImportPart.PLUGINS -> Icons.Default.Tune
     ImportPart.LIBRARY -> Icons.Default.Dashboard
     ImportPart.COLLECTIONS -> Icons.Default.Dashboard
     ImportPart.DEBRID -> Icons.Default.Key

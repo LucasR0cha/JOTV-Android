@@ -12,6 +12,9 @@ interface WatchedEpisodeDao {
     @Query("SELECT * FROM watched_episodes WHERE profileId = :profileId")
     suspend fun getAll(profileId: String): List<WatchedEpisodeEntity>
 
+    @Query("SELECT * FROM watched_episodes WHERE profileId = :profileId")
+    fun observeAll(profileId: String): Flow<List<WatchedEpisodeEntity>>
+
     @Query("SELECT EXISTS(SELECT 1 FROM watched_episodes WHERE profileId = :profileId AND seriesTmdbId = :seriesTmdbId AND season = :season AND episode = :episode)")
     suspend fun isWatched(profileId: String, seriesTmdbId: Int, season: Int, episode: Int): Boolean
 

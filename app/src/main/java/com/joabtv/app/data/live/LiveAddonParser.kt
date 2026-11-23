@@ -57,6 +57,47 @@ object LiveAddonParser {
         }
     }
 
+    fun programs(meta: JSONObject, now: Long = System.currentTimeMillis()): List<LiveProgram> {
+        val videos = meta.optJSONArray("videos")
+        val native = (0 until minOf(videos?.length() ?: 0, 500)).mapNotNull { i ->
+            val v = videos?.optJSONObject(i) ?: return@mapNotNull null
+            val start = isoTime(v.optString("startTime")) ?: return@mapNotNull null
+            val stop = isoTime(v.optString("endTime")) ?: return@mapNotNull null
+            val title = v.optString("title").ifBlank { v.optString("name") }.take(300)
+            if (stop <= start || stop - start > 172800000L || title.isBlank()) return@mapNotNull null
+            LiveProgram(start, stop, title, v.optString("overview").ifBlank { v.optString("description") }.take(2000))
+        }
+        if (native.isNotEmpty()) return native.sortedBy { it.start }
+        val pattern = Regex("(?:AGORA\\s*\\()?([0-2]?\\d):([0-5]\\d)\\s*[–—-]\\s*([0-2]?\\d):([0-5]\\d)\\)?\\s*[:·|]\\s*(.+)", RegexOption.IGNORE_CASE)
+        var last = 0L
+        return meta.optString("description").take(30000).lineSequence().mapNotNull { line ->
+            val m = pattern.find(line) ?: return@mapNotNull null
+            val h = m.groupValues[1].toInt(); val endH = m.groupValues[3].toInt()
+            if (h > 23 || endH > 23) return@mapNotNull null
+            val startMin = h * 60 + m.groupValues[2].toInt()
+            val stopMin = endH * 60 + m.groupValues[4].toInt()
+            val length = (stopMin - startMin + 1440) % 1440
+            if (length == 0) return@mapNotNull null
+            val day = java.util.Calendar.getInstance().apply { timeInMillis = if (last > 0) last else now; set(java.util.Calendar.HOUR_OF_DAY, h); set(java.util.Calendar.MINUTE, startMin % 60); set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0) }
+            var start = day.timeInMillis
+            if (last == 0L) {
+                while (start > now + 43200000L) start -= 86400000L
+                while (start + length * 60000L < now - 43200000L) start += 86400000L
+            } else if (start < last) start += 86400000L
+            last = start
+            LiveProgram(start, start + length * 60000L, m.groupValues[5].trim().take(300))
+        }.toList()
+    }
+
+    private fun isoTime(value: String): Long? {
+        val normalized = value.take(80).replace(Regex("Z$"), "+0000").replace(Regex("([+-]\\d{2}):(\\d{2})$"), "$1$2")
+        for (pattern in listOf("yyyy-MM-dd'T'HH:mm:ss.SSSZ", "yyyy-MM-dd'T'HH:mm:ssZ")) {
+            val time = runCatching { java.text.SimpleDateFormat(pattern, java.util.Locale.ROOT).apply { isLenient = false }.parse(normalized)?.time }.getOrNull()
+            if (time != null) return time
+        }
+        return null
+    }
+
     fun streams(body: JSONObject): List<LiveStream> {
         val streams = body.optJSONArray("streams") ?: return emptyList()
         return (0 until streams.length()).mapNotNull { i ->

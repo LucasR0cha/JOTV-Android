@@ -13,6 +13,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,6 +45,8 @@ import com.joabtv.app.data.local.PROFILE_COLORS
 import com.joabtv.app.data.local.PlatformPrefs
 import com.joabtv.app.data.local.Profile
 import com.joabtv.app.data.local.ProfilePhotos
+import com.joabtv.app.data.local.CopyMode
+import com.joabtv.app.data.local.ProfileCategory
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -66,9 +75,34 @@ class ProfilesViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, hub.nuvioState.value.signedIn)
 
     fun select(id: String) = prefs.selectProfile(id)
-    fun add(name: String, kids: Boolean, color: Int, avatar: String = "") {
-        prefs.addProfile(name, kids)?.let { prefs.updateProfile(it.copy(color = color, avatar = ProfilePhotos.adopt(context, it.id, avatar))) }
+
+    /** Cria o perfil. Com [copyFrom] ele nasce com uma cópia das [cats] daquele perfil. Devolve o criado, ou null no limite. */
+    fun add(name: String, kids: Boolean, color: Int, avatar: String = "", copyFrom: String? = null, cats: Set<ProfileCategory> = emptySet()): Profile? {
+        val p = prefs.addProfile(name, kids) ?: return null
+        prefs.updateProfile(p.copy(color = color, avatar = ProfilePhotos.adopt(context, p.id, avatar)))
+        if (copyFrom != null && cats.isNotEmpty()) prefs.copyProfileData(copyFrom, p.id, cats, CopyMode.REPLACE)
+        return p
     }
+
+    // ── Fontes e catálogo (addons, plugins, catálogo, TV ao vivo e debrid de cada perfil) ──
+
+    /** Nome do perfil de quem [profileId] usa os dados em [cat]. null quando são do próprio perfil. */
+    fun ownerName(profileId: String, cat: ProfileCategory): String? {
+        val owner = prefs.ownerOf(profileId, cat)
+        return if (owner == profileId) null else prefs.profiles.value.firstOrNull { it.id == owner }?.name ?: "outro perfil"
+    }
+
+    /** Nomes dos perfis que usam algum dado de [id]. Eles ficam com uma cópia quando [id] é removido. */
+    fun usedBy(id: String): List<String> = prefs.profiles.value
+        .filter { p -> p.id != id && p.links.keys.any { k -> ProfileCategory.of(k)?.let { prefs.ownerOf(p.id, it) } == id } }
+        .map { it.name }
+
+    fun copy(from: String, to: String, cats: Set<ProfileCategory>, mode: CopyMode) = prefs.copyProfileData(from, to, cats, mode)
+
+    /** Liga [profileId] aos dados de [from]. Devolve quantas categorias não deu para ligar (criariam um ciclo). */
+    fun link(profileId: String, cats: Set<ProfileCategory>, from: String): Int = cats.count { !prefs.linkProfile(profileId, it, from) }
+
+    fun unlink(profileId: String, cat: ProfileCategory) = prefs.unlinkProfile(profileId, cat)
     fun update(p: Profile) {
         // Trocou a foto de arquivo por outra coisa, então o arquivo velho não serve mais.
         if (!ProfilePhotos.isFile(p.avatar)) ProfilePhotos.delete(context, p.id)
@@ -165,6 +199,12 @@ fun ProfilesScreen(
     var pendingSwitch by remember { mutableStateOf<Profile?>(null) }
     var pendingEdit by remember { mutableStateOf(false) }
     var showSetPinNudge by remember { mutableStateOf(false) }
+    // Perfil novo esperando o Como começar, painel Fontes e catálogo (id do perfil) e as escolhas que abrem dele.
+    var startFor by remember { mutableStateOf<Profile?>(null) }
+    var sources by remember { mutableStateOf<String?>(null) }
+    var sourcePick by remember { mutableStateOf<SourceAsk?>(null) }
+    var catAsk by remember { mutableStateOf<CatAsk?>(null) }
+    var unlinkAsk by remember { mutableStateOf<ProfileCategory?>(null) }
     // Controle remoto começa no perfil em uso.
     val currentTile = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(Unit) { kotlinx.coroutines.delay(200); runCatching { currentTile.requestFocus() } }
@@ -183,7 +223,8 @@ fun ProfilesScreen(
             textAlign = TextAlign.Center, letterSpacing = (-0.6).sp,
         )
         Text(
-            if (editing) "Toque num perfil para mudar nome, cor ou modo infantil" else "Cada perfil tem a própria lista e o próprio progresso",
+            if (editing) "${if (com.joabtv.app.ui.common.LocalIsTv.current) "Escolha um" else "Toque num"} perfil para mudar nome, foto, cor, modo infantil ou fontes"
+            else "Cada perfil tem a própria Minha Lista, o próprio histórico, addons e plugins",
             color = TextSecondary, fontSize = 15.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 10.dp),
         )
         Spacer(Modifier.height(36.dp))
@@ -238,22 +279,103 @@ fun ProfilesScreen(
         )
     }
 
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    fun toast(text: String) = android.widget.Toast.makeText(ctx, text, android.widget.Toast.LENGTH_SHORT).show()
+
     panel?.let { p ->
         ProfileEditDialog(
             initial = p,
             canRemove = p.id.isNotEmpty() && profiles.size > 1,
+            usedBy = if (p.id.isEmpty()) emptyList() else vm.usedBy(p.id),
             onDismiss = { panel = null },
             onSave = { edited ->
                 val becameKids = edited.kids && !p.kids
-                if (edited.id.isEmpty()) vm.add(edited.name, edited.kids, edited.color, edited.avatar) else vm.update(edited)
                 panel = null
-                // Marcou infantil pela 1ª vez sem PIN nenhum definido no aparelho: convida a criar
-                // um agora, senão o modo infantil não trava nada (qualquer um sai dele na hora).
-                if (becameKids && !vm.hasPin()) showSetPinNudge = true
+                // Perfil novo ainda pergunta como começar (do zero ou copiando de outro). Só nasce lá.
+                if (edited.id.isEmpty()) startFor = edited else {
+                    vm.update(edited)
+                    // Marcou infantil pela 1ª vez sem PIN nenhum definido no aparelho. Convida a criar um agora,
+                    // senão o modo infantil não trava nada (qualquer um sai dele na hora).
+                    if (becameKids && !vm.hasPin()) showSetPinNudge = true
+                }
             },
             onRemove = { vm.remove(p.id); panel = null },
+            onSources = if (p.id.isEmpty()) null else ({ sources = p.id }),
         )
     }
+
+    // Criar perfil. Do zero vem primeiro, depois uma linha Copiar de para cada perfil.
+    startFor?.let { draft ->
+        fun create(from: Profile?, cats: Set<ProfileCategory>) {
+            startFor = null
+            catAsk = null
+            if (vm.add(draft.name, draft.kids, draft.color, draft.avatar, from?.id, cats) == null) { toast("Já existem $MAX_PROFILES perfis"); return }
+            if (from != null) toast("Perfil ${draft.name.trim()} criado com o que vem de ${from.name}")
+            if (draft.kids && !vm.hasPin()) showSetPinNudge = true
+        }
+        if (catAsk == null) StartPanel(
+            name = draft.name.trim(), profiles = profiles,
+            onZero = { create(null, emptySet()) },
+            onCopy = { src ->
+                catAsk = CatAsk(
+                    title = "Copiar de ${src.name}", sub = "Para ${draft.name.trim()}", header = "O que copiar", go = "Criar perfil",
+                    kids = draft.kids, modes = false, onGo = { cats, _ -> create(src, cats) },
+                )
+            },
+            onDismiss = { startFor = null },
+        )
+    }
+
+    // Fontes e catálogo de um perfil que já existe. Lê o perfil de novo a cada mudança de vínculo.
+    sources?.let { id ->
+        val p = profiles.firstOrNull { it.id == id }
+        if (p == null) { sources = null; return@let }
+        val others = profiles.filter { it.id != id }
+        if (catAsk == null && sourcePick == null) SourcesPanel(
+            p, owners = ProfileCategory.entries.associateWith { vm.ownerName(p.id, it) },
+            canBorrow = others.isNotEmpty(),
+            onUnlink = { cat -> unlinkAsk = cat },
+            onCopy = {
+                sourcePick = SourceAsk("Copiar para ${p.name}") { from ->
+                    catAsk = CatAsk(
+                        title = "Copiar de ${from.name}", sub = "Para ${p.name}", header = "O que copiar", go = "Copiar",
+                        kids = p.kids, modes = true,
+                        onGo = { cats, mode -> vm.copy(from.id, p.id, cats, mode); catAsk = null; toast("Copiado de ${from.name}") },
+                    )
+                }
+            },
+            onUse = {
+                sourcePick = SourceAsk("Usar o mesmo em ${p.name}") { from ->
+                    catAsk = CatAsk(
+                        title = "Usar o de ${from.name}",
+                        sub = "Em ${p.name}. O que ${p.name} tem hoje fica guardado, mas só aparece o de ${from.name}.",
+                        header = "O que usar", go = "Usar o mesmo", kids = p.kids, modes = false,
+                        onGo = { cats, _ ->
+                            val failed = vm.link(p.id, cats, from.id)
+                            catAsk = null
+                            toast(if (failed == 0) "${p.name} usa o mesmo de ${from.name}" else "Parte ficou como estava porque ${from.name} já usa o de ${p.name}")
+                        },
+                    )
+                }
+            },
+            onDismiss = { sources = null },
+        )
+        unlinkAsk?.let { cat ->
+            val owner = vm.ownerName(p.id, cat) ?: "outro perfil"
+            CatalogConfirm(
+                title = "Deixar de usar ${categoryLabel(cat)} de $owner?", body = "${p.name} fica com uma cópia e passa a mudar sozinho.",
+                confirm = "Deixar de usar", onConfirm = { vm.unlink(p.id, cat); unlinkAsk = null }, onDismiss = { unlinkAsk = null },
+            )
+        }
+        sourcePick?.let { ask ->
+            LiveChoice(
+                ask.title, "De qual perfil?", others.map { Triple(it.name, if (it.kids) "Perfil infantil" else null, false) },
+                onPick = { i -> sourcePick = null; ask.onPick(others[i]) }, onDismiss = { sourcePick = null },
+            )
+        }
+    }
+
+    catAsk?.let { CategoryPanel(it, onDismiss = { catAsk = null }) }
 
     pendingSwitch?.let { target ->
         VerifyPinDialog(
@@ -306,9 +428,11 @@ private fun ProfileTile(label: String, selected: Boolean, onClick: () -> Unit, m
 private fun ProfileEditDialog(
     initial: Profile,
     canRemove: Boolean,
+    usedBy: List<String>,
     onDismiss: () -> Unit,
     onSave: (Profile) -> Unit,
     onRemove: () -> Unit,
+    onSources: (() -> Unit)?,
 ) {
     var name by remember { mutableStateOf(initial.name) }
     var kids by remember { mutableStateOf(initial.kids) }
@@ -375,12 +499,13 @@ private fun ProfileEditDialog(
                     // A linha inteira já liga e desliga. O controle não precisa parar no Switch.
                     Switch(checked = kids, onCheckedChange = { kids = it }, modifier = Modifier.focusProperties { canFocus = false })
                 }
+                if (onSources != null) com.joabtv.app.ui.common.SettingsRow(
+                    icon = Icons.Default.Extension, title = "Fontes e catálogo", sub = "Addons, plugins, catálogo, TV ao vivo e debrid",
+                    onClick = onSources,
+                )
                 if (canRemove) {
-                    TextButton(onClick = { if (confirmRemove) onRemove() else confirmRemove = true }) {
-                        Text(
-                            if (confirmRemove) "Tocar de novo apaga a lista e o histórico" else "Remover perfil",
-                            color = LiveRed, fontWeight = FontWeight.Bold,
-                        )
+                    TextButton(onClick = { confirmRemove = true }) {
+                        Text("Remover perfil", color = LiveRed, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -390,4 +515,109 @@ private fun ProfileEditDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar", color = TextSecondary) } },
     )
+    if (confirmRemove) CatalogConfirm(
+        title = "Remover ${initial.name}?", body = removeProfileBody(usedBy), confirm = "Remover", danger = true,
+        onConfirm = { confirmRemove = false; onRemove() }, onDismiss = { confirmRemove = false },
+    )
+}
+
+/** Pedido de escolha das categorias. [modes] liga a opção Substituir ou Somar e [go] é o rótulo de quem confirma. */
+private class CatAsk(
+    val title: String, val sub: String, val header: String, val go: String, val kids: Boolean, val modes: Boolean,
+    val onGo: (Set<ProfileCategory>, CopyMode) -> Unit,
+)
+
+/** Pedido de escolha do perfil de onde vem o que será copiado ou usado. */
+private class SourceAsk(val title: String, val onPick: (Profile) -> Unit)
+
+private fun categoryIcon(c: ProfileCategory) = when (c) {
+    ProfileCategory.ADDONS -> Icons.Default.Extension
+    ProfileCategory.PLUGINS -> Icons.Default.Hub
+    ProfileCategory.CATALOG -> Icons.Default.GridView
+    ProfileCategory.LIVE -> Icons.Default.LiveTv
+    ProfileCategory.DEBRID -> Icons.Default.Bolt
+}
+
+/** Rótulo de seção dos painéis, igual ao "Trazer só uma parte" do painel Mais. */
+@Composable
+private fun PanelHeader(text: String) {
+    Text(
+        text.uppercase(), color = Accent, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.6.sp, fontFamily = Inter,
+        modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+    )
+}
+
+/** Como começar um perfil novo. Do zero ou copiando de outro perfil. */
+@Composable
+private fun StartPanel(name: String, profiles: List<Profile>, onZero: () -> Unit, onCopy: (Profile) -> Unit, onDismiss: () -> Unit) {
+    val first = remember { androidx.compose.ui.focus.FocusRequester() }
+    LivePanel("Como começar $name", "Addons, plugins, catálogo, TV ao vivo e debrid", onDismiss) {
+        LiveItem("Do zero", onZero, Modifier.focusRequester(first), icon = Icons.Default.Add, sub = "Sem addons nem plugins, você escolhe depois")
+        profiles.forEach { src ->
+            LiveItem("Copiar de ${src.name}", { onCopy(src) }, icon = Icons.Default.Person, sub = "Nasce igual e depois cada um muda sozinho")
+        }
+    }
+    if (com.joabtv.app.ui.common.LocalIsTv.current) LaunchedEffect(Unit) { liveFocusSoon(first) }
+}
+
+/**
+ * Escolha do que vai de um perfil para outro. Vêm marcados addons, plugins, catálogo e TV ao vivo, e o debrid vem fora
+ * porque leva as chaves. Perfil infantil não leva plugins.
+ */
+@Composable
+private fun CategoryPanel(ask: CatAsk, onDismiss: () -> Unit) {
+    val cats = remember(ask) { copyCategories(ask.kids) }
+    var sel by remember(ask) { mutableStateOf(defaultCopySelection(ask.kids)) }
+    var mode by remember(ask) { mutableStateOf(CopyMode.REPLACE) }
+    val first = remember { androidx.compose.ui.focus.FocusRequester() }
+    LivePanel(ask.title, ask.sub, onDismiss) {
+        PanelHeader(ask.header)
+        cats.forEachIndexed { i, c ->
+            val on = c in sel
+            LiveItem(
+                categoryLabel(c), { sel = if (on) sel - c else sel + c }, if (i == 0) Modifier.focusRequester(first) else Modifier,
+                icon = categoryIcon(c), sub = if (c == ProfileCategory.DEBRID) "Leva as chaves de debrid" else null,
+                tag = if (on) "Vai" else "Fica de fora", selected = on,
+            )
+        }
+        if (ask.modes) LiveItem(
+            "O que o perfil já tem", { mode = if (mode == CopyMode.MERGE) CopyMode.REPLACE else CopyMode.MERGE },
+            icon = Icons.Default.SwapHoriz, tag = if (mode == CopyMode.MERGE) "Somar" else "Substituir",
+            sub = if (mode == CopyMode.MERGE) "Soma o que faltar e mantém o que ele já tem" else "Troca pelo que vem do outro perfil",
+        )
+        val none = sel.isEmpty()
+        LiveItem(if (none) "Marque o que trazer" else ask.go, { if (!none) ask.onGo(sel, mode) }, icon = Icons.Default.Check)
+    }
+    if (com.joabtv.app.ui.common.LocalIsTv.current) LaunchedEffect(ask) { liveFocusSoon(first) }
+}
+
+/** Fontes e catálogo do perfil. Mostra o que é próprio e o que usa o de outro perfil, e leva a copiar ou usar o mesmo. */
+@Composable
+private fun SourcesPanel(
+    p: Profile,
+    owners: Map<ProfileCategory, String?>,
+    canBorrow: Boolean,
+    onUnlink: (ProfileCategory) -> Unit,
+    onCopy: () -> Unit,
+    onUse: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val tv = com.joabtv.app.ui.common.LocalIsTv.current
+    val first = remember { androidx.compose.ui.focus.FocusRequester() }
+    LivePanel("Fontes e catálogo", p.name, onDismiss) {
+        PanelHeader("Neste perfil")
+        ProfileCategory.entries.forEachIndexed { i, c ->
+            val owner = owners[c]
+            LiveItem(
+                categoryLabel(c), { if (owner != null) onUnlink(c) }, if (i == 0) Modifier.focusRequester(first) else Modifier,
+                icon = categoryIcon(c), sub = categoryLine(owner, tv), tag = owner?.let { "Usa $it" },
+            )
+        }
+        if (canBorrow) {
+            PanelHeader("Trazer de outro perfil")
+            LiveItem("Copiar de outro perfil", onCopy, icon = Icons.Default.Add, sub = "Nasce igual e depois cada um muda sozinho")
+            LiveItem("Usar o mesmo de outro perfil", onUse, icon = Icons.Default.SwapHoriz, sub = "Os dois ficam sempre iguais")
+        }
+    }
+    if (tv) LaunchedEffect(Unit) { liveFocusSoon(first) }
 }

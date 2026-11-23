@@ -107,7 +107,7 @@ class FirstRunViewModel @Inject constructor(private val prefs: PlatformPrefs) : 
 private const val STEPS = 6
 
 private val STEP_TEXT = listOf(
-    "Já usa o Nuvio ou o Stremio?" to "Entre para trazer nome, foto, addons, Minha Lista e o que você estava assistindo. Depois o JOTV mantém o histórico igual nos dois.",
+    "Já usa o Nuvio ou o Stremio?" to "Entre para trazer nome, foto, addons, plugins, Minha Lista e o que você estava assistindo. Depois o JOTV mantém o histórico igual nos dois.",
     "Como podemos te chamar?" to "O nome e a foto do seu perfil. Cada perfil tem a própria lista e o próprio progresso.",
     "Tem Real-Debrid, TorBox ou Premiumize?" to "Com um serviço de debrid os torrents tocam na hora, como link direto.",
     "Quer acompanhar no Trakt?" to "Marca o que você assiste e traz o que você já viu. Outros serviços ficam em Configurações.",
@@ -283,7 +283,7 @@ private fun AccountStep(vm: AccountsViewModel) {
             run != null -> SettingsRow(Icons.Default.Sync, "Trazendo do ${a.label}", sub = run.text, busy = true, trailing = null)
             // Conectado e ainda sem trazer nada. O toque abre o mesmo Trazer tudo de quando se entra.
             snap.signedIn && st.log[a] == null -> SettingsRow(
-                Icons.Default.CheckCircle, "${a.label} conectado", sub = "Toque para trazer nome, foto, addons e Minha Lista",
+                Icons.Default.CheckCircle, "${a.label} conectado", sub = if (a == Account.NUVIO) "Toque para trazer nome, foto, addons, plugins e Minha Lista" else "Toque para trazer addons e Minha Lista",
                 iconTint = Ok, onClick = { vm.openImport(a) },
             )
             snap.signedIn -> SettingsRow(

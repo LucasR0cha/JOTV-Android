@@ -15,14 +15,31 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Debrid do app. Guarda as contas (do aparelho), diz quais torrents o serviço tem prontos e
- * troca o magnet pelo link direto na hora de tocar. O magnet continua sendo a fonte guardada.
+ * Debrid do app. Guarda as contas (do perfil, ou do perfil cujos dados ele usa), diz quais torrents o serviço tem
+ * prontos e troca o magnet pelo link direto na hora de tocar. O magnet continua sendo a fonte guardada.
  */
 @Singleton
 class DebridService @Inject constructor(
     @ApplicationContext context: Context,
+    private val profiles: com.joabtv.app.data.local.PlatformPrefs,
 ) {
     private val prefs = context.getSharedPreferences("joabtv_debrid", Context.MODE_PRIVATE)
+
+    /** Chave no espaço do perfil (o ativo por padrão). O main usa as chaves antigas. */
+    private fun k(key: String, profileId: String = profiles.profileId.value) =
+        profiles.categoryKey(com.joabtv.app.data.local.ProfileCategory.DEBRID, key, profileId)
+
+    private fun isActive(profileId: String) = k("accounts", profileId) == k("accounts")
+
+    init {
+        profiles.onProfileDataChanged {
+            _accounts.value = readAccounts()
+            _settings.value = readSettings()
+            cache.clear()
+            resolved.clear()
+            resolvedUsenet.clear()
+        }
+    }
     private val http = DebridHttp(
         com.joabtv.app.data.remote.AppDns.mediaClient.newBuilder()
             .callTimeout(25, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
@@ -47,8 +64,8 @@ class DebridService @Inject constructor(
 
     // ── Contas ──────────────────────────────────────────────────────────────────
 
-    /** Conecta com a chave colada. Confere no serviço antes de guardar. */
-    suspend fun connectKey(provider: DebridProvider, key: String): Result<DebridAccount> = withContext(Dispatchers.IO) {
+    /** Conecta com a chave colada. Confere no serviço antes de guardar. [profileId] serve para importar em outro perfil. */
+    suspend fun connectKey(provider: DebridProvider, key: String, profileId: String = profiles.profileId.value): Result<DebridAccount> = withContext(Dispatchers.IO) {
         val k = key.trim()
         if (k.length < 8) return@withContext Result.failure(IllegalArgumentException("Chave curta demais"))
         val info = when (provider) {
@@ -57,7 +74,7 @@ class DebridService @Inject constructor(
             DebridProvider.PREMIUMIZE -> pm.user(k)
         } ?: return@withContext Result.failure(IllegalStateException("${provider.label} não aceitou essa chave"))
         val acc = DebridAccount(provider, k, info.first, info.second)
-        save(acc)
+        save(acc, profileId)
         Result.success(acc)
     }
 
@@ -93,8 +110,8 @@ class DebridService @Inject constructor(
     fun setPreferred(p: DebridProvider) = writeSettings(_settings.value.copy(preferred = p.id))
     fun setHideUncached(on: Boolean) = writeSettings(_settings.value.copy(hideUncached = on))
 
-    private fun save(acc: DebridAccount) {
-        writeAccounts(_accounts.value.filterNot { it.provider == acc.provider } + acc)
+    private fun save(acc: DebridAccount, profileId: String = profiles.profileId.value) {
+        writeAccounts(readAccounts(profileId).filterNot { it.provider == acc.provider } + acc, profileId)
     }
 
     // ── Cache do serviço ────────────────────────────────────────────────────────
@@ -210,8 +227,8 @@ class DebridService @Inject constructor(
 
     // ── Persistência ────────────────────────────────────────────────────────────
 
-    private fun readAccounts(): List<DebridAccount> = runCatching {
-        val arr = org.json.JSONArray(prefs.getString("accounts", "[]"))
+    private fun readAccounts(profileId: String = profiles.profileId.value): List<DebridAccount> = runCatching {
+        val arr = org.json.JSONArray(prefs.getString(k("accounts", profileId), "[]"))
         (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             val p = DebridProvider.of(o.optString("p")) ?: return@mapNotNull null
@@ -222,7 +239,7 @@ class DebridService @Inject constructor(
         }
     }.getOrDefault(emptyList())
 
-    private fun writeAccounts(list: List<DebridAccount>) {
+    private fun writeAccounts(list: List<DebridAccount>, profileId: String = profiles.profileId.value) {
         val arr = org.json.JSONArray()
         list.forEach {
             arr.put(
@@ -230,23 +247,23 @@ class DebridService @Inject constructor(
                     .put("r", it.refresh).put("ci", it.clientId).put("cs", it.clientSecret).put("ex", it.expiresAt)
             )
         }
-        prefs.edit().putString("accounts", arr.toString()).apply()
-        _accounts.value = list
+        prefs.edit().putString(k("accounts", profileId), arr.toString()).apply()
+        if (isActive(profileId)) _accounts.value = list
     }
 
     private fun readSettings() = DebridSettings(
-        enabled = prefs.getBoolean("enabled", true),
-        preferred = prefs.getString("preferred", "").orEmpty(),
-        hideUncached = prefs.getBoolean("hide_uncached", false),
+        enabled = prefs.getBoolean(k("enabled"), true),
+        preferred = prefs.getString(k("preferred"), "").orEmpty(),
+        hideUncached = prefs.getBoolean(k("hide_uncached"), false),
     )
 
     private fun writeSettings(s: DebridSettings) {
-        prefs.edit().putBoolean("enabled", s.enabled).putString("preferred", s.preferred).putBoolean("hide_uncached", s.hideUncached).apply()
+        prefs.edit().putBoolean(k("enabled"), s.enabled).putString(k("preferred"), s.preferred).putBoolean(k("hide_uncached"), s.hideUncached).apply()
         _settings.value = s
     }
 
     fun exportBackupJson(): org.json.JSONObject = org.json.JSONObject().apply {
-        val rawAccounts = prefs.getString("accounts", "[]") ?: "[]"
+        val rawAccounts = prefs.getString(k("accounts"), "[]") ?: "[]"
         put("accounts", runCatching { org.json.JSONArray(rawAccounts) }.getOrDefault(org.json.JSONArray()))
         val s = _settings.value
         put("enabled", s.enabled)
@@ -256,7 +273,7 @@ class DebridService @Inject constructor(
 
     fun importBackupJson(obj: org.json.JSONObject) {
         obj.optJSONArray("accounts")?.let { arr ->
-            prefs.edit().putString("accounts", arr.toString()).apply()
+            prefs.edit().putString(k("accounts"), arr.toString()).apply()
             _accounts.value = readAccounts()
         }
         val cur = _settings.value

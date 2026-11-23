@@ -38,11 +38,11 @@ class CollectionsRepository @Inject constructor(private val prefs: PlatformPrefs
      * Junta as coleções do JSON às do perfil. Mesmo id substitui a antiga (o Nuvio troca tudo,
      * aqui nada se perde sem querer). Devolve quantas coleções entraram.
      */
-    fun importJson(text: String): Result<Int> = CollectionsJson.parse(text).map { incoming ->
+    fun importJson(text: String, profileId: String = prefs.profileId.value): Result<Int> = CollectionsJson.parse(text).map { incoming ->
         val byId = LinkedHashMap<String, MediaCollection>()
-        list.forEach { byId[it.id] = it }
+        prefs.collectionsOf(profileId).forEach { byId[it.id] = it }
         incoming.forEach { byId[it.id] = it }
-        prefs.saveCollections(byId.values.toList())
+        prefs.saveCollections(byId.values.toList(), profileId)
         incoming.size
     }
 

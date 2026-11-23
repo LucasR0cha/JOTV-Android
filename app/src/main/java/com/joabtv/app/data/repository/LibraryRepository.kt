@@ -367,4 +367,7 @@ class LibraryRepository @Inject constructor(
 
     suspend fun allWatchedEpisodes(): List<WatchedEpisodeEntity> =
         watchedEpisodeDao.getAll(pid)
+
+    fun allWatchedEpisodesFlow(): Flow<List<WatchedEpisodeEntity>> =
+        prefs.profileId.flatMapLatest { watchedEpisodeDao.observeAll(it) }
 }

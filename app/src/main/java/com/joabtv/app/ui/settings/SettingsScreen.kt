@@ -112,7 +112,9 @@ fun SettingsScreen(
     // Botão que abriu outra tela ("cartão/botão"). Na volta o foco já nasce nele (regra 1 do foco inicial).
     var opened by rememberSaveable { mutableStateOf("") }
     var lastFocus by remember { mutableStateOf("") }
-    val cards = remember(catalog, colSt.busy) { catalogCards(catalog, linkBusy = colSt.busy == "url" || colSt.busy == "paste") }
+    val cards = remember(catalog, colSt.busy, accSt.looking) {
+        catalogCards(catalog.copy(looking = accSt.looking), linkBusy = colSt.busy == "url" || colSt.busy == "paste")
+    }
     val reqs = remember { HashMap<String, FocusRequester>() }
     fun req(card: String, act: String) = reqs.getOrPut("$card/$act") { FocusRequester() }
     /** Foco no botão pedido, ou no primário do mesmo cartão quando o botão sumiu (o estado mudou). */

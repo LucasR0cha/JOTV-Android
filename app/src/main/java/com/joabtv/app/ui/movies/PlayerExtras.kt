@@ -216,6 +216,7 @@ class ExtAudioSync(
     private var delayMs = (delaySec * 1000).roundToLong()
     private var ready = false
     private var held = false
+    private var resumeMain = false
     private var dead = false
     private var lastSeekAt = 0L
     // O som leva uns 300 ms para voltar a sair depois de um pulo com a imagem andando. O pulo
@@ -231,8 +232,11 @@ class ExtAudioSync(
 
     private fun hold(on: Boolean) {
         if (held == on) return
+        if (on && !main.playWhenReady) return
+        if (on) resumeMain = main.playWhenReady
         held = on
-        main.playWhenReady = !on
+        if (on) main.playWhenReady = false
+        else if (resumeMain) { resumeMain = false; main.playWhenReady = true }
         onHold(on)
     }
 
@@ -335,6 +339,6 @@ class ExtAudioSync(
         ext.removeListener(extL)
         runCatching { ext.release() }
         main.volume = 1f
-        if (held) { held = false; main.playWhenReady = true; onHold(false) }
+        if (held) { held = false; if (resumeMain) main.playWhenReady = true; resumeMain = false; onHold(false) }
     }
 }

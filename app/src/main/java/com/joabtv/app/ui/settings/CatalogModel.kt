@@ -114,6 +114,8 @@ data class CatalogState(
     val cols: ColsSnap = ColsSnap(),
     val profileName: String = "",
     val kids: Boolean = false,
+    /** Contas (Account.key) buscando os perfis da Nuvio antes do Trazer tudo. */
+    val looking: Set<String> = emptySet(),
 ) {
     fun snap(a: Account) = if (a == Account.NUVIO) nuvio else stremio
 }
@@ -180,6 +182,16 @@ fun partSummary(p: ImportPart, r: PartRecord): PartSummary {
             Mark.OK, "${r.list} na Minha Lista",
             "${r.progress} no Continuar assistindo" + if (r.nomatch > 0) ". ${r.nomatch} sem par no TMDB" else "",
         )
+        ImportPart.PLUGINS ->
+            if (r.n + r.skip > 0 || r.failed > 0) PartSummary(
+                Mark.OK, countOf(r.n + r.skip, "repositório de plugins", "repositórios de plugins") + if (r.skip > 0) ", ${r.skip} já estavam" else "",
+                // Os provedores novos entram desligados, como sempre nos plugins. A pessoa liga em Plugins.
+                buildList {
+                    if (r.n > 0) add("Ligue os provedores em Plugins")
+                    if (r.failed > 0) add(if (r.failed == 1) "1 não respondeu" else "${r.failed} não responderam")
+                }.joinToString(". "),
+            )
+            else PartSummary(Mark.NONE, "A conta não tem plugins")
         ImportPart.COLLECTIONS ->
             if (r.n > 0) PartSummary(Mark.OK, countOf(r.n, "coleção", "coleções")) else PartSummary(Mark.NONE, "A conta não tem coleções")
         ImportPart.DEBRID ->
@@ -197,6 +209,7 @@ fun accountView(
     run: ImportRun?,
     now: Long = System.currentTimeMillis(),
     tz: TimeZone = TimeZone.getDefault(),
+    looking: Boolean = false,
 ): CardView {
     val login = CardAct("login", "Entrar com o celular")
     val more = CardAct("more", "Mais")
@@ -213,6 +226,10 @@ fun accountView(
     }
     val on = CardTag("Conectado", TagTone.ON)
     val who = snap.email.ifBlank { "Conta conectada" }
+    // A busca dos perfis da Nuvio responde na hora, com o botão girando e travado até a lista chegar.
+    if (looking && run == null) {
+        return card(on, listOf(who, "Buscando os perfis…"), listOf(CardAct("all", "Buscando perfis…", busy = true), CardAct("more", "Mais", blocked = true)))
+    }
     if (run != null) {
         return card(on, listOf(who, run.text), listOf(CardAct("all", "Trazendo…", busy = true), CardAct("more", "Mais", blocked = true)))
     }
@@ -247,6 +264,7 @@ fun accountView(
     }
     val got = buildList {
         entry.part(ImportPart.ADDONS)?.let { add(countOf(it.n + it.skip, "addon", "addons")) }
+        entry.part(ImportPart.PLUGINS)?.takeIf { it.n + it.skip > 0 }?.let { add(countOf(it.n + it.skip, "repositório de plugins", "repositórios de plugins")) }
         entry.part(ImportPart.LIBRARY)?.let { add("${it.list} na Minha Lista") }
         entry.part(ImportPart.COLLECTIONS)?.let { add(countOf(it.n, "coleção", "coleções")) }
     }
@@ -328,8 +346,8 @@ fun catalogCards(s: CatalogState, linkBusy: Boolean = false, now: Long = System.
     val importing = s.running.isNotEmpty()
     return listOf(
         homeView(s.home, importing),
-        accountView(Account.NUVIO, s.nuvio, s.log[Account.NUVIO], s.running[Account.NUVIO.key], now, tz),
-        accountView(Account.STREMIO, s.stremio, s.log[Account.STREMIO], s.running[Account.STREMIO.key], now, tz),
+        accountView(Account.NUVIO, s.nuvio, s.log[Account.NUVIO], s.running[Account.NUVIO.key], now, tz, Account.NUVIO.key in s.looking),
+        accountView(Account.STREMIO, s.stremio, s.log[Account.STREMIO], s.running[Account.STREMIO.key], now, tz, Account.STREMIO.key in s.looking),
         addonsView(s.addons, s),
         collectionsView(s.cols, s, linkBusy),
     )

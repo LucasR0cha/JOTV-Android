@@ -112,14 +112,12 @@ fun durationMismatch(runtimeMin: Int, sec: Double): Boolean {
     return abs(sec / 60 - runtimeMin) > max(7.0, runtimeMin * 0.06)
 }
 
-private val DUB = Regex("dublad|\\bdub\\b|dual|portugu|pt-?br|nacional", RegexOption.IGNORE_CASE)
-private val LEG = Regex("legendad|\\bleg\\b|\\bsub(s|bed)?\\b", RegexOption.IGNORE_CASE)
+private val LEG = Regex("legendad|\\bleg\\b|\\blegendas?\\b|\\bsub(s|bed)?\\b|\\bsubtitles?\\b", RegexOption.IGNORE_CASE)
 
 /** Idioma da fonte pelo rótulo. "dub", "leg" ou "" quando não dá pra saber. */
 fun langOf(label: String): String = when {
     ptAudio(label) -> "dub"
     LEG.containsMatchIn(label) -> "leg"
-    DUB.containsMatchIn(label) -> "dub"
     else -> ""
 }
 
@@ -152,10 +150,11 @@ private val DOLBY_VISION = Regex("\\b(dv|dovi|dolby[ .-]?vision)\\b", RegexOptio
 private val HDR = Regex("\\b(hdr|hlg)\\b|\\bhdr10", RegexOption.IGNORE_CASE)
 private val ATMOS = Regex("\\batmos\\b", RegexOption.IGNORE_CASE)
 // IGNORE_CASE do Java só junta maiúscula e minúscula no ASCII, então o acento vai nas duas formas.
-private val DUBBED = Regex("dublad|dual[\\s.-]?[aáÁ]udio", RegexOption.IGNORE_CASE)
+private val DUBBED = Regex("dublad|dublagem|\\bnacional\\b|\\bdual(?:[\\s.-]?[aáÁ]udio)?\\b", RegexOption.IGNORE_CASE)
 private val SUBBED = Regex("legendad", RegexOption.IGNORE_CASE)
 private val SUBS = Regex("legendad|legendas?\\b", RegexOption.IGNORE_CASE)
-private val PT_WORD = Regex("\\b(portugu[eêÊ]s|portuguese|pt-?br)\\b", RegexOption.IGNORE_CASE)
+private val PT_WORD = Regex("(?:^|[^a-z0-9])(?:portugu[eêÊ]s|portuguese|pt(?:[ ._-]?(?:br|pt))?|por|port|br)(?=$|[^a-z0-9])", RegexOption.IGNORE_CASE)
+private val SUB_SEGMENT = Regex("\\b(?:(?:portugu[eêÊ]s|portuguese|pt(?:[ ._-]?(?:br|pt))?|por|port|br)[ ._-]+)?(?:legendas?|subtitles?|subs?)\\b[^\\n|·]*", RegexOption.IGNORE_CASE)
 
 fun hasDolbyVision(text: String) = DOLBY_VISION.containsMatchIn(text)
 fun hasHdr(text: String) = HDR.containsMatchIn(text)
@@ -165,9 +164,13 @@ fun hasAtmos(text: String) = ATMOS.containsMatchIn(text)
  * Áudio em português. Dublado ou dual áudio, ou a bandeira e o nome do idioma quando o texto não
  * fala de legenda. "Legendado PT-BR" não conta.
  */
-fun ptAudio(text: String): Boolean =
-    (DUBBED.containsMatchIn(text) && !SUBBED.containsMatchIn(text)) ||
-        (!SUBS.containsMatchIn(text) && ("🇧🇷" in text || PT_WORD.containsMatchIn(text)))
+fun ptAudio(text: String): Boolean {
+    if (DUBBED.containsMatchIn(text)) return true
+    val audio = SUB_SEGMENT.replace(text, " ")
+    if (SUBBED.containsMatchIn(audio) || Regex("\\b(?:leg|subbed)\\b", RegexOption.IGNORE_CASE).containsMatchIn(audio)) return false
+    return "🇧🇷" in audio || PT_WORD.containsMatchIn(audio) ||
+        (Regex("\\bdub\\b", RegexOption.IGNORE_CASE).containsMatchIn(audio) && !Regex("\\b(?:eng|english|rus|russian|jpn|japanese)\\b", RegexOption.IGNORE_CASE).containsMatchIn(audio))
+}
 
 /**
  * Ordena as fontes pela preferência do perfil sem perder a ordem dos addons dentro de cada grupo

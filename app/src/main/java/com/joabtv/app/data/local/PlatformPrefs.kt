@@ -29,7 +29,11 @@ data class HomeCatalogRef(val base: String, val type: String, val id: String, va
  * Perfil de quem assiste. [color] é o índice em [PROFILE_COLORS]. [avatar] é a foto (ver [ProfilePhotos]) e vazio
  * quer dizer sem foto, com a inicial na cor do perfil.
  */
-data class Profile(val id: String, val name: String, val color: Int = 0, val kids: Boolean = false, val avatar: String = "")
+data class Profile(
+    val id: String, val name: String, val color: Int = 0, val kids: Boolean = false, val avatar: String = "",
+    /** Categoria (ver [ProfileCategory]) para o id do perfil cujos dados este usa. Sem entrada, a categoria é própria. */
+    val links: Map<String, String> = emptyMap(),
+)
 
 /** Cores dos perfis, as mesmas do webOS. */
 val PROFILE_COLORS = listOf(0xFF2E8BFF, 0xFFE5484D, 0xFF3DDC84, 0xFFF5A524, 0xFFA970FF, 0xFFFF6FB5)
@@ -54,8 +58,9 @@ const val MAIN_PROFILE = "main"
 fun scopedKey(key: String, profileId: String): String =
     if (profileId == MAIN_PROFILE) key else "p.$profileId.$key"
 
-/** Preferências que são de cada perfil. O resto (addons, modo, chave TMDB, aberturas) é do aparelho. */
+/** Preferências que são de cada perfil. O resto (modo, chave TMDB, PIN, onboarded) é do aparelho. */
 internal val SCOPED_KEYS = listOf(
+    "stremio_addons_v2", "addon_meta_v1", "home_auto_on_v1", "jotv_catalog_on", "intro_marks_v1", "pref_forced_subs",
     "pref_tracker_sessions",
     "history_hidden_v1",
     "watched_movies_v1",
@@ -91,6 +96,12 @@ class PlatformPrefs @Inject constructor(
 
     private val prefs = context.getSharedPreferences("joabtv_prefs", Context.MODE_PRIVATE)
 
+    /** Quem guarda cópia em memória de dado do perfil (debrid, ao vivo, plugins) e recarrega quando ele muda. */
+    private val dataListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+    // A separação por perfil roda antes de qualquer leitura, então antes de a interface abrir.
+    init { migrateProfiles() }
+
     // ── Perfis ────────────────────────────────────────────────────────────────
     private val _profiles = MutableStateFlow(readProfiles())
     val profiles: StateFlow<List<Profile>> = _profiles.asStateFlow()
@@ -105,60 +116,244 @@ class PlatformPrefs @Inject constructor(
     val profile: Profile get() = _profiles.value.firstOrNull { it.id == _profileId.value } ?: _profiles.value.first()
     val isKids: Boolean get() = profile.kids
 
+    /**
+     * Chave de [key] no escopo de [profileId]. Chave de categoria vinculável (addons e catálogo) vai para o espaço
+     * do dono dos dados (ver [ownerOf]), então o resto do código lê e grava sem saber do vínculo.
+     */
+    private fun keyFor(key: String, profileId: String) =
+        scopedKey(key, ProfileSets.categoryOfKey(key)?.let { ownerOf(profileId, it) } ?: profileId)
+
     /** Chave já no escopo do perfil ativo. */
-    private fun sk(key: String) = scopedKey(key, _profileId.value)
+    private fun sk(key: String) = keyFor(key, _profileId.value)
 
     private fun readProfiles(): List<Profile> = runCatching {
         val arr = org.json.JSONArray(prefs.getString("profiles", "[]"))
         (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            Profile(o.getString("id"), o.optString("name", "Perfil"), o.optInt("color", 0), o.optBoolean("kids", false), o.optString("avatar", ""))
+            Profile(
+                o.getString("id"), o.optString("name", "Perfil"), o.optInt("color", 0), o.optBoolean("kids", false), o.optString("avatar", ""),
+                ProfileSets.decodeLinks(o.optJSONObject("links")),
+            )
         }
     }.getOrDefault(emptyList()).ifEmpty { listOf(Profile(MAIN_PROFILE, "Principal")) }
 
     private fun saveProfiles(list: List<Profile>) {
         val arr = org.json.JSONArray()
-        list.forEach { arr.put(org.json.JSONObject().put("id", it.id).put("name", it.name).put("color", it.color).put("kids", it.kids).put("avatar", it.avatar)) }
+        list.forEach {
+            val o = org.json.JSONObject().put("id", it.id).put("name", it.name).put("color", it.color).put("kids", it.kids).put("avatar", it.avatar)
+            if (it.links.isNotEmpty()) o.put("links", ProfileSets.encodeLinks(it.links))
+            arr.put(o)
+        }
         prefs.edit().putString("profiles", arr.toString()).apply()
         _profiles.value = list
     }
 
-    /** Cria um perfil. null quando já tem o máximo. */
-    fun addProfile(name: String, kids: Boolean): Profile? {
+    /**
+     * Cria um perfil, que nasce vazio (sem addons, plugins, ao vivo nem debrid). null quando já tem o máximo.
+     * [color] e [avatar] servem para o perfil que vem da Nuvio.
+     */
+    @Synchronized
+    fun addProfile(name: String, kids: Boolean, color: Int? = null, avatar: String = ""): Profile? {
         val list = _profiles.value
         if (list.size >= MAX_PROFILES) return null
+        // Vários perfis criados no mesmo milissegundo (Trazer todos) ganhariam o mesmo id.
+        var n = System.currentTimeMillis()
+        while (list.any { it.id == "p" + java.lang.Long.toString(n, 36) }) n++
         val p = Profile(
-            "p" + java.lang.Long.toString(System.currentTimeMillis(), 36),
-            name.trim().take(20).ifBlank { "Perfil" }, list.size % PROFILE_COLORS.size, kids,
+            "p" + java.lang.Long.toString(n, 36),
+            name.trim().take(20).ifBlank { "Perfil" }, color ?: (list.size % PROFILE_COLORS.size), kids, avatar,
         )
         saveProfiles(list + p)
         return p
     }
 
+    /** Muda nome, cor, foto e infantil. Os vínculos só mudam por [linkProfile] e [unlinkProfile]. */
+    @Synchronized
     fun updateProfile(p: Profile) =
-        saveProfiles(_profiles.value.map { if (it.id == p.id) p.copy(name = p.name.trim().take(20).ifBlank { "Perfil" }) else it })
+        saveProfiles(_profiles.value.map { if (it.id == p.id) p.copy(name = p.name.trim().take(20).ifBlank { "Perfil" }, links = it.links) else it })
 
     /**
-     * Apaga o perfil e as preferências dele. Nunca apaga o último. O que fica no banco (lista,
-     * histórico) quem apaga é o LibraryRepository. Devolve false quando não pôde remover.
+     * Apaga o perfil e as preferências dele. Nunca apaga o último. Quem usava os dados dele recebe uma cópia antes
+     * e deixa de estar vinculado. O que fica no banco (lista, histórico) quem apaga é o LibraryRepository. Devolve
+     * false quando não pôde remover.
      */
+    @Synchronized
     fun removeProfile(id: String): Boolean {
         val list = _profiles.value
         if (list.size <= 1 || list.none { it.id == id }) return false
+        ProfileSets.dependentsOf(linksMap(), id).forEach { (dep, cats) ->
+            cats.forEach { cat -> writeCat(cat, dep, readCat(cat, ownerOf(id, cat))) }
+            setLinks(dep) { l -> l - cats.map { it.key }.toSet() }
+        }
         val ed = prefs.edit()
         SCOPED_KEYS.forEach { ed.remove(scopedKey(it, id)) }
         ed.apply()
+        listOf(ProfileCategory.LIVE, ProfileCategory.DEBRID).forEach { cat ->
+            val e = store(cat).edit()
+            keysOf(cat).forEach { e.remove(scopedKey(it, id)) }
+            e.apply()
+        }
         ProfilePhotos.delete(context, id)
-        saveProfiles(list.filterNot { it.id == id })
-        if (_profileId.value == id) selectProfile(_profiles.value.first().id)
+        saveProfiles(_profiles.value.filterNot { it.id == id })
+        if (_profileId.value == id) selectProfile(_profiles.value.first().id) else dataChanged()
         return true
+    }
+
+    // ── Dados por perfil (addons, plugins, catálogo, ao vivo e debrid) ───────────
+
+    private fun linksMap(): Map<String, Map<String, String>> = _profiles.value.associate { it.id to it.links }
+
+    /** Perfil dono dos dados de [profileId] em [cat], seguindo o vínculo (ver [ProfileSets.ownerOf]). */
+    fun ownerOf(profileId: String, cat: ProfileCategory): String = ProfileSets.ownerOf(linksMap(), profileId, cat)
+
+    /**
+     * Chave de [key] no arquivo da categoria, no espaço do dono dos dados de [profileId]. É o que DebridService,
+     * LiveTvRepository e PluginRepository usam, para seguir o perfil e o vínculo sem saber deles.
+     */
+    fun categoryKey(cat: ProfileCategory, key: String, profileId: String = _profileId.value): String =
+        rawKey(cat, key, ownerOf(profileId, cat))
+
+    /** Avisado quando os dados do perfil ativo mudam (troca de perfil, vínculo, cópia ou remoção). */
+    fun onProfileDataChanged(listener: () -> Unit) { dataListeners += listener }
+
+    /**
+     * Copia [cats] do que [from] vê (seguindo vínculo) para o espaço próprio de [to] e desfaz o vínculo de [to]
+     * nessas categorias. Leva chaves de debrid quando DEBRID vai junto. false quando os perfis não servem.
+     */
+    @Synchronized
+    fun copyProfileData(from: String, to: String, cats: Collection<ProfileCategory>, mode: CopyMode = CopyMode.REPLACE): Boolean {
+        val ids = _profiles.value.map { it.id }
+        if (from == to || from !in ids || to !in ids) return false
+        cats.forEach { cat ->
+            val src = readCat(cat, ownerOf(from, cat))
+            val dst = readCat(cat, ownerOf(to, cat))
+            writeCat(cat, to, ProfileSets.copyValues(cat, src, dst, mode, keysOf(cat)))
+        }
+        setLinks(to) { l -> l - cats.map { it.key }.toSet() }
+        dataChanged()
+        return true
+    }
+
+    /** [profileId] passa a usar os dados de [target] em [cat] (vínculo vivo). false quando criaria ciclo. */
+    @Synchronized
+    fun linkProfile(profileId: String, cat: ProfileCategory, target: String): Boolean {
+        if (!ProfileSets.canLink(linksMap(), profileId, cat, target)) return false
+        setLinks(profileId) { it + (cat.key to target) }
+        dataChanged()
+        return true
+    }
+
+    /** Deixa de usar. Copia os dados do dono para o próprio perfil e limpa o vínculo. false sem vínculo. */
+    @Synchronized
+    fun unlinkProfile(profileId: String, cat: ProfileCategory): Boolean {
+        val p = _profiles.value.firstOrNull { it.id == profileId } ?: return false
+        if (cat.key !in p.links) return false
+        val owner = ownerOf(profileId, cat)
+        if (owner != profileId) writeCat(cat, profileId, readCat(cat, owner))
+        setLinks(profileId) { it - cat.key }
+        dataChanged()
+        return true
+    }
+
+    /**
+     * Antes de gravar em [cats] por importação ou backup. Cada categoria em que o perfil usa os dados de outro vira
+     * cópia, para a gravação não cair no dono. Devolve as categorias que deixaram de ser vinculadas.
+     */
+    @Synchronized
+    fun detachForWrite(profileId: String, cats: Collection<ProfileCategory>): List<ProfileCategory> =
+        ProfileSets.linkedCategories(linksMap(), profileId, cats).filter { unlinkProfile(profileId, it) }
+
+    private fun setLinks(profileId: String, change: (Map<String, String>) -> Map<String, String>) =
+        saveProfiles(_profiles.value.map { if (it.id == profileId) it.copy(links = change(it.links)) else it })
+
+    private fun store(cat: ProfileCategory): android.content.SharedPreferences = when (cat) {
+        ProfileCategory.ADDONS, ProfileCategory.CATALOG -> prefs
+        ProfileCategory.LIVE -> context.getSharedPreferences("joabtv_live", Context.MODE_PRIVATE)
+        ProfileCategory.DEBRID -> context.getSharedPreferences("joabtv_debrid", Context.MODE_PRIVATE)
+        ProfileCategory.PLUGINS -> context.getSharedPreferences("jotv_plugins", Context.MODE_PRIVATE)
+    }
+
+    private fun keysOf(cat: ProfileCategory): List<String> = when (cat) {
+        ProfileCategory.ADDONS, ProfileCategory.CATALOG -> ProfileSets.PREF_KEYS.getValue(cat)
+        ProfileCategory.LIVE -> ProfileSets.LIVE_KEYS
+        ProfileCategory.DEBRID -> ProfileSets.DEBRID_KEYS
+        ProfileCategory.PLUGINS -> listOf(ProfileSets.PLUGIN_KEY)
+    }
+
+    /** Chave gravada no arquivo, no espaço de [owner], sem resolver vínculo. Plugins sempre usaram state.idDoPerfil. */
+    private fun rawKey(cat: ProfileCategory, key: String, owner: String) =
+        if (cat == ProfileCategory.PLUGINS) "${ProfileSets.PLUGIN_KEY}.$owner" else scopedKey(key, owner)
+
+    private fun readCat(cat: ProfileCategory, owner: String): Map<String, Any?> {
+        val all = store(cat).all
+        val m = keysOf(cat).associateWith { all[rawKey(cat, it, owner)] }.toMutableMap()
+        if (cat == ProfileCategory.ADDONS && m[KEY_ADDONS_V2] == null && owner == MAIN_PROFILE) {
+            legacyAddons().takeIf { it.isNotEmpty() }?.let { m[KEY_ADDONS_V2] = encodeEntries(it) }
+        }
+        return m
+    }
+
+    private fun writeCat(cat: ProfileCategory, owner: String, values: Map<String, Any?>) {
+        val ed = store(cat).edit()
+        values.forEach { (k, v) -> putAny(ed, rawKey(cat, k, owner), v) }
+        ed.commit()
+    }
+
+    private fun putAny(ed: android.content.SharedPreferences.Editor, key: String, v: Any?) {
+        when (v) {
+            null -> ed.remove(key)
+            is String -> ed.putString(key, v)
+            is Boolean -> ed.putBoolean(key, v)
+            is Int -> ed.putInt(key, v)
+            is Long -> ed.putLong(key, v)
+            is Float -> ed.putFloat(key, v)
+            is Set<*> -> ed.putStringSet(key, v.mapTo(HashSet()) { it.toString() })
+        }
+    }
+
+    /** Addons no formato antigo (uma URL por linha), só do perfil main. */
+    private fun legacyAddons(): List<AddonEntry> =
+        (prefs.getString("stremio_addons", null)?.split("\n", ",") ?: emptyList()).map { it.trim() }
+            .filter { it.startsWith("http") }.map { AddonEntry(it, true) }
+
+    /**
+     * Migração única (marca no aparelho, num arquivo à parte para não contar como preferência salva no
+     * onboarded). Cada perfil que não é o main ganha cópia do que era do aparelho e ele ainda não tem. Nada do
+     * main sai. Perfil criado depois nasce vazio, porque a marca já está gravada.
+     */
+    private fun migrateProfiles() {
+        val meta = context.getSharedPreferences("joabtv_profiles_meta", Context.MODE_PRIVATE)
+        if (meta.getInt("split_version", 0) >= ProfileSets.MIGRATION_VERSION) return
+        val ids = readProfiles().map { it.id }
+        if (ids.any { it != MAIN_PROFILE }) {
+            val main = prefs.all.toMutableMap()
+            if (main[KEY_ADDONS_V2] == null) legacyAddons().takeIf { it.isNotEmpty() }?.let { main[KEY_ADDONS_V2] = encodeEntries(it) }
+            fun migrate(sp: android.content.SharedPreferences, keys: List<String>, values: Map<String, Any?>) {
+                val ed = sp.edit()
+                ProfileSets.migrationCopies(ids, keys, values) { p, k -> sp.contains(scopedKey(k, p)) }
+                    .forEach { (p, k, v) -> putAny(ed, scopedKey(k, p), v) }
+                ed.commit()
+            }
+            migrate(prefs, ProfileSets.MIGRATED_PREF_KEYS, main)
+            listOf(ProfileCategory.LIVE, ProfileCategory.DEBRID).forEach { cat -> store(cat).let { migrate(it, keysOf(cat), it.all) } }
+        }
+        meta.edit().putInt("split_version", ProfileSets.MIGRATION_VERSION).commit()
+    }
+
+    /** Recarrega o que o perfil ativo guarda em memória e avisa os outros repositórios. */
+    private fun dataChanged() {
+        _addons.value = addonEntriesOf(_profileId.value)
+        _catalogOn.value = prefs.getBoolean(sk("jotv_catalog_on"), true)
+        _addonMeta.value = HomeLayout.decodeAddons(prefs.getString(sk("addon_meta_v1"), null))
+        refreshLayout()
+        dataListeners.forEach { runCatching { it() } }
     }
 
     fun selectProfile(id: String) {
         if (_profiles.value.none { it.id == id }) return
         prefs.edit().putString("profile", id).apply()
         _profileId.value = id
-        refreshLayout()
+        dataChanged()
         _appearance.value = readAppearance()
         _heroTrailer.value = prefs.getBoolean(sk("pref_hero_trailer"), true)
         _menuAddons.value = prefs.getBoolean(sk("pref_menu_addons"), true)
@@ -187,20 +382,24 @@ class PlatformPrefs @Inject constructor(
     fun importLogOf(profileId: String): com.joabtv.app.data.accounts.ImportLog =
         com.joabtv.app.data.accounts.ImportLog.decode(prefs.getString(scopedKey("import_log_v1", profileId), null))
 
-    private fun writeImportLog(v: com.joabtv.app.data.accounts.ImportLog) {
-        prefs.edit().putString(sk("import_log_v1"), v.encode()).apply()
-        _importLog.value = v
+    private fun writeImportLog(v: com.joabtv.app.data.accounts.ImportLog, profileId: String = _profileId.value) {
+        prefs.edit().putString(scopedKey("import_log_v1", profileId), v.encode()).apply()
+        if (profileId == _profileId.value) _importLog.value = v
     }
 
-    /** Grava o resultado de uma parte assim que ela termina. Duas contas podem trazer ao mesmo tempo, daí o synchronized. */
+    /**
+     * Grava o resultado de uma parte assim que ela termina. Duas contas podem trazer ao mesmo tempo, daí o synchronized.
+     * [profileId] é o perfil de destino da importação (o ativo por padrão).
+     */
     @Synchronized
     fun recordImport(
         account: String, part: String, rec: com.joabtv.app.data.accounts.PartRecord,
-        email: String, profile: String, now: Long = System.currentTimeMillis(),
-    ) = writeImportLog(importLog.put(account, part, rec, email, profile, now))
+        email: String, profile: String, now: Long = System.currentTimeMillis(), profileId: String = _profileId.value,
+    ) = writeImportLog(importLogOf(profileId).put(account, part, rec, email, profile, now), profileId)
 
     @Synchronized
-    fun setNuvioPick(p: com.joabtv.app.data.accounts.NuvioPick) = writeImportLog(importLog.withPick(p))
+    fun setNuvioPick(p: com.joabtv.app.data.accounts.NuvioPick, profileId: String = _profileId.value) =
+        writeImportLog(importLogOf(profileId).withPick(p), profileId)
 
     private val _appearance = MutableStateFlow(readAppearance())
     val appearanceFlow: StateFlow<AppearancePreferences> = _appearance.asStateFlow()
@@ -419,7 +618,7 @@ class PlatformPrefs @Inject constructor(
     /** Abertura aprendida da série (inicioMs, fimMs). null enquanto o usuário nunca pulou. */
     fun introMarker(tmdbId: Int): Pair<Long, Long>? {
         if (tmdbId <= 0) return null
-        val raw = prefs.getString(KEY_INTRO_MARKS, null) ?: return null
+        val raw = prefs.getString(sk(KEY_INTRO_MARKS), null) ?: return null
         val arr = runCatching { org.json.JSONObject(raw).optJSONArray(tmdbId.toString()) }.getOrNull() ?: return null
         if (arr.length() < 2) return null
         val start = arr.optLong(0, -1L)
@@ -430,10 +629,10 @@ class PlatformPrefs @Inject constructor(
     /** Grava a abertura da série (sobrescreve a anterior, o último pulo é o mais confiável). */
     fun saveIntroMarker(tmdbId: Int, startMs: Long, endMs: Long) {
         if (tmdbId <= 0 || endMs <= startMs) return
-        val root = runCatching { org.json.JSONObject(prefs.getString(KEY_INTRO_MARKS, null) ?: "{}") }
+        val root = runCatching { org.json.JSONObject(prefs.getString(sk(KEY_INTRO_MARKS), null) ?: "{}") }
             .getOrDefault(org.json.JSONObject())
         root.put(tmdbId.toString(), org.json.JSONArray().put(startMs).put(endMs))
-        prefs.edit().putString(KEY_INTRO_MARKS, root.toString()).apply()
+        prefs.edit().putString(sk(KEY_INTRO_MARKS), root.toString()).apply()
     }
 
     // ── Legenda e som de outra fonte (player) ─────────────────────────────────
@@ -468,29 +667,37 @@ class PlatformPrefs @Inject constructor(
      * Guardada em JSON. Migra automaticamente do formato antigo (uma URL por linha).
      */
     var addonEntries: List<AddonEntry>
-        get() {
-            val raw = prefs.getString(KEY_ADDONS_V2, null)
-            if (raw != null) return decodeEntries(raw)
-            // Migração do formato legado (texto com uma URL por linha). Instalação nova
-            // entra sem addon nenhum — a pessoa escolhe e instala pela Loja.
-            val legacy = prefs.getString("stremio_addons", null)
-            return (legacy?.split("\n", ",") ?: emptyList()).map { it.trim() }
-                .filter { it.startsWith("http") }
-                .map { AddonEntry(it, true) }
-        }
-        set(value) {
-            val clean = value.distinctBy { it.url }
-            prefs.edit().putString(KEY_ADDONS_V2, encodeEntries(clean)).apply()
-            _addons.value = clean
-            refreshLayout()
-        }
+        get() = addonEntriesOf(_profileId.value)
+        set(value) = setAddonEntries(value, _profileId.value)
+
+    // Escolha do item 7 do contrato. Escrever em outro perfil (importação para um perfil que não é o ativo) é
+    // parâmetro explícito profileId nas funções de addon, catálogo e registro, com o ativo como padrão. Nada de
+    // estado global trocado por um instante, que a interface poderia pisar no meio.
+
+    /** Addons de um perfil (seguindo o vínculo). Instalação nova entra sem addon nenhum. */
+    fun addonEntriesOf(profileId: String): List<AddonEntry> {
+        val raw = prefs.getString(keyFor(KEY_ADDONS_V2, profileId), null)
+        if (raw != null) return decodeEntries(raw)
+        // Formato legado (texto com uma URL por linha), que só o main pode ter.
+        return if (ownerOf(profileId, ProfileCategory.ADDONS) == MAIN_PROFILE) legacyAddons() else emptyList()
+    }
+
+    fun setAddonEntries(value: List<AddonEntry>, profileId: String = _profileId.value) {
+        val clean = value.distinctBy { it.url }
+        prefs.edit().putString(keyFor(KEY_ADDONS_V2, profileId), encodeEntries(clean)).apply()
+        if (sharesWithActive(profileId, ProfileCategory.ADDONS)) _addons.value = clean
+        refreshLayout()
+    }
+
+    /** O perfil grava no mesmo lugar que o ativo (é o ativo ou usa os mesmos dados). */
+    private fun sharesWithActive(profileId: String, cat: ProfileCategory) = ownerOf(profileId, cat) == ownerOf(_profileId.value, cat)
 
     private val _addons = MutableStateFlow(addonEntries)
     /** Lista de addons que avisa quem observa. A loja instala e o gerenciador já vê. */
     val addons: StateFlow<List<AddonEntry>> = _addons.asStateFlow()
 
     /** Posição do addon pela URL ou pelo id do manifest. -1 se não está instalado. */
-    fun addonIndex(url: String, id: String = ""): Int = addonEntries.indexOfFirst {
+    fun addonIndex(url: String, id: String = "", profileId: String = _profileId.value): Int = addonEntriesOf(profileId).indexOfFirst {
         it.url.equals(url, true) || (id.isNotBlank() && it.id == id)
     }
 
@@ -498,29 +705,41 @@ class PlatformPrefs @Inject constructor(
      * Instala no fim da fila, ou troca a URL no lugar quando o mesmo addon já existe.
      * Os catálogos de addon instalado daqui em diante entram ligados na Início.
      */
-    fun installAddon(url: String, id: String = "") {
+    fun installAddon(url: String, id: String = "", profileId: String = _profileId.value) {
         // Primeira vez deste perfil. O que já existe não vira Nova em Minha Início, só o que o addon trouxer.
-        if (homeSeen == null) homeSeen = homeLayout.mapTo(HashSet()) { it.key }
-        val list = addonEntries.toMutableList()
-        val i = addonIndex(url, id)
+        if (homeSeenOf(profileId) == null) setHomeSeen(computeLayout(profileId).mapTo(HashSet()) { it.key }, profileId)
+        val list = addonEntriesOf(profileId).toMutableList()
+        val i = addonIndex(url, id, profileId)
         if (i >= 0) list[i] = AddonEntry(url, true, id.ifBlank { list[i].id })
         else list += AddonEntry(url, true, id)
-        autoOnBases = autoOnBases + baseOf(url)
-        addonEntries = list
+        setAutoOnBases(autoOnBasesOf(profileId) + baseOf(url), profileId)
+        setAddonEntries(list, profileId)
     }
 
-    /** Remove o addon. As fileiras dele saem da Início de todos os perfis, depois da confirmação da tela. */
+    /**
+     * Perfis cuja Início segue a lista de addons do ativo (ele e quem usa os addons dele). Cada catálogo
+     * guardado entra uma vez só, mesmo com dois perfis usando o mesmo catálogo.
+     */
+    private fun catalogOwnersOfActiveAddons(): Set<String> {
+        val addonOwner = ownerOf(_profileId.value, ProfileCategory.ADDONS)
+        return _profiles.value.filter { ownerOf(it.id, ProfileCategory.ADDONS) == addonOwner }
+            .mapTo(LinkedHashSet()) { ownerOf(it.id, ProfileCategory.CATALOG) }
+    }
+
+    /**
+     * Remove o addon do perfil ativo. As fileiras dele saem só da Início dos perfis que usam esta lista de addons
+     * (o ativo e quem está vinculado a ela), depois da confirmação da tela.
+     */
     fun removeAddon(url: String, id: String = "") {
         val i = addonIndex(url, id)
         if (i < 0) return
         val gone = addonEntries[i]
         val base = baseOf(gone.url)
         autoOnBases = autoOnBases - base
-        // As fileiras dele saem da ordem guardada de todos os perfis, assim uma reinstalação volta
-        // com o teto de 10 e não com o liga e desliga de antes.
+        // Assim uma reinstalação volta com o teto de 10 e não com o liga e desliga de antes.
         val ed = prefs.edit()
-        _profiles.value.forEach { p ->
-            val k = scopedKey("home_layout_v1", p.id)
+        catalogOwnersOfActiveAddons().forEach { owner ->
+            val k = scopedKey("home_layout_v1", owner)
             HomeLayout.decode(prefs.getString(k, null))?.let { list -> ed.putString(k, HomeLayout.encode(HomeLayout.dropBase(list, base))) }
         }
         ed.apply()
@@ -530,23 +749,23 @@ class PlatformPrefs @Inject constructor(
     private fun baseOf(url: String) = url.trim().removeSuffix("/manifest.json").trimEnd('/')
 
     /**
-     * Addon que mudou de URL (token novo, host novo). As fileiras dele na Início de todos os
-     * perfis passam para a base nova, com o liga e desliga e o nome que cada perfil escolheu.
+     * Addon que mudou de URL (token novo, host novo). As fileiras dele na Início dos perfis que usam esta lista
+     * de addons passam para a base nova, com o liga e desliga e o nome que cada perfil escolheu.
      */
     fun rebaseAddon(oldUrl: String, newUrl: String) {
         val old = baseOf(oldUrl)
         val new = baseOf(newUrl)
         if (old == new) return
         val ed = prefs.edit()
-        _profiles.value.forEach { p ->
-            val k = scopedKey("home_layout_v1", p.id)
+        catalogOwnersOfActiveAddons().forEach { owner ->
+            val k = scopedKey("home_layout_v1", owner)
             HomeLayout.decode(prefs.getString(k, null))?.let { list ->
                 ed.putString(k, HomeLayout.encode(list.map { r ->
                     val ref = r.ref
                     if (ref != null && ref.base == old) ref.copy(base = new).let { nr -> r.copy(key = nr.key, ref = nr) } else r
                 }))
             }
-            val hk = scopedKey("home_hero_v1", p.id)
+            val hk = scopedKey("home_hero_v1", owner)
             val hero = prefs.getString(hk, "").orEmpty()
             if (hero.startsWith("$old|")) ed.putString(hk, new + hero.removePrefix(old))
         }
@@ -562,37 +781,53 @@ class PlatformPrefs @Inject constructor(
     }
 
     // ── Catálogo JOTV (o catálogo próprio do app, fixo e desligável como um addon) ──
-    private val _catalogOn = MutableStateFlow(prefs.getBoolean("jotv_catalog_on", true))
-    /** Catálogo JOTV ligado. Desligado, as fileiras do TMDB somem da Início de todos os perfis. */
+    private val _catalogOn = MutableStateFlow(prefs.getBoolean(sk("jotv_catalog_on"), true))
+    /** Catálogo JOTV ligado (por perfil). Desligado, as fileiras do TMDB somem da Início do perfil. */
     val catalogOnFlow: StateFlow<Boolean> = _catalogOn.asStateFlow()
     var catalogOn: Boolean
         get() = _catalogOn.value
-        set(value) { prefs.edit().putBoolean("jotv_catalog_on", value).apply(); _catalogOn.value = value }
+        set(value) { prefs.edit().putBoolean(sk("jotv_catalog_on"), value).apply(); _catalogOn.value = value }
 
     // ── Manifests guardados (nome e catálogos de cada addon, para a Início abrir sem rede) ──
-    private val _addonMeta = MutableStateFlow(HomeLayout.decodeAddons(prefs.getString("addon_meta_v1", null)))
+    private val _addonMeta = MutableStateFlow(HomeLayout.decodeAddons(prefs.getString(sk("addon_meta_v1"), null)))
     val addonMetaFlow: StateFlow<Map<String, CachedAddon>> = _addonMeta.asStateFlow()
+
+    private fun addonMetaOf(profileId: String): Map<String, CachedAddon> =
+        if (sharesWithActive(profileId, ProfileCategory.ADDONS)) _addonMeta.value
+        else HomeLayout.decodeAddons(prefs.getString(keyFor("addon_meta_v1", profileId), null))
 
     /**
      * Guarda o que o manifest diz. Chamado toda vez que um manifest é lido com sucesso, às vezes
-     * vários ao mesmo tempo (o gerenciador lê todos em paralelo), daí o synchronized.
+     * vários ao mesmo tempo (o gerenciador lê todos em paralelo), daí o synchronized. [profileId] serve
+     * para a importação que instala addon em outro perfil.
      */
-    fun cacheManifest(url: String, name: String, catalogs: List<com.joabtv.app.data.remote.AddonCatalog>, id: String = "") {
+    fun cacheManifest(
+        url: String, name: String, catalogs: List<com.joabtv.app.data.remote.AddonCatalog>, id: String = "",
+        profileId: String = _profileId.value,
+    ) {
         val base = baseOf(url)
         val now = CachedAddon(name, catalogs, id)
         synchronized(_addonMeta) {
-            if (_addonMeta.value[base] == now) return
-            val map = _addonMeta.value + (base to now)
-            prefs.edit().putString("addon_meta_v1", HomeLayout.encodeAddons(map)).apply()
-            _addonMeta.value = map
+            val cur = addonMetaOf(profileId)
+            if (cur[base] == now) return
+            val map = cur + (base to now)
+            prefs.edit().putString(keyFor("addon_meta_v1", profileId), HomeLayout.encodeAddons(map)).apply()
+            if (sharesWithActive(profileId, ProfileCategory.ADDONS)) _addonMeta.value = map
         }
         refreshLayout()
     }
 
     /** Bases de addon instalado depois da Início personalizável. Catálogo novo deles entra ligado. */
     private var autoOnBases: Set<String>
-        get() = prefs.getStringSet("home_auto_on_v1", emptySet()).orEmpty()
-        set(value) { prefs.edit().putStringSet("home_auto_on_v1", value.toSet()).apply() }
+        get() = autoOnBasesOf(_profileId.value)
+        set(value) = setAutoOnBases(value, _profileId.value)
+
+    private fun autoOnBasesOf(profileId: String): Set<String> =
+        prefs.getStringSet(keyFor("home_auto_on_v1", profileId), emptySet()).orEmpty()
+
+    private fun setAutoOnBases(value: Set<String>, profileId: String) {
+        prefs.edit().putStringSet(keyFor("home_auto_on_v1", profileId), value.toSet()).apply()
+    }
 
     // ── Início personalizável (por perfil) ────────────────────────────────────
     /** De onde vem o destaque do topo. Vazio = automático (em alta do JOTV ou a 1ª fileira). */
@@ -603,16 +838,19 @@ class PlatformPrefs @Inject constructor(
         set(value) { prefs.edit().putString(sk("home_hero_v1"), value).apply(); _heroSource.value = value }
 
     // ── Coleções (formato do Nuvio), por perfil. Antes do layout, que conta com elas. ──
-    private fun readCollections(): List<com.joabtv.app.data.collections.MediaCollection> =
-        prefs.getString(sk("collections_v1"), null)
+    private fun readCollections(profileId: String = _profileId.value): List<com.joabtv.app.data.collections.MediaCollection> =
+        prefs.getString(keyFor("collections_v1", profileId), null)
             ?.let { com.joabtv.app.data.collections.CollectionsJson.parse(it).getOrNull() }
             .orEmpty()
 
     private val _collections = MutableStateFlow(readCollections())
     val collectionsFlow: StateFlow<List<com.joabtv.app.data.collections.MediaCollection>> = _collections.asStateFlow()
 
-    fun saveCollections(list: List<com.joabtv.app.data.collections.MediaCollection>) {
-        prefs.edit().putString(sk("collections_v1"), com.joabtv.app.data.collections.CollectionsJson.encode(list)).apply()
+    /** Coleções de um perfil qualquer (a importação para outro perfil lê e grava por aqui). */
+    fun collectionsOf(profileId: String): List<com.joabtv.app.data.collections.MediaCollection> = readCollections(profileId)
+
+    fun saveCollections(list: List<com.joabtv.app.data.collections.MediaCollection>, profileId: String = _profileId.value) {
+        prefs.edit().putString(keyFor("collections_v1", profileId), com.joabtv.app.data.collections.CollectionsJson.encode(list)).apply()
         refreshLayout()
     }
 
@@ -691,12 +929,17 @@ class PlatformPrefs @Inject constructor(
 
     /** Chaves das fileiras que o perfil já viu em Minha Início. null antes da primeira visita. */
     var homeSeen: Set<String>?
-        get() = prefs.getStringSet(sk("home_seen_v1"), null)
-        set(value) {
-            val ed = prefs.edit()
-            if (value == null) ed.remove(sk("home_seen_v1")) else ed.putStringSet(sk("home_seen_v1"), value.toSet())
-            ed.apply()
-        }
+        get() = homeSeenOf(_profileId.value)
+        set(value) = setHomeSeen(value, _profileId.value)
+
+    private fun homeSeenOf(profileId: String): Set<String>? = prefs.getStringSet(keyFor("home_seen_v1", profileId), null)
+
+    private fun setHomeSeen(value: Set<String>?, profileId: String) {
+        val k = keyFor("home_seen_v1", profileId)
+        val ed = prefs.edit()
+        if (value == null) ed.remove(k) else ed.putStringSet(k, value.toSet())
+        ed.apply()
+    }
 
     /** Pedido de uma vez só, em memória, para a Minha Início abrir na primeira fileira nova. */
     var homeFocusNew = false
@@ -716,20 +959,24 @@ class PlatformPrefs @Inject constructor(
         _heroSource.value = prefs.getString(sk("home_hero_v1"), "").orEmpty()
     }
 
-    private fun computeLayout(): List<HomeRowPref> {
-        val entries = addonEntries
-        val meta = _addonMeta.value
+    /** Fileiras da Início de um perfil qualquer, na ordem dele (a importação conta as fileiras novas por aqui). */
+    fun homeLayoutOf(profileId: String): List<HomeRowPref> = if (profileId == _profileId.value) homeLayout else computeLayout(profileId)
+
+    private fun computeLayout(profileId: String = _profileId.value): List<HomeRowPref> {
+        val entries = addonEntriesOf(profileId)
+        val meta = addonMetaOf(profileId)
         val available = entries.flatMap { e ->
             val base = baseOf(e.url)
             val m = meta[base] ?: return@flatMap emptyList()
             m.catalogs.map { c -> HomeCatalogRef(base, c.type, c.id, c.name, m.name) }
         }
-        val saved = HomeLayout.decode(prefs.getString(sk("home_layout_v1"), null)) ?: HomeLayout.default(readHomeCatalogs())
-        return HomeLayout.normalize(saved, entries.mapTo(HashSet()) { baseOf(it.url) }, available, autoOnBases, _collections.value, keepOrphans = true)
+        val cols = if (profileId == _profileId.value) _collections.value else readCollections(profileId)
+        val saved = HomeLayout.decode(prefs.getString(keyFor("home_layout_v1", profileId), null)) ?: HomeLayout.default(readHomeCatalogs(profileId))
+        return HomeLayout.normalize(saved, entries.mapTo(HashSet()) { baseOf(it.url) }, available, autoOnBasesOf(profileId), cols, keepOrphans = true)
     }
 
-    private fun readHomeCatalogs(): List<HomeCatalogRef> = runCatching {
-        val arr = org.json.JSONArray(prefs.getString(sk(KEY_HOME_CATALOGS), "[]"))
+    private fun readHomeCatalogs(profileId: String = _profileId.value): List<HomeCatalogRef> = runCatching {
+        val arr = org.json.JSONArray(prefs.getString(keyFor(KEY_HOME_CATALOGS, profileId), "[]"))
         (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             HomeCatalogRef(o.optString("b"), o.optString("t"), o.optString("i"), o.optString("n"), o.optString("a"))
@@ -795,7 +1042,7 @@ class PlatformPrefs @Inject constructor(
     }
 
     fun exportIntroMarksJson(): org.json.JSONObject = runCatching {
-        org.json.JSONObject(prefs.getString(KEY_INTRO_MARKS, null) ?: "{}")
+        org.json.JSONObject(prefs.getString(sk(KEY_INTRO_MARKS), null) ?: "{}")
     }.getOrDefault(org.json.JSONObject())
 
     fun importIntroMarksJson(obj: org.json.JSONObject) {
@@ -808,6 +1055,6 @@ class PlatformPrefs @Inject constructor(
                 cur.put(k, arr)
             }
         }
-        prefs.edit().putString(KEY_INTRO_MARKS, cur.toString()).apply()
+        prefs.edit().putString(sk(KEY_INTRO_MARKS), cur.toString()).apply()
     }
 }

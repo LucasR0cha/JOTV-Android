@@ -47,26 +47,34 @@ class AccountImporter @Inject constructor(
 ) {
     private val ids = ConcurrentHashMap<String, Pair<Int, com.joabtv.app.domain.model.MovieItem?>>()
 
-    suspend fun importAddons(list: List<RemoteAddon>, onProgress: (Int, Int) -> Unit = { _, _ -> }): ImportReport = withContext(Dispatchers.IO) {
+    /** [profile] é o perfil de destino (o ativo por padrão). Vale para todas as importações daqui. */
+    suspend fun importAddons(
+        list: List<RemoteAddon>, profile: String = prefs.profileId.value, onProgress: (Int, Int) -> Unit = { _, _ -> },
+    ): ImportReport = withContext(Dispatchers.IO) {
         var added = 0; var skipped = 0; var failed = 0
         list.forEachIndexed { i, a ->
             onProgress(i + 1, list.size)
             val url = stremio.normalizeManifestUrl(a.url)
             when {
                 !a.canUse || url.isBlank() -> skipped++
-                prefs.addonIndex(url) >= 0 -> skipped++
+                prefs.addonIndex(url, profileId = profile) >= 0 -> skipped++
                 else -> {
-                    // Lê o manifest antes, que é o que guarda os catálogos para a Início.
+                    // Lê o manifest antes, que é o que guarda os catálogos para a Início do perfil de destino.
                     val m = stremio.getManifest(url)
-                    if (m == null) failed++ else { prefs.installAddon(url, m.id); added++ }
+                    if (m == null) failed++ else {
+                        prefs.cacheManifest(url, m.name, m.catalogs, m.id, profile)
+                        prefs.installAddon(url, m.id, profile)
+                        added++
+                    }
                 }
             }
         }
         ImportReport(added, skipped, failed)
     }
 
-    suspend fun importLibrary(items: List<RemoteLibraryItem>, onProgress: (Int, Int) -> Unit = { _, _ -> }): ImportReport {
-        val profile = prefs.profileId.value
+    suspend fun importLibrary(
+        items: List<RemoteLibraryItem>, profile: String = prefs.profileId.value, onProgress: (Int, Int) -> Unit = { _, _ -> },
+    ): ImportReport {
         val done = java.util.concurrent.atomic.AtomicInteger()
         val results = parallel(items) { it ->
             val (tmdbId, found) = resolve(it.id, it.series) ?: return@parallel 2.also { onProgress(done.incrementAndGet(), items.size) }
@@ -82,8 +90,9 @@ class AccountImporter @Inject constructor(
         return ImportReport(results.count { it == 0 }, results.count { it == 1 }, results.count { it == 2 })
     }
 
-    suspend fun importProgress(items: List<RemoteProgress>, onProgress: (Int, Int) -> Unit = { _, _ -> }): ImportReport {
-        val profile = prefs.profileId.value
+    suspend fun importProgress(
+        items: List<RemoteProgress>, profile: String = prefs.profileId.value, onProgress: (Int, Int) -> Unit = { _, _ -> },
+    ): ImportReport {
         // Só o mais recente de cada título (série tem um por episódio).
         val latest = items.filter { it.positionMs > 0 }
             .groupBy { baseId(it.id) + it.series }

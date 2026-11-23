@@ -145,6 +145,7 @@ fun LiveTvScreen(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(v.rows, key = { it.channel.id }) { row ->
+                androidx.compose.runtime.LaunchedEffect(row.channel.id, v.now / 300000L) { viewModel.ensureGuide(row.channel.id) }
                 ChannelRow(row, v.now, onClick = { onPlay(row.channel.id) }, onFavorite = { viewModel.toggleFavorite(row.channel.id) })
             }
         }

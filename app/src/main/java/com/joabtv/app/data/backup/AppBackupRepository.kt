@@ -58,6 +58,7 @@ class AppBackupRepository @Inject constructor(
     private val library: LibraryRepository,
     private val debrid: DebridService,
     private val plugins: PluginRepository,
+    private val live: com.joabtv.app.data.live.LiveTvRepository,
 ) {
 
     fun suggestedFilename(): String {
@@ -149,6 +150,9 @@ class AppBackupRepository @Inject constructor(
         root.put("collections", prefs.exportCollectionsJson())
         root.put("homeCatalogs", prefs.exportHomeCatalogsJson())
         root.put("homeLayout", prefs.exportHomeLayoutJson())
+        // Versão 2. Fontes ao vivo e catálogo JOTV passaram a ser do perfil e vão com ele.
+        root.put("live", live.exportBackupJson(includeSecrets))
+        root.put("catalogOn", prefs.catalogOn)
 
         val app = prefs.appearance
         root.put("prefs", JSONObject().apply {
@@ -241,6 +245,16 @@ class AppBackupRepository @Inject constructor(
                 val profile = prefs.profileId.value
                 fun checkProfile() = check(prefs.profileId.value == profile) { "O perfil mudou. Restaure novamente no perfil desejado" }
                 val root = JSONObject(text)
+                // Perfil que usa os dados de outro deixa de usar (vira cópia) nas categorias que o backup grava,
+                // senão a restauração sobrescreveria o dono.
+                val writes = buildList {
+                    if (root.has("addons")) add(com.joabtv.app.data.local.ProfileCategory.ADDONS)
+                    if (root.has("collections") || root.has("homeCatalogs") || root.has("homeLayout") || root.has("catalogOn")) add(com.joabtv.app.data.local.ProfileCategory.CATALOG)
+                    if (root.has("live")) add(com.joabtv.app.data.local.ProfileCategory.LIVE)
+                    if (restoreSecrets && root.optJSONObject("secrets")?.has("debrid") == true) add(com.joabtv.app.data.local.ProfileCategory.DEBRID)
+                    if (root.optJSONObject("plugins")?.optJSONArray("repos") != null) add(com.joabtv.app.data.local.ProfileCategory.PLUGINS)
+                }
+                prefs.detachForWrite(profile, writes)
                 root.optJSONObject("historyHidden")?.let { incoming ->
                     prefs.setHistoryHidden(com.joabtv.app.data.local.mergePlaybackVisibility(prefs.historyHidden(), incoming.toString()))
                 }
@@ -352,6 +366,9 @@ class AppBackupRepository @Inject constructor(
 
                 root.optJSONArray("homeCatalogs")?.let { prefs.importHomeCatalogsJson(it) }
                 root.optJSONArray("homeLayout")?.let { prefs.importHomeLayoutJson(it) }
+                // Só a versão 2 traz estes. A 1 segue entrando sem eles.
+                root.optJSONObject("live")?.let { live.importBackupJson(it) }
+                if (root.has("catalogOn")) prefs.catalogOn = root.optBoolean("catalogOn", true)
 
                 root.optJSONObject("prefs")?.let { p ->
                     if (p.has("audio")) prefs.audioPref = p.optString("audio", prefs.audioPref)
@@ -471,7 +488,8 @@ class AppBackupRepository @Inject constructor(
 
     companion object {
         const val FORMAT = "jotv.backup"
-        const val VERSION = 1
+        /** 2 leva fontes ao vivo e o catálogo JOTV do perfil. O leitor aceita de 1 até esta. */
+        const val VERSION = 2
         const val MAX_JSON_BYTES = 8 * 1024 * 1024
     }
 }

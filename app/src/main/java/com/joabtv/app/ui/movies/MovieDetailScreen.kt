@@ -119,7 +119,7 @@ fun MovieDetailScreen(
     val playerSources = primary.playerSources
     // Clique numa fonte: toca no ExoPlayer.
     fun playStremio(s: com.joabtv.app.data.remote.StremioStream) {
-        viewModel.recordPlayback(); onPlayDirect(s.url, 0, "", playerSources, 0, 0, 0)
+        viewModel.recordPlayback(); onPlayDirect(s.url, 0, "", playerSources.sortedByDescending { it.stream == s }, 0, 0, 0)
     }
 
     val title       = state.item?.title ?: state.series?.title ?: item.title
@@ -687,6 +687,17 @@ fun MovieDetailScreen(
 
                 // Episode rows
                 val episodes = state.seasons[state.selectedSeason] ?: emptyList()
+                if (state.selectedSeason !in state.seasons && state.selectedSeason !in state.seasonErrors) item {
+                    Row(Modifier.padding(horizontal = pad, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = TextPrimary)
+                        Text("Carregando temporada ${state.selectedSeason}", color = TextSecondary)
+                    }
+                }
+                if (state.selectedSeason in state.seasonErrors) item {
+                    androidx.compose.material3.TextButton(onClick = { viewModel.loadSeason(item.tmdbId, state.selectedSeason) }, modifier = Modifier.padding(horizontal = pad)) {
+                        Text("Tentar carregar temporada ${state.selectedSeason}", color = TextPrimary)
+                    }
+                }
                 items(episodes, key = { it.episodeNumber }) { ep ->
                     EpisodeRowCard(
                         episode = ep,
@@ -795,7 +806,7 @@ fun MovieDetailScreen(
                     viewModel.clearSelectedEpisode()
                     onPlayDirect(
                         s.url, 0, "T$season:E$episode",
-                        state.episodeStremioStreams.map { MoviePlayerSource(it.label, it.url, addon = it.addon, stream = it) },
+                        state.episodeStremioStreams.sortedByDescending { it == s }.map { MoviePlayerSource(it.label, it.url, addon = it.addon, stream = it) },
                         season, episode, state.seasons[season]?.size ?: 0,
                     )
                 },
@@ -1007,17 +1018,6 @@ private fun EpisodeServersSheet(
 }
 
 // ── Lista de fontes com filtros e o resultado do teste ──────────────────────
-private val SRC_FILTERS = listOf<Triple<String, String, (com.joabtv.app.data.remote.SourceFacts) -> Boolean>>(
-    Triple("all", "Todas") { true },
-    Triple("dub", "Dublado") { it.lang == "dub" },
-    Triple("leg", "Legendado") { it.lang == "leg" },
-    // Qualidade do nome primeiro (igual ao webOS). Filme 1080p em scope tem 800 linhas reais.
-    Triple("4k", "4K") { (it.labelRank.takeIf { q -> q > 0 } ?: it.rank) >= 2000 },
-    Triple("1080", "1080p") { (it.labelRank.takeIf { q -> q > 0 } ?: it.rank) in 1000..1199 },
-    Triple("hdr", "HDR") { com.joabtv.app.data.remote.hasHdr(it.label) || com.joabtv.app.data.remote.hasDolbyVision(it.label) },
-    Triple("instant", "Instantâneo") { it.debrid >= 2 },
-    Triple("usenet", "Usenet") { it.isUsenet },
-)
 
 /**
  * Cartões das fontes (filme e episódio). Chips de filtro com contagem só do que está visível,
@@ -1050,10 +1050,12 @@ internal fun SourceList(
     // Ordem estável dos cartões e das pílulas (ver StableOrder). gen muda quando a lista recomeça.
     val order = remember { StableOrder() }
     val chipOrder = remember { StableKeys() }
+    // Ordem das seções por addon. Seção que já está na tela fica no lugar, a que chega depois entra embaixo.
+    val secOrder = remember { StableKeys() }
     var gen by remember { mutableIntStateOf(0) }
-    fun touchList() { order.touch(); chipOrder.touch() }
+    fun touchList() { order.touch(); chipOrder.touch(); secOrder.touch() }
     // Filtro escolhido pela pessoa. A lista recomeça e ela já conta como quem mexeu.
-    fun restart() { order.reset(); chipOrder.reset(); touchList(); gen++ }
+    fun restart() { order.reset(); chipOrder.reset(); secOrder.reset(); touchList(); gen++ }
     // Toque ou foco D-pad em qualquer parte da lista. Só observa, o evento segue para o cartão.
     val touchMod = Modifier
         .pointerInput(Unit) {
@@ -1065,25 +1067,24 @@ internal fun SourceList(
             }
         }
         .onFocusChanged { if (it.hasFocus) touchList() }
-    val groups = remember(streams) { groupReleases(streams) }
+    // Cada addon junto, na ordem da configuração (a lista já chega assim), como no Nuvio.
+    val rawGroups = remember(streams) { groupReleases(streams) }
+    val ranks = remember(rawGroups) { addonRanks(rawGroups) }
+    val groups = remember(rawGroups, ranks) { byAddon(rawGroups, ranks) }
     val byUrl = remember(facts) { facts.associateBy { it.url } }
-    fun fact(s: com.joabtv.app.data.remote.StremioStream) = byUrl[s.url]
+    fun fact(s: com.joabtv.app.data.remote.StremioStream) = byUrl[s.url]?.copy(addon = s.addon, label = s.releaseText.ifBlank { s.label })
         ?: com.joabtv.app.data.remote.SourceFacts(s.url, s.addon, s.releaseText.ifBlank { s.label }, s.qualityRank)
     fun wrong(g: ReleaseGroup) = g.members.all { fact(it).wrongTitle }
     // Contagens e filtros só refazem quando o dado muda, não a cada recomposição.
     val wrongCount = remember(groups, byUrl) { groups.count(::wrong) }
     val visible = remember(groups, byUrl, showWrong) { groups.filter { g -> showWrong || !wrong(g) } }
-    val counts = remember(visible, byUrl) {
-        SRC_FILTERS.associate { (k, _, fn) -> k to visible.count { g -> g.members.any { fn(fact(it)) } } }
-    }
     // As de outro filme entram aqui. Quem decide se aparecem é a ordem estável, que deixa no lugar a que já estava na tela.
     val filtered = remember(groups, byUrl, filter, addonFilter) {
-        val predicate = SRC_FILTERS.firstOrNull { it.first == filter }?.third ?: { true }
-        groups.filter { g -> g.members.any { predicate(fact(it)) } && (addonFilter == "all" || g.members.any { it.addon == addonFilter }) }
+        filterReleases(groups, ::fact, filter, addonFilter)
     }
     val res = remember(filtered, byUrl, showWrong, limit, loading, scrolling, gen) {
         // Lista vazia é busca nova (outro episódio ou recarga). Começa do zero.
-        if (streams.isEmpty()) { order.reset(); chipOrder.reset() }
+        if (streams.isEmpty()) { order.reset(); chipOrder.reset(); secOrder.reset() }
         // A versão que o Assistir escolhe. Abre a lista no fim da busca se a pessoa não mexeu.
         val best = if (groups.size > 1) facts.getOrNull(com.joabtv.app.data.remote.bestIndex(facts))?.url else null
         order.update(
@@ -1093,70 +1094,97 @@ internal fun SourceList(
             first = { g -> best != null && g.members.any { it.url == best } },
         )
     }
-    if (groups.isNotEmpty()) Text("${groups.size} versões em ${streams.size} fontes", color = TextTertiary, fontSize = 13.sp)
-    val uniqueAddons = remember(visible) {
-        visible.flatMap { g -> g.members.mapNotNull { it.addon.takeIf { a -> a.isNotBlank() } } }.distinct()
+    val filterOn = filter != "all" || addonFilter != "all"
+    val shownCount = filtered.count { g -> showWrong || !wrong(g) }
+    if (groups.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(sourceSummary(visible.size, shownCount, streams.size, filterOn), color = TextTertiary, fontSize = 13.sp)
+        // Idioma e addon se somam. O resumo diz quais filtros estão valendo, na cor das pílulas ligadas.
+        activeFilters(filter, addonFilter).takeIf { it.isNotEmpty() }?.let {
+            Text(" · $it", color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
     // Pílulas na ordem canônica. A ordem estável põe a nova no fim e arruma quando a busca termina.
     val chips = buildList<Triple<String, String, Boolean>> {
-        if (groups.size > 4) SRC_FILTERS.forEach { (key, name, _) ->
-            val n = counts[key] ?: 0
-            if (key == "all" || n > 0) add(Triple("f:$key", "$name $n", filter == key))
-        }
-        if (uniqueAddons.size > 1) uniqueAddons.forEach { adn ->
-            val count = visible.count { g -> g.members.any { it.addon == adn } }
-            if (count > 0) add(Triple("a:$adn", "$adn $count", addonFilter == adn))
-        }
+        sourceChips(visible, ::fact, filter, addonFilter).forEach { add(Triple(it.key, it.label, it.selected)) }
         if (wrongCount > 0) add(Triple("wrong", if (showWrong) "Ocultar outro filme ($wrongCount)" else "Mostrar todas ($wrongCount de outro filme)", showWrong))
     }
     val chipKeys = chips.map { it.first }
     val chipOrdered = remember(chipKeys, loading, scrolling, gen) { chipOrder.update(chipKeys, loading, scrolling) }
     val chipBy = chips.associateBy { it.first }
-    if (groups.size > 4 || wrongCount > 0 || uniqueAddons.size > 1) Row(touchMod.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        chipOrdered.forEach { k ->
-            val (_, label, selected) = chipBy[k] ?: return@forEach
-            androidx.compose.runtime.key(k) {
-                SeasonChip(label, selected) {
-                    when {
-                        k.startsWith("f:") -> filter = k.removePrefix("f:")
-                        k.startsWith("a:") -> k.removePrefix("a:").let { adn -> addonFilter = if (addonFilter == adn) "all" else adn }
-                        else -> showWrong = !showWrong
+    // Uma fileira por grupo, cada uma com o rótulo do que filtra (idioma e qualidade, addon). Os dois grupos valem juntos.
+    // A pílula de fonte de outro filme tem a fileira dela, sem rótulo, só quando existe.
+    if (groups.isNotEmpty() || wrongCount > 0) Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        listOf("f" to "Mostrar", "a" to "Addon", "w" to "").forEach { (group, rowLabel) ->
+            val keys = chipOrdered.filter { it.startsWith(group) && chipBy.containsKey(it) }
+            if (keys.isNotEmpty()) androidx.compose.runtime.key(group) {
+                Row(touchMod.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(rowLabel, color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.width(64.dp))
+                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        keys.forEach { k ->
+                            val (_, label, selected) = chipBy[k] ?: return@forEach
+                            androidx.compose.runtime.key(k) {
+                                SeasonChip(label, selected) {
+                                    when {
+                                        k.startsWith("f:") -> filter = k.removePrefix("f:")
+                                        k.startsWith("a:") -> k.removePrefix("a:").let { adn -> addonFilter = if (addonFilter == adn) "all" else adn }
+                                        else -> showWrong = !showWrong
+                                    }
+                                    restart()
+                                }
+                            }
+                        }
                     }
-                    restart()
                 }
             }
         }
     }
     val featured = order.featured
-    res.list.chunked(cols.coerceAtLeast(1)).forEach { row ->
-        androidx.compose.runtime.key(row.first().id) {
-            Row(touchMod.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                row.forEach { shownRelease ->
-                    androidx.compose.runtime.key(shownRelease.id) {
-                        val group = shownRelease.group
-                        val source = shownRelease.lead
-                        val f = fact(source)
-                        val height = f.probe?.height ?: 0
-                        val providers = group.members.map { it.addon }.distinct()
-                        // Texto do cartão só refaz quando a fonte, os addons ou a resolução medida mudam.
-                        val info = remember(source, providers, mediaTitle, height) {
-                            val i = releaseInfo(source, mediaTitle, providers)
-                            if (source.qualityRank == 0 && height > 0) i.copy(quality = com.joabtv.app.data.remote.heightLabel(height)) else i
-                        }
-                        val note = when { f.wrongTitle -> "Parece ser outro filme com nome parecido"; f.dead -> "Não respondeu no teste agora"; else -> null }
-                        val (tag, color) = when {
-                            f.wrongTitle -> "OUTRO" to LiveRed
-                            f.debrid >= 2 -> debridTag.ifBlank { "DEBRID" } to Ok
-                            f.p2p -> "P2P" to TextSecondary
-                            else -> "" to TextTertiary
-                        }
-                        Box(Modifier.weight(1f)) {
-                            SourceCard(info, tag, color, onClick = { onPlay(source) }, onDownload = onDownload(source), note = note,
-                                suggested = shownRelease.id == featured)
+    if (filtered.isEmpty() && visible.isNotEmpty() && (filter != "all" || addonFilter != "all")) {
+        androidx.compose.material3.TextButton(onClick = { filter = "all"; addonFilter = "all"; restart() }) {
+            Text("Nenhuma fonte nestes filtros. Limpar filtros", color = TextPrimary)
+        }
+    }
+    // Seções por addon quando há mais de um e nenhum está escolhido. Valem a ordem da configuração (a melhor versão do fim da
+    // busca não puxa o addon dela para cima), com a ordem estável enquanto os addons respondem. O título leva o nome, a
+    // quantidade e um fio fino.
+    val sectionRank = res.list.map { sectionOf(it.group, ranks) }.distinct().sortedBy { ranks[it] ?: Int.MAX_VALUE }
+    val sectionNames = remember(sectionRank, loading, scrolling, gen) { secOrder.update(sectionRank, loading, scrolling) }
+    val sectioned = sectionNames.size > 1 && addonFilter == "all"
+    val sectionTotals = filtered.filter { g -> showWrong || !wrong(g) }.groupingBy { sectionOf(it, ranks) }.eachCount()
+    val blocks: List<Pair<String?, List<ShownRelease>>> =
+        if (sectioned) sectionNames.map { n -> n to res.list.filter { sectionOf(it.group, ranks) == n } } else listOf(null to res.list)
+    blocks.forEach { (sectionName, cards) ->
+        if (sectionName != null) SourceSectionHead(sectionName, cards.size, sectionTotals[sectionName] ?: cards.size)
+        cards.chunked(cols.coerceAtLeast(1)).forEach { row ->
+            androidx.compose.runtime.key(row.first().id) {
+                Row(touchMod.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEach { shownRelease ->
+                        androidx.compose.runtime.key(shownRelease.id) {
+                            val group = shownRelease.group
+                            val source = shownRelease.lead
+                            val f = fact(source)
+                            val height = f.probe?.height ?: 0
+                            val providers = group.members.map { it.addon }.distinct()
+                            // Texto do cartão só refaz quando a fonte, os addons ou a resolução medida mudam.
+                            val info = remember(source, providers, mediaTitle, height) {
+                                val i = releaseInfo(source, mediaTitle, providers)
+                                if (source.qualityRank == 0 && height > 0) i.copy(quality = com.joabtv.app.data.remote.heightLabel(height)) else i
+                            }
+                            val note = when { f.wrongTitle -> "Parece ser outro filme com nome parecido"; f.dead -> "Não respondeu no teste agora"; else -> null }
+                            val (tag, color) = when {
+                                f.wrongTitle -> "OUTRO" to LiveRed
+                                f.debrid >= 2 -> debridTag.ifBlank { "DEBRID" } to Ok
+                                f.p2p -> "P2P" to TextSecondary
+                                else -> "" to TextTertiary
+                            }
+                            Box(Modifier.weight(1f)) {
+                                SourceCard(info, tag, color, onClick = { onPlay(source) }, onDownload = onDownload(source), note = note,
+                                    suggested = shownRelease.id == featured)
+                            }
                         }
                     }
+                    repeat(cols.coerceAtLeast(1) - row.size) { Spacer(Modifier.weight(1f)) }
                 }
-                repeat(cols.coerceAtLeast(1) - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
@@ -1165,6 +1193,18 @@ internal fun SourceList(
         if (wrongCount > 0 && !showWrong) "As fontes encontradas parecem ser de outro filme. Use Mostrar todas para conferir."
         else "Nenhuma versão neste filtro.", color = TextSecondary, fontSize = 13.sp,
     )
+}
+
+/** Título de uma seção da lista de fontes. O nome do addon, a quantidade de versões e um fio fino até a borda. */
+@Composable
+private fun SourceSectionHead(name: String, shown: Int, total: Int) {
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(name.ifBlank { "Outras fontes" }, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold, fontFamily = ManropeFontFamily, maxLines = 1)
+        Spacer(Modifier.width(10.dp))
+        Text(sectionCount(shown, total), color = TextTertiary, fontSize = 13.sp, maxLines = 1)
+        Spacer(Modifier.width(12.dp))
+        Box(Modifier.weight(1f).height(1.dp).background(Border))
+    }
 }
 
 // ── Meta dot separator ──────────────────────────────────────────────────────

@@ -69,6 +69,11 @@ internal data class TvPlayerAction(
     val chipCursor: Int = 0,
     /** Contagem acima da barra ("12 versões em 20 fontes"). */
     val summary: String = "",
+    /** Os filtros ligados ao lado da contagem ("Dublado e Torrentio"), na cor das pílulas ligadas. */
+    val summaryActive: String = "",
+    /** Rótulo da fileira de pílulas ("Mostrar", "Addon"). Sem ele a fileira ocupa a largura toda. */
+    val chipLabel: String = "",
+    val fixed: Boolean = false,
     val onRun: () -> Unit,
 )
 
@@ -129,15 +134,22 @@ private fun PlayerActionPanelBody(
         }) else null,
     ) {
         val listState = rememberLazyListState()
+        val scrolling = actions.withIndex().filterNot { it.value.fixed }
         LaunchedEffect(focusIdx, actions.size) {
             if (actions.isEmpty()) return@LaunchedEffect
+            if (actions.getOrNull(focusIdx)?.fixed == true) return@LaunchedEffect
             // Com a barra de filtros no alto, o foco na primeira versão ainda deixa a barra visível acima dela.
-            val barAbove = focusIdx == 1 && actions[0].chips.isNotEmpty()
-            listState.animateScrollToItem(if (barAbove) 0 else focusIdx.coerceIn(0, actions.lastIndex))
+            val bars = actions.takeWhile { it.chips.isNotEmpty() }.size
+            val barAbove = bars > 0 && focusIdx == bars
+            val index = scrolling.indexOfFirst { it.index == focusIdx }.coerceAtLeast(0)
+            listState.animateScrollToItem(if (barAbove) 0 else index)
+        }
+        actions.forEachIndexed { i, act ->
+            if (act.fixed) SourcePanelRow(act, focused = i == focusIdx, movieTitle = movieTitle, onClick = { onPick(act) })
         }
         LazyColumn(state = listState, modifier = Modifier.fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(actions) { i, act ->
-                SourcePanelRow(act, focused = i == focusIdx, movieTitle = movieTitle, onClick = { onPick(act) })
+            itemsIndexed(scrolling) { _, entry ->
+                SourcePanelRow(entry.value, focused = entry.index == focusIdx, movieTitle = movieTitle, onClick = { onPick(entry.value) })
             }
         }
     }
@@ -162,9 +174,12 @@ private fun SourcePanelRow(action: TvPlayerAction, focused: Boolean, movieTitle:
     Column(Modifier.alpha(if (action.disabled) 0.45f else 1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (action.header.isNotBlank()) com.joabtv.app.ui.common.Eyebrow(action.header, Modifier.padding(top = 10.dp, start = 4.dp))
         if (action.chips.isNotEmpty()) {
-            if (action.summary.isNotBlank()) Text(action.summary, color = TextTertiary, fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp))
+            if (action.summary.isNotBlank()) Row(Modifier.padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(action.summary, color = TextTertiary, fontSize = 13.sp)
+                if (action.summaryActive.isNotBlank()) Text(" · ${action.summaryActive}", color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
             // No toque a pílula escolhe direto. O cursor branco é só do controle remoto.
-            PanelChipRow(action.chips, cursor = if (focused && com.joabtv.app.ui.common.LocalIsTv.current) action.chipCursor else -1)
+            PanelChipRow(action.chips, cursor = if (focused && com.joabtv.app.ui.common.LocalIsTv.current) action.chipCursor else -1, label = action.chipLabel)
             return@Column
         }
         if (action.seasonTabs.isNotEmpty()) {
@@ -220,21 +235,25 @@ private fun SourcePanelRow(action: TvPlayerAction, focused: Boolean, movieTitle:
  * pílula do foco do controle, -1 sem foco. Ligada fica em azul e o cursor em branco, como os cartões do painel.
  */
 @Composable
-private fun PanelChipRow(chips: List<PanelChip>, cursor: Int) {
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        chips.forEachIndexed { i, chip ->
-            val atCursor = i == cursor
-            Box(
-                Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(999.dp))
-                    .background(if (atCursor) Color.White else if (chip.selected) AccentFill else Surface2)
-                    .semantics { selected = chip.selected }
-                    .focusProperties { canFocus = false }
-                    .clickable(role = Role.Button) { chip.onPick() }
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(chip.label, color = if (atCursor) TextOnLight else if (chip.selected) Color.White else TextSecondary,
-                    fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+private fun PanelChipRow(chips: List<PanelChip>, cursor: Int, label: String = "") {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        // O rótulo diz o que a fileira filtra. As duas fileiras valem juntas, então cada uma leva o seu.
+        if (label.isNotBlank()) Text(label, color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.width(64.dp))
+        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            chips.forEachIndexed { i, chip ->
+                val atCursor = i == cursor
+                Box(
+                    Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(999.dp))
+                        .background(if (atCursor) Color.White else if (chip.selected) AccentFill else Surface2)
+                        .semantics { selected = chip.selected }
+                        .focusProperties { canFocus = false }
+                        .clickable(role = Role.Button) { chip.onPick() }
+                        .padding(horizontal = 16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(chip.label, color = if (atCursor) TextOnLight else if (chip.selected) Color.White else TextSecondary,
+                        fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
             }
         }
     }

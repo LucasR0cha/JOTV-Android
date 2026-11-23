@@ -20,9 +20,22 @@ enum class ImportPart(
     // desfazer o que a pessoa mudou no perfil do JOTV (de novo só pelo painel Mais, trazendo só esta parte).
     PROFILE("profile", "Nome e foto do perfil", "Nome e foto do perfil", "nome e foto", "o nome e a foto", false, "Nome e foto não vieram"),
     ADDONS("addons", "Addons", "Addons e as fileiras deles", "addons", "os addons", true, "Addons não vieram"),
+    // Repositórios entram com os provedores desligados. [PartRecord.n] conta os repositórios novos.
+    PLUGINS("plugins", "Plugins", "Repositórios de plugins", "plugins", "os plugins", true, "Plugins não vieram"),
     LIBRARY("library", "Minha Lista e progresso", "Minha Lista e o que você estava assistindo", "Minha Lista", "a Minha Lista", false, "Minha Lista não veio"),
     COLLECTIONS("collections", "Coleções", "Coleções", "coleções", "as coleções", true, "Coleções não vieram"),
     DEBRID("debrid", "Chaves de debrid", "Chaves de debrid", "chaves de debrid", "o debrid", false, "Debrid não veio");
+
+    /** Categorias do perfil que esta parte grava. Destino vinculado nelas deixa de usar (vira cópia) antes de receber. */
+    val writes: List<com.joabtv.app.data.local.ProfileCategory>
+        get() = when (this) {
+            PROFILE, LIBRARY -> emptyList()
+            ADDONS -> listOf(com.joabtv.app.data.local.ProfileCategory.ADDONS)
+            // Repositório no formato Stremio entra como addon.
+            PLUGINS -> listOf(com.joabtv.app.data.local.ProfileCategory.PLUGINS, com.joabtv.app.data.local.ProfileCategory.ADDONS)
+            COLLECTIONS -> listOf(com.joabtv.app.data.local.ProfileCategory.CATALOG)
+            DEBRID -> listOf(com.joabtv.app.data.local.ProfileCategory.DEBRID)
+        }
 
     companion object {
         fun of(key: String): ImportPart? = entries.firstOrNull { it.key == key }
@@ -41,7 +54,7 @@ enum class Account(
     val hint: String,
     val parts: List<ImportPart>,
 ) {
-    NUVIO("nuvio", "Nuvio", "N", "nuvio.tv/link", "Traz nome, foto, addons, Minha Lista, progresso, coleções e debrid", ImportPart.entries),
+    NUVIO("nuvio", "Nuvio", "N", "nuvio.tv/link", "Traz nome, foto, addons, plugins, Minha Lista, progresso, coleções e debrid", ImportPart.entries),
     STREMIO("stremio", "Stremio", "S", "link.stremio.com", "Traz addons, Minha Lista e progresso", listOf(ImportPart.ADDONS, ImportPart.LIBRARY));
 
     companion object {
@@ -82,7 +95,7 @@ data class ImportEntry(val at: Long, val email: String, val profile: String, val
 }
 
 /** Perfil do Nuvio escolhido para trazer as coisas. */
-data class NuvioPick(val index: Int, val name: String, val primaryAddons: Boolean = false)
+data class NuvioPick(val index: Int, val name: String, val primaryAddons: Boolean = false, val primaryPlugins: Boolean = false)
 
 /**
  * Registro do que veio de cada conta, um por perfil do JOTV (chave import_log_v1 nas preferências).
@@ -113,7 +126,7 @@ data class ImportLog(val entries: Map<String, ImportEntry> = emptyMap(), val pic
             e.parts.forEach { (k, r) -> parts.put(k, r.toJson()) }
             root.put(a, JSONObject().put("at", e.at).put("email", e.email).put("nuvioProfile", e.profile).put("parts", parts))
         }
-        pick?.let { root.put("nuvioPick", JSONObject().put("index", it.index).put("name", it.name).put("primaryAddons", it.primaryAddons)) }
+        pick?.let { root.put("nuvioPick", JSONObject().put("index", it.index).put("name", it.name).put("primaryAddons", it.primaryAddons).put("primaryPlugins", it.primaryPlugins)) }
         return root.toString()
     }
 
@@ -130,7 +143,7 @@ data class ImportLog(val entries: Map<String, ImportEntry> = emptyMap(), val pic
                     p.keys().forEach { k -> p.optJSONObject(k)?.let { parts[k] = recordOf(it) } }
                     if (parts.isNotEmpty()) entries[a.key] = ImportEntry(o.optLong("at"), o.optString("email"), o.optString("nuvioProfile"), parts)
                 }
-                val pick = root.optJSONObject("nuvioPick")?.let { NuvioPick(it.optInt("index", 1), it.optString("name", "Principal"), it.optBoolean("primaryAddons")) }
+                val pick = root.optJSONObject("nuvioPick")?.let { NuvioPick(it.optInt("index", 1), it.optString("name", "Principal"), it.optBoolean("primaryAddons"), it.optBoolean("primaryPlugins")) }
                 ImportLog(entries, pick)
             }.getOrDefault(ImportLog())
         }

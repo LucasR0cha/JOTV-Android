@@ -197,6 +197,11 @@ fun MoviePlayerScreen(
         )
     }
     SideEffect { s.isTv = forceTv }
+    // Celular abre o player deitado, sozinho. SENSOR_LANDSCAPE vale mesmo com a rotação automática do sistema desligada.
+    // O botão de girar do player devolve ao automático, e ao sair a tela volta ao automático (PlayerPlaybackEffects).
+    LaunchedEffect(Unit) {
+        if (!forceTv) (context as? android.app.Activity)?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
     s.onBack = onBack
     PlayerSourceEffects(s)
     PlayerPlaybackEffects(s)
@@ -442,7 +447,7 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
         if (extRestored || extUrl != null || readyUrl == null || casting) return@LaunchedEffect
         val saved = progressVm.extAudio(extKey) ?: run { extRestored = true; return@LaunchedEffect }
         val s = currentSources.firstOrNull {
-            it.url != streamUrl && extBlock(it).isEmpty() && sourceSig(it, title) == saved.sig
+            it != currentSources.getOrNull(currentSourceIdx) && extBlock(it).isEmpty() && sourceSig(it, title) == saved.sig
         } ?: return@LaunchedEffect
         extRestored = true
         audioDelay = saved.delaySec
@@ -870,8 +875,8 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                             if (panelKind == "episodes" && sourcePanelIdx == 0 && numSeasons > 1) {
                                 val step = if (kc == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1
                                 selectPanelSeason((panelSeason + step - 1 + numSeasons) % numSeasons + 1)
-                            } else if (panelKind == "sources" && sourcePanelIdx == 0 && (panelActions.firstOrNull()?.chips?.size ?: 0) > 1) {
-                                moveSourceChip(if (kc == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1)
+                            } else if (panelKind == "sources" && (panelActions.getOrNull(sourcePanelIdx)?.chips?.size ?: 0) > 1) {
+                                moveSourceChip(if (kc == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1, sourcePanelIdx)
                             } else if (kc == KeyEvent.KEYCODE_DPAD_LEFT) sourcePanelOpen = false
                             true
                         }
@@ -1257,8 +1262,9 @@ internal class PlayerSession(
     // Filtros do painel de fontes (SourceFilters.kt). Voltam a Todas a cada abertura do painel.
     private var sourceFilter by mutableStateOf("all")
     private var sourceAddon by mutableStateOf("all")
-    // Pílula em que o foco do controle está na barra de filtros. As setas andam e OK escolhe.
+    // Pílula em que o foco do controle está na barra de filtros, uma por fileira (Mostrar e Addon). As setas andam e OK escolhe.
     var sourceChipCursor by mutableIntStateOf(0)
+    var sourceAddonCursor by mutableIntStateOf(0)
     var currentSources by run { mutableStateOf(sources) }
     var currentSourceLabel by run { mutableStateOf(sources.firstOrNull { it.url == embedUrl }?.label ?: "Fonte") }
     // Preferência de fonte que ATRAVESSA episódio e temporada.
@@ -1368,6 +1374,8 @@ internal class PlayerSession(
 
     // Som de outra fonte. [extSync] segue o player principal, [audioDelay] em segundos.
     var extSync by run { mutableStateOf<ExtAudioSync?>(null) }
+    var extSource by run { mutableStateOf<MoviePlayerSource?>(null) }
+    private var extGeneration = 0L
     var extUrl by run { mutableStateOf<String?>(null) }
     var extHeld by run { mutableStateOf(false) }
     // Preparando o link da outra fonte (debrid, NZB). A imagem segue tocando com o som original até ele ficar pronto.
@@ -1497,23 +1505,27 @@ internal class PlayerSession(
 
     // ── Som de outra fonte ──
     fun saveExt() {
-        val src = currentSources.firstOrNull { it.url == extUrl }
+        val src = extSource
         progressVm.saveExtAudio(extKey, src?.let { sourceSig(it, title) }, audioDelay)
     }
     fun dropExt() {
+        extGeneration++
         extSync?.release()
-        extSync = null; extUrl = null; extHeld = false; extPreparing = false; syncBarOpen = false
+        extSync = null; extSource = null; extUrl = null; extHeld = false; extPreparing = false; syncBarOpen = false
     }
+    fun extSelected(src: MoviePlayerSource): Boolean = extUrl == src.url && extSource?.addon == src.addon && extSource?.stream?.headers == src.stream?.headers
     /** Por que [src] não serve como som de outra fonte, ou "" se serve. Magnet e NZB viram link direto pelo debrid. */
     fun extBlock(src: MoviePlayerSource): String =
         extAudioBlock(src.url, !src.stream?.nzbUrl.isNullOrBlank() || com.joabtv.app.data.remote.nzbLink(src.url) != null, episodeVm.debridLabel())
     /** Liga o som de [src] com a imagem atual. [onDone] diz se deu certo. */
     fun setExt(src: MoviePlayerSource, onDone: (Boolean) -> Unit) {
         dropExt()
+        val generation = extGeneration
+        extSource = src
         extUrl = src.url // aparece marcada na hora, e o segundo toque não faz nada enquanto abre
         extPreparing = true
         fun giveUp(message: String) {
-            if (extUrl != src.url) return
+            if (generation != extGeneration || extUrl != src.url) return
             dropExt()
             toastMsg = message
             onDone(false)
@@ -1531,7 +1543,7 @@ internal class PlayerSession(
                         ?: if (nzb != null) "O TorBox ainda não tem esse NZB pronto" else "${episodeVm.debridLabel()} não tem esse arquivo pronto") + ". Voltou o som original."
                 )
             }
-            if (extUrl != src.url) return@launch // a pessoa escolheu outra enquanto o link era preparado
+            if (generation != extGeneration || extUrl != src.url) return@launch
             val headers = if (play == src.url) src.stream?.headers.orEmpty() else emptyMap()
             val mime = com.joabtv.app.data.remote.resolvePlaybackMimeType(play, headers)
             val item = try {
@@ -1539,8 +1551,10 @@ internal class PlayerSession(
             } catch (_: com.joabtv.app.data.torrent.TorrentUnavailable) {
                 return@launch giveUp("Este aparelho não toca torrent.")
             }
-            if (extUrl != src.url) return@launch
-            val ext = ExoPlayer.Builder(context).setMediaSourceFactory(mediaSourceFactory(context, headers)).build().apply {
+            if (generation != extGeneration || extUrl != src.url) return@launch
+            val ext = ExoPlayer.Builder(context)
+                .setRenderersFactory(androidx.media3.exoplayer.DefaultRenderersFactory(context).setEnableDecoderFallback(true))
+                .setMediaSourceFactory(mediaSourceFactory(context, headers)).build().apply {
                 // Só o som. Sem decodificar imagem nem legenda.
                 trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_VIDEO, true)
@@ -1552,10 +1566,10 @@ internal class PlayerSession(
             extPreparing = false
             extSync = ExtAudioSync(
                 exoPlayer, ext, scope, audioDelay,
-                onHold = { extHeld = it },
-                onReady = { if (extUrl == src.url) { saveExt(); onDone(true) } },
+                onHold = { if (generation == extGeneration) extHeld = it },
+                onReady = { if (generation == extGeneration && extSelected(src)) { saveExt(); onDone(true) } },
                 onError = { msg ->
-                    if (extUrl == src.url) { extSync = null; dropExt(); toastMsg = msg; onDone(false) }
+                    if (generation == extGeneration && extSelected(src)) { extSync = null; dropExt(); toastMsg = msg; onDone(false) }
                 },
             )
         }
@@ -1717,7 +1731,7 @@ internal class PlayerSession(
         // O painel fecha só por quem escolheu (onPick e OK). Troca automática (corrida de espelhos,
         // fonte lenta) não fecha o painel que o controle remoto está usando.
         // A imagem passou a ser a fonte que dava o som. Volta o som da própria fonte.
-        if (src.url == extUrl) dropExt()
+        if (extSelected(src)) dropExt()
         currentSourceIdx = idx
         currentSourceLabel = src.label
         // Posição a manter na nova fonte. Se o player ainda NÃO tocou nada (troca automática
@@ -1785,34 +1799,62 @@ internal class PlayerSession(
     // Painel D-pad separado por tipo: "sources" (fontes+episódios), "subs" (legendas), "audio".
     val sourceActions: List<TvPlayerAction> get() {
         val playing = currentSources.getOrNull(currentSourceIdx)?.url
-        val groups = groupReleases(currentSources.map { it.stream ?: com.joabtv.app.data.remote.StremioStream(it.label, it.url, it.addon,
+        val rawGroups = groupReleases(currentSources.map { it.stream ?: com.joabtv.app.data.remote.StremioStream(it.label, it.url, it.addon,
             qualityRank = com.joabtv.app.data.remote.qualityRankOf(it.label)) })
-            .sortedByDescending { g -> g.members.any { it.url == playing } }
+        // Cada addon junto, na ordem da configuração (a lista chega assim), e a versão que toca no alto.
+        val ranks = addonRanks(rawGroups)
+        val groups = byAddon(rawGroups, ranks).sortedByDescending { g -> g.members.any { it.url == playing } }
         // Mesma barra do detalhe (SourceFilters.kt), sobre o que se sabe de cada fonte.
         val known = facts().associateBy { it.url }
         val fact = { s: com.joabtv.app.data.remote.StremioStream ->
-            known[s.url] ?: com.joabtv.app.data.remote.SourceFacts(s.url, s.addon, s.releaseText.ifBlank { s.label }, s.qualityRank)
+            known[s.url]?.copy(addon = s.addon, label = s.releaseText.ifBlank { s.label }) ?: com.joabtv.app.data.remote.SourceFacts(s.url, s.addon, s.releaseText.ifBlank { s.label }, s.qualityRank)
         }
         val chips = sourceChips(groups, fact, sourceFilter, sourceAddon)
         val filtered = sourceFilter != "all" || sourceAddon != "all"
         val shown = if (filtered) filterReleases(groups, fact, sourceFilter, sourceAddon) else groups
         val page = pageOf(shown, sourceLimit)
+        val modeChips = chips.filter { it.key.startsWith("f:") }
+        val addonChips = chips.filter { it.key.startsWith("a:") }
+        // Com mais de um addon e nenhum escolhido, cada addon ganha o título dele, na ordem da configuração.
+        // A versão que toca continua no alto, antes dos títulos.
+        val names = shown.map { sectionOf(it, ranks) }.distinct().sortedBy { ranks[it] ?: Int.MAX_VALUE }
+        val sectioned = names.size > 1 && sourceAddon == "all"
         return buildList {
-            if (chips.isNotEmpty()) add(TvPlayerAction("Filtros", false, false, keepOpen = true,
-                chips = chips.map { c -> PanelChip(c.label, c.selected) { pickSourceChip(c.key) } },
-                chipCursor = sourceChipCursor.coerceIn(0, chips.lastIndex),
-                summary = sourceSummary(groups.size, shown.size, currentSources.size, filtered)) {
-                chips.getOrNull(sourceChipCursor)?.let { pickSourceChip(it.key) }
+            // Duas fileiras com rótulo, uma por grupo de filtro. Os dois grupos valem juntos.
+            if (modeChips.isNotEmpty()) add(TvPlayerAction("Mostrar", false, false, keepOpen = true,
+                chips = modeChips.map { c -> PanelChip(c.label, c.selected) { pickSourceChip(c.key) } },
+                chipCursor = sourceChipCursor.coerceIn(0, modeChips.lastIndex),
+                summary = sourceSummary(groups.size, shown.size, currentSources.size, filtered),
+                summaryActive = activeFilters(sourceFilter, sourceAddon), chipLabel = "Mostrar") {
+                modeChips.getOrNull(sourceChipCursor)?.let { pickSourceChip(it.key) }
             })
-            page.forEach { group ->
+            if (addonChips.isNotEmpty()) add(TvPlayerAction("Addon", false, false, keepOpen = true,
+                chips = addonChips.map { c -> PanelChip(c.label, c.selected) { pickSourceChip(c.key) } },
+                chipCursor = sourceAddonCursor.coerceIn(0, addonChips.lastIndex), chipLabel = "Addon") {
+                addonChips.getOrNull(sourceAddonCursor)?.let { pickSourceChip(it.key) }
+            })
+            fun card(group: ReleaseGroup, header: String = "") {
                 val active = group.members.any { it.url == playing }
                 val src = group.members.firstOrNull { it.url == playing } ?: group.lead
-                add(TvPlayerAction(src.label, true, active, addon = src.addon, stream = src,
+                add(TvPlayerAction(src.label, true, active, addon = src.addon, stream = src, header = header,
                     providers = group.members.map { it.addon }.distinct()) {
-                    if (!active) applyMovieSource(currentSources.indexOfFirst { it.url == src.url }, manual = true)
+                    val pick = currentSources.indexOfFirst { it.url == src.url && it.addon == src.addon }
+                    if (pick >= 0 && pick != currentSourceIdx) applyMovieSource(pick, manual = true)
                 })
             }
-            if (shown.isEmpty() && groups.isNotEmpty()) add(TvPlayerAction("Nenhuma versão neste filtro", false, false, disabled = true, keepOpen = true) {})
+            val now = page.firstOrNull { g -> g.members.any { it.url == playing } }
+            if (sectioned) {
+                now?.let { card(it) }
+                names.forEach { name ->
+                    val mine = page.filter { it !== now && sectionOf(it, ranks) == name }
+                    if (mine.isEmpty()) return@forEach
+                    val total = shown.count { sectionOf(it, ranks) == name }
+                    // A que toca já está no alto, então entra na conta da seção dela.
+                    val seen = mine.size + (if (now != null && sectionOf(now, ranks) == name) 1 else 0)
+                    mine.forEachIndexed { i, g -> card(g, header = if (i == 0) "${name.ifBlank { "Outras fontes" }} · ${sectionCount(seen, total)}" else "") }
+                }
+            } else page.forEach { card(it) }
+            if (shown.isEmpty() && groups.isNotEmpty()) add(TvPlayerAction("Limpar filtros", false, false, sub = "Nenhuma versão nesta combinação", keepOpen = true) { sourceFilter = "all"; sourceAddon = "all" })
             if (shown.size > page.size) add(TvPlayerAction("Mostrar mais", false, false,
                 sub = "${shown.size - page.size} versões", keepOpen = true) { sourceLimit += 30 })
         }
@@ -1825,10 +1867,12 @@ internal class PlayerSession(
         sourceLimit = 30
     }
 
-    /** Seta do controle na barra de filtros. Dá a volta nas pontas, como as temporadas. */
-    fun moveSourceChip(step: Int) {
-        val n = sourceActions.firstOrNull()?.chips?.size ?: 0
-        if (n > 1) sourceChipCursor = (sourceChipCursor.coerceIn(0, n - 1) + step + n) % n
+    /** Seta do controle numa fileira da barra de filtros (0 Mostrar, 1 Addon). Dá a volta nas pontas, como as temporadas. */
+    fun moveSourceChip(step: Int, row: Int = 0) {
+        val n = sourceActions.getOrNull(row)?.chips?.size ?: 0
+        if (n < 2) return
+        if (row == 0) sourceChipCursor = (sourceChipCursor.coerceIn(0, n - 1) + step + n) % n
+        else sourceAddonCursor = (sourceAddonCursor.coerceIn(0, n - 1) + step + n) % n
     }
     val subActions: List<TvPlayerAction> get() = buildList {
         add(TvPlayerAction("Desativada", false, selectedSubUrl == null && !subtitleOn) { pickSub(null, null) })
@@ -1871,6 +1915,11 @@ internal class PlayerSession(
     // versão legendada ouvindo a dublagem de outra.
     val audioActions: List<TvPlayerAction> get() = buildList {
         val ext = extUrl
+        if (ext != null) add(TvPlayerAction(
+            "Ajustar sincronia", false, false, header = "Sincronia do som",
+            sub = if (extHeld || extPreparing) "Preparando o som…" else audioDelayLabel(audioDelay),
+            fixed = true, disabled = extHeld || extPreparing,
+        ) { syncBarOpen = true; controlsVisible = false })
         fun backToOwn() { val had = ext != null; dropExt(); if (had) saveExt() }
         if (audioGroups.size > 1) audioGroups.forEachIndexed { i, g ->
             add(TvPlayerAction(audioTrackLabel(g, i), false, ext == null && g.isSelected, header = if (i == 0) "Da fonte atual" else "") {
@@ -1884,16 +1933,16 @@ internal class PlayerSession(
             val why = extBlock(src)
             val sub = when {
                 why.isNotBlank() -> why
-                ext == src.url -> if (extHeld || extPreparing) "Carregando o som…" else "Tocando o som desta fonte"
+                extSelected(src) -> if (extHeld || extPreparing) "Carregando o som…" else "Tocando o som desta fonte"
                 src.url in wrongUrls -> "Parece ser outro filme"
                 else -> ""
             }
             add(TvPlayerAction(
-                src.label, true, ext == src.url, addon = src.addon, sub = sub, disabled = why.isNotBlank(), keepOpen = true,
+                src.label, true, extSelected(src), addon = src.addon, sub = sub, disabled = why.isNotBlank(), keepOpen = true,
                 header = if (i == 0) "Som de outra fonte (a imagem continua a atual)" else "", stream = src.stream,
             ) {
                 if (why.isNotBlank()) { toastMsg = why; return@TvPlayerAction }
-                if (ext == src.url) return@TvPlayerAction
+                if (extSelected(src)) return@TvPlayerAction
                 audioDelay = 0.0
                 toastMsg = "Carregando o som de ${extName(src, title)}…"
                 setExt(src) { ok ->
@@ -1901,10 +1950,6 @@ internal class PlayerSession(
                 }
             })
         }
-        if (ext != null) add(TvPlayerAction(
-            "Ajustar sincronia", false, false, header = "Sincronia do som",
-            sub = audioDelayLabel(audioDelay) + "  ·  o filme continua tocando",
-        ) { syncBarOpen = true; controlsVisible = false })
     }
     val speedActions get() = speeds.mapIndexed { i, speed ->
         TvPlayerAction(playbackSpeedText(speed), false, i == speedIdx,
@@ -1979,9 +2024,9 @@ internal class PlayerSession(
         sourcePanelIdx = 0
         sourcePanelOpen = true
         if (kind == "sources") {
-            sourceLimit = 30; sourceFilter = "all"; sourceAddon = "all"; sourceChipCursor = 0
-            // Na TV o foco abre na versão que toca. A barra de filtros fica uma seta para cima.
-            if (isTv && sourceActions.firstOrNull()?.chips?.isNotEmpty() == true) sourcePanelIdx = 1
+            sourceLimit = 30; sourceFilter = "all"; sourceAddon = "all"; sourceChipCursor = 0; sourceAddonCursor = 0
+            // Na TV o foco abre na versão que toca. As fileiras da barra de filtros ficam acima, e a seta para cima chega nelas.
+            if (isTv) sourcePanelIdx = sourceActions.takeWhile { it.chips.isNotEmpty() }.size
         }
         if (kind == "episodes") selectPanelSeason(curSeason.coerceAtLeast(1))
     }

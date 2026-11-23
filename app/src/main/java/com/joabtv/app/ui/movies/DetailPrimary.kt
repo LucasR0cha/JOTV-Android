@@ -23,6 +23,17 @@ internal class DetailPrimary(
     val numberOfSeasons: Int,
 )
 
+/**
+ * Há progresso salvo para retomar? A posição fica entre 10 s e 95% da duração. Na série a fonte salva não é exigida, desde
+ * que o episódio esteja gravado. Progresso que veio de outro aparelho (Nuvio, Stremio, Trakt) chega sem fonte e o card do
+ * episódio já mostra Vendo, então o botão tem de dizer Continuar do mesmo jeito. No filme a fonte salva segue valendo,
+ * porque é ela que prova que não é outro filme de nome parecido.
+ */
+internal fun canResumePlayback(
+    isSeries: Boolean, hasSavedSource: Boolean, season: Int, episode: Int, positionMs: Long, durationMs: Long,
+): Boolean = positionMs > 10_000 && (durationMs <= 0 || positionMs < durationMs * 0.95) &&
+    (hasSavedSource || (isSeries && season > 0 && episode > 0))
+
 @Composable
 internal fun rememberDetailPrimary(
     item: MovieItem,
@@ -37,14 +48,14 @@ internal fun rememberDetailPrimary(
     val seriesFinished = isSeries && state.resumeDurationMs > 0 && state.resumePositionMs >= state.resumeDurationMs * 0.9
     val hasAnySource = if (isSeries) state.seasons.values.any { it.isNotEmpty() } else playerSources.isNotEmpty()
 
-    // Há progresso salvo para retomar? (posição entre 10 s e 95% da duração, com fonte salva)
-    val canResume = state.resumeSourceUrl.isNotBlank() && state.resumePositionMs > 10_000 &&
-        (state.resumeDurationMs <= 0 || state.resumePositionMs < state.resumeDurationMs * 0.95)
-
     // Episódio terminado leva ao PRÓXIMO episódio, ou à próxima temporada no fim dela.
     val histMatch = Regex("T(\\d+):E(\\d+)").find(state.resumeLastEpisode)
     val histSeason = histMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
     val histEpisode = histMatch?.groupValues?.get(2)?.toIntOrNull() ?: 0
+
+    // Há progresso salvo para retomar? Ver canResumePlayback.
+    val hasSavedSource = state.resumeSourceUrl.isNotBlank()
+    val canResume = canResumePlayback(isSeries, hasSavedSource, histSeason, histEpisode, state.resumePositionMs, state.resumeDurationMs)
     val episodeFinished = isSeries && histSeason > 0 &&
         state.resumeDurationMs > 0 && state.resumePositionMs >= state.resumeDurationMs * 0.9
     val epsInHistSeason = state.seasons[histSeason]?.size ?: 0
@@ -96,6 +107,12 @@ internal fun rememberDetailPrimary(
         }
         if (canResume) {
             val total = if (histSeason > 0) state.seasons[histSeason]?.size ?: 0 else 0
+            if (!hasSavedSource) {
+                // Sem fonte salva (progresso que veio de outro aparelho). O player abre o episódio, acha as fontes sozinho e
+                // retoma do tempo salvo. Passa pelo mesmo caminho da fonte salva e não marca o episódio como visto ao clicar.
+                onPlayDirect("", state.resumePositionMs, state.resumeLastEpisode, emptyList(), histSeason, histEpisode, total)
+                return
+            }
             // A fonte salva PRECISA estar na lista do player, senão ele acha que toca a fonte 0
             // e a troca automática pula para outra coisa.
             val saved = playerSources.any { it.url == state.resumeSourceUrl }

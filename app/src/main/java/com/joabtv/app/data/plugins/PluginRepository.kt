@@ -5,6 +5,7 @@ import android.util.Base64
 import com.google.gson.Gson
 import com.joabtv.app.data.local.AddonEntry
 import com.joabtv.app.data.local.PlatformPrefs
+import com.joabtv.app.data.local.ProfileCategory
 import com.joabtv.app.data.remote.ExternalSub
 import com.joabtv.app.data.remote.StremioStream
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -45,11 +46,12 @@ class PluginRepository @Inject constructor(@ApplicationContext private val conte
     private val sourceCache = PluginSourceCache(scope)
     private val lock = Any()
     private val codeLock = Mutex()
-    private var loadedProfile = prefs.profileId.value
+    /** Chave do estado no jotv_plugins (state.idDoDono), já seguindo o vínculo do perfil. */
+    private fun stateKey(profileId: String = prefs.profileId.value) = prefs.categoryKey(ProfileCategory.PLUGINS, "state", profileId)
+    private var loadedProfile = stateKey()
     private var lastUpdateCheck = 0L
     @Volatile private var generation = 0
-    private fun read(): PluginState = runCatching {
-        val name = "state.${prefs.profileId.value}"
+    private fun read(name: String = stateKey()): PluginState = runCatching {
         val text = storage.getString(name, "").orEmpty()
         val state = gson.fromJson(text, PluginState::class.java)?.takeIf { it.repos.size <= 40 } ?: return@runCatching PluginState()
         if (!JSONObject(text).has("performanceVersion")) state.copy(concurrency = 32, performanceVersion = 1).also { storage.edit().putString(name, gson.toJson(it)).apply() } else state
@@ -57,20 +59,47 @@ class PluginRepository @Inject constructor(@ApplicationContext private val conte
     private val _state = MutableStateFlow(read())
     val state: StateFlow<PluginState> = _state
     init {
-        scope.launch { prefs.profileId.drop(1).collect { synchronized(lock) { cancel(true); loadedProfile = it; _state.value = read(); lastUpdateCheck = 0 } } }
+        // Troca de perfil, vínculo novo ou cópia para o ativo (a chave pode ser a mesma e o conteúdo outro).
+        prefs.onProfileDataChanged { synchronized(lock) { val k = stateKey(); cancel(true); loadedProfile = k; _state.value = read(k); lastUpdateCheck = 0 } }
         scope.launch { prefs.profiles.collect { profiles ->
             val allowed = profiles.map { "state.${it.id}" }.toSet()
             storage.all.keys.filter { it.startsWith("state.") && it !in allowed }.forEach { storage.edit().remove(it).apply() }
         } }
     }
     private fun update(change: (PluginState) -> PluginState) = synchronized(lock) {
-        if (loadedProfile != prefs.profileId.value) { cancel(true); loadedProfile = prefs.profileId.value; _state.value = read() }
-        val value = change(_state.value); storage.edit().putString("state.$loadedProfile", gson.toJson(value)).apply(); _state.value = value
+        if (loadedProfile != stateKey()) { cancel(true); loadedProfile = stateKey(); _state.value = read() }
+        val value = change(_state.value); storage.edit().putString(loadedProfile, gson.toJson(value)).apply(); _state.value = value
+    }
+
+    /** Muda o estado de um perfil qualquer. O do ativo passa por [update], o de outro grava direto. */
+    private fun updateFor(profileId: String, change: (PluginState) -> PluginState) = synchronized(lock) {
+        val k = stateKey(profileId)
+        if (k == stateKey()) update(change) else storage.edit().putString(k, gson.toJson(change(read(k)))).apply()
+    }
+
+    /**
+     * Instala um repositório no perfil [profileId] (importação da Nuvio para qualquer perfil). Os provedores novos
+     * entram desligados, como em toda instalação. Devolve false quando já estava instalado.
+     */
+    suspend fun installTo(profileId: String, input: String): Boolean {
+        check(prefs.profiles.value.firstOrNull { it.id == profileId }?.kids != true) { "Plugins disponíveis no perfil adulto." }
+        val repo = inspect(input)
+        if (repo.kind == "stremio") {
+            if (prefs.addonIndex(repo.url, repo.addonId, profileId) >= 0) return false
+            prefs.installAddon(repo.url, repo.addonId, profileId)
+            return true
+        }
+        var added = false
+        updateFor(profileId) { s ->
+            if (s.repos.any { it.url == repo.url } || s.repos.size >= 40) s
+            else { added = true; s.copy(repos = s.repos + repo.copy(checkedAt = System.currentTimeMillis())) }
+        }
+        return added
     }
     fun key(repo: PluginRepo, provider: PluginProvider) = "plugin:" + java.net.URLEncoder.encode(repo.url, "UTF-8") + "|" + java.net.URLEncoder.encode(provider.id, "UTF-8")
-    fun find(id: String): Pair<PluginRepo, PluginProvider>? { if (loadedProfile != prefs.profileId.value) update { it }; return _state.value.repos.firstNotNullOfOrNull { r -> r.providers.firstOrNull { key(r, it) == id }?.let { r to it } } }
+    fun find(id: String): Pair<PluginRepo, PluginProvider>? { if (loadedProfile != stateKey()) update { it }; return _state.value.repos.firstNotNullOfOrNull { r -> r.providers.firstOrNull { key(r, it) == id }?.let { r to it } } }
     fun sourceKeys(type: String): List<String> {
-        if (loadedProfile != prefs.profileId.value) update { it }
+        if (loadedProfile != stateKey()) update { it }
         refreshDue()
         val s = _state.value
         if (!s.enabled || prefs.profile.kids) return emptyList()

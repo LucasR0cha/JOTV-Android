@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 
 @HiltViewModel
@@ -321,9 +323,9 @@ class MoviesHomeViewModel @Inject constructor(
      * sai. A linha continua salva, então a série volta sozinha quando sai episódio ou temporada
      * nova. Erro de rede mantém o item como está, p/ não sumir da lista por uma falha passageira do TMDB.
      */
-    private suspend fun resolveHistoryItem(h: com.joabtv.app.data.local.entity.MovieHistoryEntity, now: Long):
+    private suspend fun resolveHistoryItem(h: com.joabtv.app.data.local.entity.MovieHistoryEntity, now: Long, watched: Set<String>):
         com.joabtv.app.data.local.entity.MovieHistoryEntity? {
-        val finished = h.durationMs > 0 && h.positionMs >= h.durationMs * 0.9
+        val finished = (h.durationMs > 0 && h.positionMs >= h.durationMs * 0.9) || h.lastEpisode in watched
         if (!finished) return h
         if (h.type != MediaType.SERIES.name) return null
         val m = Regex("T(\\d+):E(\\d+)").find(h.lastEpisode) ?: return null
@@ -331,14 +333,22 @@ class MoviesHomeViewModel @Inject constructor(
         val episode = m.groupValues[2].toIntOrNull() ?: return null
         if (season <= 0 || episode <= 0) return null
         val apiKey = prefs.tmdbApiKey
-        if (apiKey.isBlank()) return h
-        val thisSeason = runCatching { tmdb.getSeason(h.tmdbId, season, apiKey = apiKey).episodes }.getOrNull() ?: return h
+        if (apiKey.isBlank()) return null
+        val thisSeason = runCatching { tmdb.getSeason(h.tmdbId, season, apiKey = apiKey).episodes }.getOrNull() ?: return null
         // A temporada seguinte só é buscada no fim desta. 404 é "não existe", outro erro mantém o item.
-        val nextSeason: List<TmdbEpisodeDto> = if (thisSeason.any { it.episodeNumber == episode + 1 }) emptyList() else {
+        val nextSeason: List<TmdbEpisodeDto> = if (thisSeason.any { it.episodeNumber > episode && "T$season:E${it.episodeNumber}" !in watched }) emptyList() else {
             val r = runCatching { tmdb.getSeason(h.tmdbId, season + 1, apiKey = apiKey).episodes }
-            r.getOrNull() ?: if (r.exceptionOrNull() is retrofit2.HttpException) emptyList() else return h
+            r.getOrNull() ?: emptyList()
         }
-        val next = nextUpEpisode(season, episode, thisSeason, nextSeason, now) ?: return null
+        var next = nextUpEpisode(season, episode, thisSeason, nextSeason, now, watched)
+        var n = season + 1
+        var eps = nextSeason
+        while (next == null && eps.isNotEmpty() && eps.all { "T$n:E${it.episodeNumber}" in watched } && n < 200) {
+            n++
+            eps = runCatching { tmdb.getSeason(h.tmdbId, n, apiKey = apiKey).episodes }.getOrNull().orEmpty()
+            next = eps.sortedBy { it.episodeNumber }.firstOrNull { "T$n:E${it.episodeNumber}" !in watched && episodeReleased(it.airDate, now) }?.let { "T$n:E${it.episodeNumber}" }
+        }
+        if (next == null) return null
         return h.copy(lastEpisode = next, positionMs = 0, durationMs = 0)
     }
 
@@ -506,41 +516,62 @@ class MoviesHomeViewModel @Inject constructor(
         }
         // Continuar assistindo: observa o histórico (reproduções recentes) e mapeia p/ MovieItem.
         viewModelScope.launch {
-            library.recentlyPlayed().collectLatest { list ->
+            kotlinx.coroutines.flow.combine(library.recentlyPlayed(), library.allWatchedEpisodesFlow()) { history, watched -> history to watched }.collectLatest { (list, watchedRows) ->
                 // Terminado (90%+) some da lista; série nesse ponto mostra o PRÓXIMO episódio em
                 // vez do já visto, só quando ele já saiu (posição >= 90% da duração, próximo = +1 na
                 // temporada ou E1 da seguinte). Em paralelo, porque cada série terminada consulta o TMDB.
                 // Recomendações abaixo seguem usando o histórico cru (`list`).
                 val now = System.currentTimeMillis()
-                val continueList = coroutineScope { list.map { async { resolveHistoryItem(it, now) } }.awaitAll().filterNotNull() }
-                val items = continueList.map { h ->
-                    MovieItem(
-                        tmdbId = h.tmdbId,
-                        embedId = h.tmdbId.toString(),
-                        title = h.title,
-                        overview = "",
-                        posterUrl = h.posterUrl,
-                        backdropUrl = "",
-                        year = "",
-                        rating = 0.0,
-                        type = runCatching { MediaType.valueOf(h.type) }.getOrDefault(MediaType.MOVIE),
-                    )
+                fun publish(continueList: List<com.joabtv.app.data.local.entity.MovieHistoryEntity>) {
+                    val items = continueList.map { h ->
+                        MovieItem(
+                            tmdbId = h.tmdbId,
+                            embedId = h.tmdbId.toString(),
+                            title = h.title,
+                            overview = "",
+                            posterUrl = h.posterUrl,
+                            backdropUrl = "",
+                            year = "",
+                            rating = 0.0,
+                            type = runCatching { MediaType.valueOf(h.type) }.getOrDefault(MediaType.MOVIE),
+                        )
+                    }
+                    // Progresso + tempo restante (min) por tmdbId — p/ o "Continuar assistindo".
+                    val progress = continueList.filter { it.durationMs > 0 }
+                        .associate { it.tmdbId to (it.positionMs.toFloat() / it.durationMs).coerceIn(0f, 1f) }
+                    val remaining = continueList.filter { it.durationMs > 0 && it.durationMs > it.positionMs }
+                        .associate { it.tmdbId to (((it.durationMs - it.positionMs) / 60000L).toInt()) }
+                    // Selo do episódio ("T2:E5" -> "T2 E5"), igual ao que a Minha Lista da TV já mostra.
+                    val episode = continueList.filter { it.lastEpisode.isNotBlank() }
+                        .associate { it.tmdbId to it.lastEpisode.replace(":", " ") }
+                    _uiState.update {
+                        it.copy(
+                            continueWatching = items, continueProgress = progress,
+                            continueRemaining = remaining, continueEpisode = episode,
+                            continueArtwork = it.continueArtwork.filterKeys { key -> items.any { m -> com.joabtv.app.data.local.posterKey(m) == key } },
+                        )
+                    }
                 }
-                // Progresso + tempo restante (min) por tmdbId — p/ o "Continuar assistindo".
-                val progress = continueList.filter { it.durationMs > 0 }
-                    .associate { it.tmdbId to (it.positionMs.toFloat() / it.durationMs).coerceIn(0f, 1f) }
-                val remaining = continueList.filter { it.durationMs > 0 && it.durationMs > it.positionMs }
-                    .associate { it.tmdbId to (((it.durationMs - it.positionMs) / 60000L).toInt()) }
-                // Selo do episódio ("T2:E5" -> "T2 E5"), igual ao que a Minha Lista da TV já mostra.
-                val episode = continueList.filter { it.lastEpisode.isNotBlank() }
-                    .associate { it.tmdbId to it.lastEpisode.replace(":", " ") }
-                _uiState.update {
-                    it.copy(
-                        continueWatching = items, continueProgress = progress,
-                        continueRemaining = remaining, continueEpisode = episode,
-                        continueArtwork = it.continueArtwork.filterKeys { key -> items.any { m -> com.joabtv.app.data.local.posterKey(m) == key } },
-                    )
+                val slots = arrayOfNulls<com.joabtv.app.data.local.entity.MovieHistoryEntity>(list.size)
+                val watchedBySeries = watchedRows.groupBy { it.seriesTmdbId }.mapValues { (_, rows) -> rows.map { "T${it.season}:E${it.episode}" }.toSet() }
+                list.forEachIndexed { i, h ->
+                    val done = (h.durationMs > 0 && h.positionMs >= h.durationMs * 0.9) || h.lastEpisode in watchedBySeries[h.tmdbId].orEmpty()
+                    if (!done) slots[i] = h
                 }
+                publish(slots.filterNotNull())
+                val permits = kotlinx.coroutines.sync.Semaphore(4)
+                coroutineScope {
+                    list.mapIndexed { i, h -> async {
+                        permits.withPermit {
+                            val resolved = resolveHistoryItem(h, now, watchedBySeries[h.tmdbId].orEmpty())
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            slots[i] = resolved
+                            publish(slots.filterNotNull())
+                        }
+                    } }.awaitAll()
+                }
+                val continueList = slots.filterNotNull()
+                val items = _uiState.value.continueWatching
                 // Toda vez que o histórico muda, a recomendação é refeita. É isso que faz a
                 // lista acompanhar o que a pessoa anda assistindo.
                 buildRecommendations(list)
@@ -1044,11 +1075,12 @@ internal fun episodeReleased(airDate: String?, now: Long): Boolean = airDateMs(a
  * Episódio que o Continuar mostra depois de terminar T[season]:E[episode], ou null enquanto o próximo
  * não saiu (a série some até sair). [nextSeason] só importa no fim da temporada e vem vazia quando não existe.
  */
-internal fun nextUpEpisode(season: Int, episode: Int, thisSeason: List<TmdbEpisodeDto>, nextSeason: List<TmdbEpisodeDto>, now: Long): String? {
-    val next = thisSeason.firstOrNull { it.episodeNumber == episode + 1 }
-    if (next != null) return "T$season:E${episode + 1}".takeIf { episodeReleased(next.airDate, now) }
-    val first = nextSeason.firstOrNull { it.episodeNumber == 1 }
-    return "T${season + 1}:E1".takeIf { first != null && episodeReleased(first.airDate, now) }
+internal fun nextUpEpisode(season: Int, episode: Int, thisSeason: List<TmdbEpisodeDto>, nextSeason: List<TmdbEpisodeDto>, now: Long, watched: Set<String> = emptySet()): String? {
+    val next = thisSeason.sortedBy { it.episodeNumber }.firstOrNull { it.episodeNumber > episode && "T$season:E${it.episodeNumber}" !in watched }
+    if (next != null) return "T$season:E${next.episodeNumber}".takeIf { episodeReleased(next.airDate, now) }
+    if (nextSeason.none { it.episodeNumber == 1 }) return null
+    val first = nextSeason.sortedBy { it.episodeNumber }.firstOrNull { "T${season + 1}:E${it.episodeNumber}" !in watched } ?: return null
+    return "T${season + 1}:E${first.episodeNumber}".takeIf { episodeReleased(first.airDate, now) }
 }
 
 /** Os que já saíram primeiro (o mais recente na frente), depois as estreias pela mais próxima. */

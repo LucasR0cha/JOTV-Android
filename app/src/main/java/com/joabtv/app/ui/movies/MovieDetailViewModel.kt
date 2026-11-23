@@ -79,6 +79,7 @@ class MovieDetailViewModel @Inject constructor(
         val series: SeriesItem? = null,
         val seasons: Map<Int, List<EpisodeItem>> = emptyMap(),
         val selectedSeason: Int = 1,
+        val seasonErrors: Set<Int> = emptySet(),
         // (B) Minha Lista — item salvo? (reativo via LibraryRepository.isSaved)
         val isSaved: Boolean = false,
         // (D) Episódios já vistos desta série, como Set "season:episode" (ex "1:3")
@@ -204,6 +205,7 @@ class MovieDetailViewModel @Inject constructor(
                         selectedSeason = if (seasonOfHistory > 0) seasonOfHistory else it.selectedSeason,
                     )
                 }
+                if (stub.type == MediaType.SERIES && seasonOfHistory > 0) loadSeason(stub.tmdbId, seasonOfHistory)
             }
         }
         load(stub.embedId, stub.tmdbId, stub.type)
@@ -346,9 +348,12 @@ class MovieDetailViewModel @Inject constructor(
                     }
                 }
                 val episodesD = async {
-                    if (apiKey.isNotBlank() && tmdbId > 0)
-                        runCatching { tmdb.getSeason(tmdbId, 1, apiKey = apiKey).episodes.map { it.toDomain() } }.getOrDefault(emptyList())
-                    else emptyList()
+                    val result = if (apiKey.isNotBlank() && tmdbId > 0)
+                        runCatching { seasonEpisodes(tmdbId, 1, apiKey) }
+                    else Result.success(emptyList())
+                    result.onSuccess { episodes -> _uiState.update { it.copy(seasons = it.seasons + (1 to episodes)) } }
+                    result.onFailure { _uiState.update { it.copy(seasonErrors = it.seasonErrors + 1) } }
+                    result.getOrDefault(emptyList())
                 }
                 val detailDto = detailDtoD.await()
                 val seriesDetail = detailDto?.toDomain(embedId)
@@ -367,7 +372,7 @@ class MovieDetailViewModel @Inject constructor(
                         related = relatedList,
                         trailerKey = trailer,
                         trailerKeys = trailers,
-                        seasons = if (episodes.isNotEmpty()) mapOf(1 to episodes) else emptyMap(),
+                        seasons = state.seasons,
                         seriesImdbId = seriesImdb,
                         isLoading = false,
                         sourcesLoading = false,
@@ -540,15 +545,29 @@ class MovieDetailViewModel @Inject constructor(
         }
     }
 
+    private val seasonsInFlight = mutableSetOf<Int>()
+    private val seasonLoads = mutableMapOf<Pair<Int, Int>, kotlinx.coroutines.Deferred<List<EpisodeItem>>>()
+    private suspend fun seasonEpisodes(tmdbId: Int, season: Int, apiKey: String): List<EpisodeItem> {
+        val key = tmdbId to season
+        val task = seasonLoads.getOrPut(key) {
+            viewModelScope.async { tmdb.getSeason(tmdbId, season, apiKey = apiKey).episodes.map { it.toDomain() } }
+        }
+        try { return task.await() }
+        finally { if (task.isCancelled && seasonLoads[key] === task) seasonLoads.remove(key) }
+    }
     fun loadSeason(tmdbId: Int, season: Int) {
         val apiKey = prefs.tmdbApiKey
         if (apiKey.isBlank()) return
+        _uiState.update { it.copy(selectedSeason = season) }
+        if (season in _uiState.value.seasons || !seasonsInFlight.add(season)) return
         viewModelScope.launch {
-            _uiState.update { it.copy(selectedSeason = season) }
-            val episodes = runCatching {
-                tmdb.getSeason(tmdbId, season, apiKey = apiKey).episodes.map { it.toDomain() }
-            }.getOrDefault(emptyList())
-            _uiState.update { it.copy(seasons = it.seasons + (season to episodes)) }
+            _uiState.update { it.copy(seasonErrors = it.seasonErrors - season) }
+            val result = runCatching {
+                seasonEpisodes(tmdbId, season, apiKey)
+            }
+            seasonsInFlight.remove(season)
+            result.onSuccess { episodes -> _uiState.update { it.copy(seasons = it.seasons + (season to episodes)) } }
+            result.onFailure { _uiState.update { it.copy(seasonErrors = it.seasonErrors + season) } }
         }
     }
 }

@@ -46,7 +46,7 @@ fun AccountsScreen(onBack: () -> Unit, onOpenHome: () -> Unit = onBack, viewMode
     val pad = com.joabtv.app.ui.common.pagePadding()
     val tv = LocalIsTv.current
     var panel by remember { mutableStateOf<AccountPanel?>(null) }
-    val cards = Account.entries.map { a -> accountView(a, st.snap(a), st.log[a], st.running[a.key]) }
+    val cards = Account.entries.map { a -> accountView(a, st.snap(a), st.log[a], st.running[a.key], looking = a.key in st.looking) }
     val reqs = remember { HashMap<String, FocusRequester>() }
     fun req(card: String, act: String) = reqs.getOrPut("$card/$act") { FocusRequester() }
 

@@ -56,4 +56,11 @@ class ContinueNextUpTest {
         assertFalse(episodeReleased("", now))
         assertFalse(episodeReleased("sem data", now))
     }
+
+    @Test
+    fun temporadaVistaEsperaEpisodioAindaNaoVistoLancado() {
+        val season = listOf(ep(1, "2026-01-01"), ep(2, "2026-01-02"), ep(3, "2026-01-03"))
+        assertNull(nextUpEpisode(1, 1, season, listOf(ep(1, "2027-01-01")), now, setOf("T1:E2", "T1:E3")))
+        assertEquals("T1:E3", nextUpEpisode(1, 1, season, emptyList(), now, setOf("T1:E2")))
+    }
 }

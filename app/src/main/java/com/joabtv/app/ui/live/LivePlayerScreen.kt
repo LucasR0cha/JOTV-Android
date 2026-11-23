@@ -130,6 +130,8 @@ fun LivePlayerScreen(channelId: String, onBack: () -> Unit, viewModel: LivePlaye
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
 
     val activity = context as? android.app.Activity
+    // Celular abre o ao vivo deitado, sozinho. O botão de girar libera de volta, e ao sair a tela volta ao automático.
+    LaunchedEffect(Unit) { if (!isTv) activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE }
     val player = remember {
         ExoPlayer.Builder(context).build().apply { playWhenReady = true }
     }
@@ -405,6 +407,7 @@ fun LivePlayerScreen(channelId: String, onBack: () -> Unit, viewModel: LivePlaye
                 onClose = { panel = false; overlay = true; if (isTv) rootFocus.requestFocus() },
                 onSource = { choice = "filterSource" }, onGroup = { choice = "filterGroup" }, onTyping = { typing = it },
                 onProgram = { c, p -> programInfo = c to p; choice = "program" },
+                onGuide = viewModel::ensureGuide,
             )
         }
 
@@ -493,6 +496,7 @@ private fun LivePlayerChannelPanel(
     now: Long, wide: Boolean, buffering: Boolean, onFilter: (LiveBrowseFilter) -> Unit, onPlay: (String) -> Unit,
     onFavorite: (String) -> Unit, onWide: () -> Unit, onClose: () -> Unit, onSource: () -> Unit, onGroup: () -> Unit,
     onTyping: (Boolean) -> Unit, onProgram: (LiveChannel, LiveProgram) -> Unit,
+    onGuide: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val selectedFocus = remember { FocusRequester() }
@@ -538,6 +542,7 @@ private fun LivePlayerChannelPanel(
                 LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (rows.isEmpty()) item { Text("Nenhum canal neste filtro. Use Limpar filtros para ver todos.", color = TextSecondary, modifier = Modifier.padding(16.dp)) }
                     itemsIndexed(rows, key = { _, c -> c.id }) { _, c ->
+                        LaunchedEffect(c.id, now / 300000L) { onGuide(c.id) }
                         var focusedRow by remember(c.id) { mutableStateOf(false) }
                         val active = c.id == currentId
                         val programs = state.epg[c.id].orEmpty()

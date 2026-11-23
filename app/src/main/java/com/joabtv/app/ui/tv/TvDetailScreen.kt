@@ -211,7 +211,7 @@ private fun TvDetailScreenBody(
                     }
 
                     if (isSeries) item(key = "eps") {
-                        TvEpisodes(state, item, onPlayEpisode, onPlayDirect, viewModel::selectEpisode, onOptions = { episodeOptions = it })
+                        TvEpisodes(state, item, onPlayEpisode, onPlayDirect, viewModel::selectEpisode, onOptions = { episodeOptions = it }, onRetry = { viewModel.loadSeason(item.tmdbId, state.selectedSeason) })
                     } else item(key = "sources") {
                         Column(Modifier.fillMaxWidth()) {
                             Row(
@@ -237,7 +237,7 @@ private fun TvDetailScreenBody(
                                     mediaTitle = state.item?.title.orEmpty(),
                                     onPlay = { s ->
                                         viewModel.recordPlayback()
-                                        onPlayDirect(s.url, 0, "", primary.playerSources, 0, 0, 0)
+                                        onPlayDirect(s.url, 0, "", primary.playerSources.sortedByDescending { it.stream == s }, 0, 0, 0)
                                     },
                                     onDownload = { null },
                                     cols = 2,
@@ -305,7 +305,7 @@ private fun TvDetailScreenBody(
                         viewModel.clearSelectedEpisode()
                         onPlayDirect(
                             s.url, 0, "T$season:E$episode",
-                            state.episodeStremioStreams.map { MoviePlayerSource(it.label, it.url, addon = it.addon, stream = it) },
+                            state.episodeStremioStreams.sortedByDescending { it == s }.map { MoviePlayerSource(it.label, it.url, addon = it.addon, stream = it) },
                             season, episode, state.seasons[season]?.size ?: 0,
                         )
                     },
@@ -343,9 +343,14 @@ private fun TvEpisodes(
     onPlayDirect: (String, Long, String, List<MoviePlayerSource>, Int, Int, Int) -> Unit,
     onSelect: (Int, Int) -> Unit,
     onOptions: (com.joabtv.app.domain.model.EpisodeItem) -> Unit,
+    onRetry: () -> Unit,
 ) {
     val season = state.selectedSeason
     val eps = state.seasons[season]
+    if (season in state.seasonErrors) {
+        androidx.compose.material3.TextButton(onClick = onRetry) { Text("Tentar carregar temporada $season", color = TextPrimary) }
+        return
+    }
     if (eps == null) { TvSpinner("Carregando temporada $season"); return }
     if (eps.isEmpty()) { TvHint("Sem episódios nesta temporada."); return }
     val row = rememberLazyListState()
