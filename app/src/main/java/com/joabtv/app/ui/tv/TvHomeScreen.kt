@@ -65,6 +65,7 @@ import com.joabtv.app.ui.movies.MoviesHomeViewModel
 import com.joabtv.app.ui.movies.MoviesHomeViewModel.CatalogEndpoint
 import com.joabtv.app.ui.movies.MoviesHomeViewModel.CatalogQuery
 import com.joabtv.app.ui.movies.MoviesHomeViewModel.CatalogType
+import com.joabtv.app.ui.common.forShape
 import com.joabtv.app.ui.common.rememberReducedMotion
 import com.joabtv.app.ui.navigation.TvMenuClosed
 import com.joabtv.app.ui.navigation.TvMenuTop
@@ -675,7 +676,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.homeRails(
                     if (ar.items.isEmpty()) TvSkeletonRail()
                     else PosterRail(ar.title, ar.items, onItemClick, onFocus,
                         pageHeight = pageHeight, onPageContentHeight = onPageContentHeight,
-                        onNearEnd = if (ar.more) ({ viewModel.loadAddonRow(ar.ref.key) }) else null)
+                        onNearEnd = if (ar.more) ({ viewModel.loadAddonRow(ar.ref.key) }) else null, pageKey = ar.skip)
                 }
             }
         }
@@ -695,6 +696,8 @@ private fun PosterRail(
     seeAll: (() -> Unit)? = null,
     pageHeight: Dp = Dp.Unspecified,
     onPageContentHeight: (Dp) -> Unit = {},
+    // Quanto do catálogo já foi lido. Entra na chave do gatilho, porque página sem título novo não muda items.size.
+    pageKey: Int = 0,
 ) {
     val row = rememberLazyListState()
     if (onNearEnd != null) {
@@ -704,15 +707,18 @@ private fun PosterRail(
                 li.totalItemsCount > 0 && (li.visibleItemsInfo.lastOrNull()?.index ?: 0) >= li.totalItemsCount - 4
             }
         }
-        LaunchedEffect(near, items.size) { if (near) onNearEnd() }
+        LaunchedEffect(near, items.size, pageKey) { if (near) onNearEnd() }
     }
+    // A fileira inteira segue a forma do primeiro título (retrato, paisagem ou quadrado), como o Stremio faz.
+    val rowShape = items.firstOrNull()?.posterShape ?: "poster"
     TvRail(title, state = row, preserveColumnOnVertical = true, pageHeight = pageHeight, onPageContentHeight = onPageContentHeight) {
         items(items.size, key = { "${items[it].type}:${items[it].tmdbId}" }) { index ->
             val item = items[index]
             TvPoster(
-                item = item, onClick = { onItemClick(item) }, width = tvPosterWidth,
+                item = item, onClick = { onItemClick(item) }, width = tvPosterWidth.forShape(rowShape),
                 progress = progress?.get(item.tmdbId), subtitle = subs?.get(item.tmdbId), badge = badges?.get(item.tmdbId),
                 onFocus = { onFocus(item) }, qualityNeighbors = { items.subList(index + 1, minOf(items.size, index + 8)) },
+                posterShape = rowShape,
             )
         }
         if (seeAll != null) item(key = "seeAll") { SeeAllCard(seeAll) }

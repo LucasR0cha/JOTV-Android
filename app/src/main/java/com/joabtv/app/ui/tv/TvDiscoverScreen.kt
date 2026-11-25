@@ -34,6 +34,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.joabtv.app.domain.model.MovieItem
+import com.joabtv.app.ui.common.forShape
 import com.joabtv.app.ui.movies.DiscoverViewModel
 import com.joabtv.app.ui.movies.addonFilterTitle
 import com.joabtv.app.ui.movies.catalogKey
@@ -82,6 +83,8 @@ fun TvDiscoverScreen(
         else listOf("sort" to "Ordenar por", "genres" to "Gêneros", "year" to "Ano", "cert" to "Classificação", "rating" to "Nota mínima")
             .forEach { add(DiscoverField(it.first, it.second)) }
     }
+    // A grade segue a forma do primeiro título (retrato, paisagem ou quadrado).
+    val shape = state.items.firstOrNull()?.posterShape ?: "poster"
     val genres = state.genres.filter { it.id in state.selectedGenres }.map { it.name }
     val genreValue = when (genres.size) {
         0 -> "Todos"
@@ -94,7 +97,7 @@ fun TvDiscoverScreen(
             info.totalItemsCount > 0 && (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 16
         }
     }
-    LaunchedEffect(nearEnd, state.items.size) { if (nearEnd) viewModel.loadMore() }
+    LaunchedEffect(nearEnd, state.items.size, state.skip, state.page) { if (nearEnd) viewModel.loadMore() }
     LaunchedEffect(state.loading) { if (state.loading) grid.scrollToItem(0) }
     LaunchedEffect(restoreFocus, picker) {
         val target = restoreFocus
@@ -199,13 +202,13 @@ fun TvDiscoverScreen(
                         LazyVerticalGrid(
                             // O pôster nunca fica menor que o da Início (mesma medida, com 3% de folga para manter as 8 colunas do tamanho
                             // padrão). Quantas colunas cabem depende da largura que o menu e o Tamanho da interface deixam.
-                            GridCells.Adaptive(tvPosterWidth * 0.97f), state = grid,
+                            GridCells.Adaptive((tvPosterWidth * 0.97f).forShape(shape)), state = grid,
                             contentPadding = PaddingValues(start = tvPad, end = tvPad, top = 0.7.r, bottom = 3.r),
                             horizontalArrangement = Arrangement.spacedBy(1.r), verticalArrangement = Arrangement.spacedBy(1.5.r),
                             modifier = Modifier.fillMaxSize(),
                         ) {
                             items(state.items, key = { "${it.type}:${it.tmdbId}" }) { item ->
-                                TvPoster(item, { onItemClick(item) }, width = Dp.Unspecified)
+                                TvPoster(item, { onItemClick(item) }, width = Dp.Unspecified, posterShape = shape)
                             }
                         }
                     }

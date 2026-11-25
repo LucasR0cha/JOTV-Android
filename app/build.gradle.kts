@@ -16,8 +16,8 @@ android {
         minSdk         = 23
         targetSdk      = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode    = 24
-        versionName    = "1.0.23"
+        versionCode    = 25
+        versionName    = "1.0.24"
         // Chave TMDB lida de gradle property (local.properties / ~/.gradle/gradle.properties),
         // fora do VCS. Sem ela, fica vazia e o usuário informa a própria chave em Configurações.
         val tmdbKey = (project.findProperty("TMDB_API_KEY") as String?) ?: ""
@@ -140,6 +140,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.6.0")
     implementation("androidx.media3:media3-exoplayer-dash:1.6.0")
     implementation("androidx.media3:media3-ui:1.6.0")
+    // Efeitos de vídeo do Melhorar imagem. Só entram no player quando a pessoa liga a função.
+    implementation("androidx.media3:media3-effect:1.6.0")
     // DataSource via OkHttp → ExoPlayer usa o MESMO DNS-over-HTTPS dos streams.
     implementation("androidx.media3:media3-datasource-okhttp:1.6.0")
     // MediaSession — controle pela tela bloqueada, fone Bluetooth e Google Assistant.

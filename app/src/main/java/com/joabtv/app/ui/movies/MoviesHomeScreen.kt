@@ -52,6 +52,7 @@ import com.joabtv.app.ui.common.Badge
 import com.joabtv.app.ui.common.FilterChipPill
 import com.joabtv.app.ui.common.JoabEmptyState
 import com.joabtv.app.ui.common.MediaPosterCard
+import com.joabtv.app.ui.common.forShape
 import com.joabtv.app.ui.common.ScreenTopHeader
 import kotlinx.coroutines.launch
 import androidx.compose.ui.focus.onFocusChanged
@@ -493,6 +494,7 @@ private fun HomeSectionsTab(
                         else SectionRow(
                             ar.title, ar.items, onItemClick,
                             onNearEnd = if (ar.more) ({ viewModel.loadAddonRow(ar.ref.key) }) else null,
+                            pageKey = ar.skip,
                         )
                     }
                 }
@@ -764,6 +766,8 @@ private fun SectionRow(
     onNearEnd: (() -> Unit)? = null,        // paginação da fileira (catálogo de addon)
     badges: Map<Int, String>? = null,       // selo no canto do pôster (Novos episódios)
     subs: Map<Int, String>? = null,         // linha embaixo do pôster
+    // Quanto do catálogo já foi lido. Entra na chave do gatilho, porque página sem título novo não muda items.size.
+    pageKey: Int = 0,
     // Último de propósito. A lambda final das chamadas ("Ver Tudo") cai aqui. Antes caía no
     // onNearEnd e a grade abria sozinha quando a fileira era curta.
     onSeeMore: (() -> Unit)? = null,
@@ -776,10 +780,12 @@ private fun SectionRow(
                 li.totalItemsCount > 0 && (li.visibleItemsInfo.lastOrNull()?.index ?: 0) >= li.totalItemsCount - 4
             }
         }
-        LaunchedEffect(nearEnd, items.size) { if (nearEnd) onNearEnd() }
+        LaunchedEffect(nearEnd, items.size, pageKey) { if (nearEnd) onNearEnd() }
     }
     val pad = com.joabtv.app.ui.common.pagePadding()
-    val cardWidth = com.joabtv.app.ui.common.posterWidth()
+    // A fileira inteira segue a forma do primeiro título (retrato, paisagem ou quadrado), como o Stremio faz.
+    val rowShape = items.firstOrNull()?.posterShape ?: "poster"
+    val cardWidth = com.joabtv.app.ui.common.posterWidth().forShape(rowShape)
     Column {
         com.joabtv.app.ui.common.SectionHeader(
             title = title,
@@ -800,6 +806,7 @@ private fun SectionRow(
                     sub = subs?.get(item.tmdbId),
                     badge = badges?.get(item.tmdbId),
                     progress = progressMap?.get(item.tmdbId),
+                    posterShape = rowShape,
                 )
             }
         }

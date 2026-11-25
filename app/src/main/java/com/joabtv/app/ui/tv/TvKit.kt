@@ -60,8 +60,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.em
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.joabtv.app.data.poster.PosterTemplate
 import com.joabtv.app.domain.model.MovieItem
 import com.joabtv.app.ui.common.PosterDecorations
+import com.joabtv.app.ui.common.rememberPosterArt
 import com.joabtv.app.ui.common.rememberPosterVisual
 import com.joabtv.app.ui.common.SpinningIcon
 import com.joabtv.app.ui.common.rememberReducedMotion
@@ -405,30 +407,32 @@ fun TvPoster(
     onFocus: () -> Unit = {},
     onLongClick: (() -> Unit)? = null,
     qualityNeighbors: () -> List<MovieItem> = NoNeighbors,
+    /** Forma da fileira ou da grade (poster, landscape ou square). Nulo usa a do próprio título. */
+    posterShape: String? = null,
 ) {
     val title = item.title
     var focused by remember { mutableStateOf(false) }
-    val visual = rememberPosterVisual(item, badge, typeBadge != null, showTag = order <= 0, requestQuality = false)
+    val kind = posterShape ?: item.posterShape
+    val art = rememberPosterArt(item, kind)
+    val visual = rememberPosterVisual(item, badge, typeBadge != null, showTag = order <= 0, requestQuality = false, plain = art.plain)
     val posterInfo = com.joabtv.app.ui.common.LocalPosterInfo.current
-    if (focused && badge == null && posterInfo != null) LaunchedEffect(item.tmdbId, item.type) {
+    if (focused && badge == null && !art.plain && posterInfo != null) LaunchedEffect(item.tmdbId, item.type) {
         delay(700)
         val nearby = listOf(item) + qualityNeighbors().take(7)
         nearby.forEach(posterInfo::want)
         try { awaitCancellation() } finally { nearby.forEach(posterInfo::unwant) }
     }
     val context = LocalContext.current
-    val image = remember(context, item.posterUrl, item.backdropUrl) {
-        ImageRequest.Builder(context).data(item.posterUrl.ifBlank { item.backdropUrl }).build()
-    }
+    val image = remember(context, art.url) { ImageRequest.Builder(context).data(art.url).build() }
     val s = tvFocusScaleState(focused, 1.06f)
     val shape = RoundedCornerShape(0.9.r)
-    var imageFailed by remember(item.posterUrl, item.backdropUrl) { mutableStateOf(false) }
-    val noUrl = item.posterUrl.isBlank() && item.backdropUrl.isBlank()
+    var imageFailed by remember(art.url) { mutableStateOf(false) }
+    val noUrl = art.url.isNullOrBlank()
     Column(modifier.then(if (width == Dp.Unspecified) Modifier.fillMaxWidth() else Modifier.width(width))) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .aspectRatio(2f / 3f)
+                .aspectRatio(PosterTemplate.aspectOf(kind))
                 .tvFocusLayer(s, cached = true)
                 .shadow(if (focused) 1.2.r else 0.dp, shape)
                 .clip(shape)
@@ -443,18 +447,18 @@ fun TvPoster(
                 maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.align(Alignment.Center).padding(1.r),
             )
             AsyncImage(
-                image, title, Modifier.fillMaxSize().padding(bottom = 2.09.r), contentScale = ContentScale.Crop,
+                image, title, Modifier.fillMaxSize().padding(bottom = if (art.plain) 0.dp else 2.09.r), contentScale = ContentScale.Crop,
                 placeholder = PosterPlaceholder,
                 onSuccess = { visual.onImage?.invoke(it.result.drawable) },
-                onError = { imageFailed = true },
+                onError = { imageFailed = true; art.onError?.invoke() },
             )
-            PosterDecorations(item, visual, unit = 0.095.r, textUnit = 0.095.rs)
+            PosterDecorations(item, visual, unit = 0.095.r, textUnit = 0.095.rs, plain = art.plain)
             if (order > 0) Box(
                 Modifier.align(Alignment.TopStart).padding(0.6.r).size(2.r).clip(CircleShape)
                     .background(if (current) Accent else Color.Black.copy(alpha = .72f)),
                 contentAlignment = Alignment.Center,
             ) { Text("$order", color = if (current) Color(0xFF06070A) else Color.White, fontSize = 0.9.rs, fontWeight = FontWeight.ExtraBold) }
-            if (progress != null) Box(Modifier.align(Alignment.BottomStart).padding(bottom = 2.09.r).fillMaxWidth().height(0.32.r).background(Color.Black.copy(alpha = .55f))) {
+            if (progress != null) Box(Modifier.align(Alignment.BottomStart).padding(bottom = if (art.plain) 0.dp else 2.09.r).fillMaxWidth().height(0.32.r).background(Color.Black.copy(alpha = .55f))) {
                 Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).fillMaxHeight().background(Accent))
             }
         }

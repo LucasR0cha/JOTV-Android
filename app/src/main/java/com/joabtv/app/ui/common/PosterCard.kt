@@ -56,6 +56,7 @@ import com.joabtv.app.data.local.dayString
 import com.joabtv.app.data.local.fresh
 import com.joabtv.app.data.local.posterKey
 import com.joabtv.app.data.local.qualityFor
+import com.joabtv.app.data.poster.PosterTemplate
 import com.joabtv.app.domain.model.MediaType
 import com.joabtv.app.domain.model.MovieItem
 import com.joabtv.app.ui.theme.Accent
@@ -81,6 +82,12 @@ val LocalPosterInfo = staticCompositionLocalOf<PosterInfo?> { null }
  */
 val LocalPosterRanks = staticCompositionLocalOf<State<DayRanks?>?> { null }
 val LocalPosterQuality = staticCompositionLocalOf<State<Map<String, SourceQuality>>?> { null }
+
+/** Modelo de URL do pôster do perfil, lido uma vez na raiz do app. Vazio é desligado. Nunca vai para o item. */
+val LocalPosterTemplate = staticCompositionLocalOf { "" }
+
+/** Largura de um cartão de forma [shape] a partir da largura do retrato (poster, landscape ou square). */
+fun Dp.forShape(shape: String): Dp = this * PosterTemplate.widthFactor(shape)
 
 // ── Regras da etiqueta e da faixa (iguais ao webOS) ─────────────────────────
 
@@ -214,25 +221,53 @@ fun PosterCard(
     showTag: Boolean = true,
     progress: Float? = null,
     onLongClick: (() -> Unit)? = null,
+    /** Forma da fileira ou da grade (poster, landscape ou square). Nulo usa a do próprio título. */
+    posterShape: String? = null,
 ) {
-    val visual = rememberPosterVisual(item, badge, typeBadge, showTag)
+    val shape = posterShape ?: item.posterShape
+    val art = rememberPosterArt(item, shape)
+    val visual = rememberPosterVisual(item, badge, typeBadge, showTag, plain = art.plain)
     val unit = androidx.compose.ui.platform.LocalDensity.current.fontScale.coerceAtLeast(1f).dp
     Column(modifier) {
         MediaPosterCard(
             title = item.title,
-            imageUrl = item.posterUrl.ifBlank { item.backdropUrl }.ifBlank { null },
+            imageUrl = art.url,
             onClick = onClick,
             onLongClick = onLongClick,
             modifier = Modifier.fillMaxWidth(),
+            aspectRatio = PosterTemplate.aspectOf(shape),
             cleanPoster = true,
             progress = progress,
-            imageBottom = unit * 22,
+            // Arte que já vem com nota e selos ocupa o cartão inteiro, sem a faixa do app embaixo.
+            imageBottom = if (art.plain) 0.dp else unit * 22,
             onImage = visual.onImage,
+            onImageError = art.onError,
         ) {
-            PosterDecorations(item, visual, unit = unit)
+            PosterDecorations(item, visual, unit = unit, plain = art.plain)
         }
         if (caption != null) PosterCaption(caption, sub, highlight)
     }
+}
+
+/**
+ * Arte de um cartão. [plain] é arte que já traz nota e selos, então o cartão não põe os dele. [onError]
+ * existe só quando a arte veio do modelo do perfil, e troca para a arte própria do título se ela falhar.
+ */
+internal class PosterArt(val url: String?, val plain: Boolean, val onError: (() -> Unit)?)
+
+@Composable
+internal fun rememberPosterArt(item: MovieItem, shape: String): PosterArt {
+    val template = LocalPosterTemplate.current
+    val base = remember(item.tmdbId, item.type, item.posterUrl, item.backdropUrl, item.sourceId, item.imdbId, template, shape) {
+        PosterTemplate.artFor(item, template, shape)
+    }
+    var failed by remember(base) { mutableStateOf(false) }
+    val useOwn = failed && base.fallback != null
+    return PosterArt(
+        url = if (useOwn) base.fallback else base.url,
+        plain = base.plain && !useOwn,
+        onError = if (base.plain && base.fallback != null && !failed) ({ failed = true }) else null,
+    )
 }
 
 internal data class PosterVisual(
@@ -249,19 +284,21 @@ internal fun rememberPosterVisual(
     typeBadge: Boolean = false,
     showTag: Boolean = true,
     requestQuality: Boolean = true,
+    /** Arte que já traz nota e selos. Sem selo de qualidade, sem etiqueta automática e sem leitura de cor nem de fontes. */
+    plain: Boolean = false,
 ): PosterVisual {
     val info = LocalPosterInfo.current
     val key = posterKey(item)
     val ranks = LocalPosterRanks.current?.value
     val qualityMap = LocalPosterQuality.current
     // O cartão só recompõe quando o resumo dele muda, e não a cada resumo novo de qualquer título.
-    val quality by remember(key, qualityMap, badge) {
-        derivedStateOf { qualityMap?.value?.get(key)?.takeIf { badge == null && it.fresh(System.currentTimeMillis()) } }
+    val quality by remember(key, qualityMap, badge, plain) {
+        derivedStateOf { qualityMap?.value?.get(key)?.takeIf { badge == null && !plain && it.fresh(System.currentTimeMillis()) } }
     }
 
     var hue by remember(key) { mutableStateOf(if (key.isEmpty()) null else info?.tint(key)) }
     // Só pôster do TMDB e só enquanto não tem cor salva.
-    val readHue = remember(key) { hue == null && info != null && key.isNotEmpty() && item.posterUrl.startsWith("https://image.tmdb.org/") }
+    val readHue = remember(key, plain) { !plain && hue == null && info != null && key.isNotEmpty() && item.posterUrl.startsWith("https://image.tmdb.org/") }
     var loaded by remember(key) { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     // O pôster que aparece na tela pode ser bitmap de hardware (sem subir textura na hora de desenhar). A cor sai de uma
@@ -278,7 +315,7 @@ internal fun rememberPosterVisual(
         info?.putTint(key, h)
     }
     // Cartão parado na tela por 0,7 s pede a leitura das fontes. Saiu antes da vez, sai da fila.
-    if (requestQuality && info != null && badge == null && key.isNotEmpty()) LaunchedEffect(key) {
+    if (requestQuality && !plain && info != null && badge == null && key.isNotEmpty()) LaunchedEffect(key) {
         delay(700)
         info.want(item)
         try { awaitCancellation() } finally { info.unwant(item) }
@@ -287,7 +324,9 @@ internal fun rememberPosterVisual(
     val days = remember { dayString() to dayString(30) }
     val tag = when {
         !showTag -> null
+        // O texto do chamador (Assistido, Novos episódios) é estado e fica. Os selos automáticos saem com a arte pronta.
         badge != null -> PosterTag(badge)
+        plain -> null
         typeBadge -> PosterTag(if (item.type == MediaType.SERIES) "Série" else "Filme")
         else -> posterTag(item, info?.rankOf(ranks, item) ?: 0, days.first, days.second)
     }
@@ -302,8 +341,11 @@ internal fun BoxScope.PosterDecorations(
     visual: PosterVisual,
     unit: Dp = 1.dp,
     textUnit: TextUnit = 1.sp,
+    /** Arte que já traz nota e selos. Fica só o texto do chamador, se houver. */
+    plain: Boolean = false,
 ) {
     visual.tag?.let { TagChip(it, visual.tint, Modifier.align(Alignment.TopCenter), unit, textUnit) }
+    if (plain) return
     visual.quality?.let { QualityChips(it, Modifier.align(Alignment.TopEnd), unit, textUnit) }
     Strip(item, visual.tint, Modifier.align(Alignment.BottomCenter), unit, textUnit)
 }

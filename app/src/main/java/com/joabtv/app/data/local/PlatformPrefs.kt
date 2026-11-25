@@ -67,7 +67,7 @@ internal val SCOPED_KEYS = listOf(
     "recent_searches", "ext_audio_v1", "home_catalogs_v1", "sub_size", "sub_bg",
     "pref_audio", "pref_max_quality", "pref_hero_trailer", "trakt_v1",
     "home_layout_v1", "home_hero_v1", "pref_subtitle_on", "pref_sub_lang", "collections_v1",
-    "pref_theme", "pref_motion", "pref_menu_style", "pref_menu_addons", "pref_ui_size", "home_keep_v1", "home_seen_v1", "import_log_v1", "pref_auto_switch", "pref_source_timeout", "pref_auto_upgrade", "pref_debrid_cached_only", "pref_simkl_token", "pref_mdblist_key", "pref_wetrakr_key", "pref_publicmetadb_key",
+    "pref_theme", "pref_motion", "pref_menu_style", "pref_menu_addons", "pref_ui_size", "home_keep_v1", "home_seen_v1", "import_log_v1", "pref_auto_switch", "pref_source_timeout", "pref_auto_upgrade", "pref_debrid_cached_only", "pref_simkl_token", "pref_mdblist_key", "pref_wetrakr_key", "pref_publicmetadb_key", "pref_poster_template",
 )
 
 @Singleton
@@ -357,6 +357,7 @@ class PlatformPrefs @Inject constructor(
         _appearance.value = readAppearance()
         _heroTrailer.value = prefs.getBoolean(sk("pref_hero_trailer"), true)
         _menuAddons.value = prefs.getBoolean(sk("pref_menu_addons"), true)
+        _posterTemplate.value = prefs.getString(sk("pref_poster_template"), "").orEmpty()
         _importLog.value = readImportLog()
     }
 
@@ -451,6 +452,20 @@ class PlatformPrefs @Inject constructor(
     var heroTrailer: Boolean
         get() = _heroTrailer.value
         set(value) { prefs.edit().putBoolean(sk("pref_hero_trailer"), value).apply(); _heroTrailer.value = value }
+
+    /**
+     * Modelo de URL do pôster (PostersPlus e parecidos), por perfil. Vazio é desligado. Leva chaves de API
+     * escritas por extenso, então fica fora do backup e da sincronia e nunca vai para o item nem para o log.
+     */
+    private val _posterTemplate = MutableStateFlow(prefs.getString(sk("pref_poster_template"), "").orEmpty())
+    val posterTemplateFlow: StateFlow<String> = _posterTemplate.asStateFlow()
+    var posterTemplate: String
+        get() = _posterTemplate.value
+        set(value) {
+            val v = value.trim().take(1200)
+            prefs.edit().putString(sk("pref_poster_template"), v).apply()
+            _posterTemplate.value = v
+        }
 
     /** Legenda ligada ou não, lembrada entre episódios e sessões do mesmo perfil. */
     var subtitleOn: Boolean
@@ -646,6 +661,11 @@ class PlatformPrefs @Inject constructor(
     var subBg: Boolean
         get() = prefs.getBoolean(sk("sub_bg"), true)
         set(value) { prefs.edit().putBoolean(sk("sub_bg"), value).apply() }
+
+    /** Melhorar imagem do player (nitidez, contraste, cores e brilho) deste perfil. Vazio quer dizer desligado, que é como nasce. */
+    var imageEnhance: String
+        get() = prefs.getString(sk("image_enhance_v1"), "") ?: ""
+        set(value) { prefs.edit().putString(sk("image_enhance_v1"), value).apply() }
 
     /** Escolhas de som de outra fonte por título, chave "TIPO:tmdbId". */
     var extAudioPicks: Map<String, ExtAudioPick>

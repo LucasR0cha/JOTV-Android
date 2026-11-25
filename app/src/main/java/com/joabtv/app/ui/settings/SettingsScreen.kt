@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.ViewModule
@@ -378,6 +379,7 @@ fun SettingsScreen(
                 val appearance by viewModel.appearance.collectAsStateWithLifecycle()
                 val showAddons by viewModel.menuAddons.collectAsStateWithLifecycle()
                 AppearanceSettings(appearance, viewModel::setTheme, viewModel::setMotion, viewModel::setMenu, viewModel::setUiSize, showAddons, viewModel::setMenuAddons)
+                PosterTemplateSettings(viewModel)
 
                 // Addons, Aparelho e TMDB somem no perfil infantil — só quem já passou pelo PIN
                 // pra sair do infantil mexe nisso (ver ProfilesScreen).
@@ -711,6 +713,79 @@ internal fun AppearanceSettings(
             )
         }
     }
+}
+
+/**
+ * Pôster pronto de um serviço como o PostersPlus, com nota, selos e faixas já desenhados na imagem. O modelo é um
+ * link com marcadores como {tmdb_id?}, {imdb_id?}, {id}, {type} e {shape}. Com a arte pronta o app tira os selos
+ * dele para não sobrepor. O link leva chaves de API, então fica só neste aparelho e fora do backup.
+ */
+@Composable
+internal fun PosterTemplateSettings(viewModel: SettingsViewModel) {
+    val template by viewModel.posterTemplate.collectAsStateWithLifecycle()
+    var editing by remember { mutableStateOf(false) }
+    com.joabtv.app.ui.common.SettingsRow(
+        icon = Icons.Default.Image,
+        title = "Pôster personalizado",
+        sub = if (template.isBlank()) "Desligado. Cole o link de um serviço como o PostersPlus para ter pôster com nota e selos já desenhados."
+        else "Ligado. O pôster vem do serviço do seu link e o app tira os selos dele para não sobrepor.",
+        trailing = if (template.isNotBlank()) ({ Icon(Icons.Default.CheckCircle, "Ligado", tint = Accent) }) else null,
+        onClick = { editing = true },
+    )
+    if (editing) PosterTemplateDialog(
+        current = template,
+        onSave = { viewModel.setPosterTemplate(it); editing = false },
+        onDismiss = { editing = false },
+    )
+}
+
+@Composable
+private fun PosterTemplateDialog(current: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var draft by remember { mutableStateOf(current) }
+    val valid = com.joabtv.app.data.poster.PosterTemplate.isValid(draft)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = BackgroundCard,
+        title = { Text("Pôster personalizado", color = TextPrimary, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Cole o link do serviço de pôster, com os marcadores {tmdb_id?}, {imdb_id?}, {id}, {type} e {shape}. " +
+                        "Com {shape} no link o pôster também vale para cartões em paisagem. O link fica só neste aparelho e não entra no backup.",
+                    color = TextSecondary,
+                )
+                com.joabtv.app.ui.common.TvTextFieldGate(Modifier.fillMaxWidth()) { gate ->
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        label = { Text("Link do modelo") },
+                        placeholder = { Text("https://", color = TextTertiary) },
+                        singleLine = true,
+                        isError = !valid,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri, autoCorrectEnabled = false,
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent, unfocusedBorderColor = Border,
+                            focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary,
+                        ),
+                        modifier = gate,
+                    )
+                }
+                if (!valid) Text("O link precisa começar com http:// ou https:// e não ter espaço.", color = Danger)
+                TextButton(onClick = { draft = com.joabtv.app.data.poster.PosterTemplate.PRESET_PUBLIC }) {
+                    Text("Usar o PostersPlus público")
+                }
+            }
+        },
+        confirmButton = { TextButton(enabled = valid, onClick = { onSave(draft.trim()) }) { Text("Salvar") } },
+        dismissButton = {
+            Row {
+                if (current.isNotBlank()) TextButton(onClick = { onSave("") }) { Text("Desligar") }
+                TextButton(onClick = onDismiss) { Text("Cancelar") }
+            }
+        },
+    )
 }
 
 /**

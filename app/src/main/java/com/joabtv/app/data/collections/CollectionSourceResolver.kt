@@ -4,6 +4,7 @@ import com.joabtv.app.data.local.PlatformPrefs
 import com.joabtv.app.data.remote.AddonCatalogOption
 import com.joabtv.app.data.remote.AddonLinks
 import com.joabtv.app.data.remote.AddonMetaResolver
+import com.joabtv.app.data.remote.CatalogPaging
 import com.joabtv.app.data.remote.StremioAddonService
 import com.joabtv.app.data.remote.TmdbApiService
 import com.joabtv.app.data.remote.dto.toMovieItem
@@ -30,8 +31,16 @@ class CollectionSourceResolver @Inject constructor(
     private val stremio: StremioAddonService,
     private val addonMetas: AddonMetaResolver,
 ) {
-    /** Uma página. [next] é o cursor da próxima (página do TMDB ou skip do addon), null quando acabou. */
-    data class Page(val items: List<MovieItem>, val next: Int?, val error: String? = null)
+    /**
+     * Uma página. [next] é o cursor da próxima (página do TMDB ou skip do addon), null quando acabou.
+     * [paging] é o estado da leitura de um catálogo de addon, que quem chama devolve no pedido seguinte.
+     */
+    data class Page(
+        val items: List<MovieItem>,
+        val next: Int?,
+        val error: String? = null,
+        val paging: CatalogPaging.Cursor? = null,
+    )
 
     /** Atalho do editor (estúdio ou canal conhecido), os mesmos do Nuvio. */
     data class Preset(val label: String, val source: CollectionSource)
@@ -39,11 +48,15 @@ class CollectionSourceResolver @Inject constructor(
     /** Resultado de busca do editor. [image] é logo, pôster ou foto. */
     data class SearchHit(val id: Int, val name: String, val image: String?, val sub: String = "")
 
-    suspend fun load(source: CollectionSource, cursor: Int? = null): Page = withContext(Dispatchers.IO) {
+    suspend fun load(
+        source: CollectionSource,
+        cursor: Int? = null,
+        paging: CatalogPaging.Cursor = CatalogPaging.Cursor(),
+    ): Page = withContext(Dispatchers.IO) {
         try {
             when {
                 source.isTrakt -> Page(emptyList(), null, "Lista do Trakt precisa da conta do Trakt, que esta versão ainda não tem")
-                source.isAddon -> loadAddon(source, cursor ?: 0)
+                source.isAddon -> loadAddon(source, cursor ?: 0, paging)
                 else -> loadTmdb(source, cursor ?: 1)
             }
         } catch (e: CancellationException) {
@@ -53,13 +66,16 @@ class CollectionSourceResolver @Inject constructor(
         }
     }
 
-    private suspend fun loadAddon(s: CollectionSource, skip: Int): Page {
+    private suspend fun loadAddon(s: CollectionSource, skip: Int, paging: CatalogPaging.Cursor): Page {
         val base = addonBase(s.addonId.orEmpty())
             ?: return Page(emptyList(), null, "Instale e ligue o addon ${s.addonId} para ver esta fonte")
         val metas = stremio.catalogMetas(base, s.type.orEmpty(), s.catalogId.orEmpty(), skip, s.genre)
             ?: return Page(emptyList(), null, "O addon não respondeu")
-        val page = metas.take(ADDON_PAGE)
-        return Page(addonMetas.resolve(page, s.type == "series"), if (metas.size >= ADDON_PAGE) skip + page.size else null)
+        val page = CatalogPaging.take(metas)
+        val items = addonMetas.resolve(page, s.type == "series")
+        // Segue enquanto o addon mandar título novo, de qualquer tamanho de página (vários mandam 20 ou 30).
+        val next = CatalogPaging.advance(paging.copy(skip = skip), metas, page, items.size)
+        return Page(items, next.skip.takeIf { next.more }, paging = next)
     }
 
     /** Base do addon instalado e ligado com esse id de manifest (é o que o JSON do Nuvio guarda). */
@@ -190,8 +206,4 @@ class CollectionSourceResolver @Inject constructor(
 
     private fun img(path: String?) = path?.takeIf { it.isNotBlank() }?.let { "https://image.tmdb.org/t/p/w500$it" }
 
-    private companion object {
-        /** Itens lidos por página de catálogo de addon (igual à Início). */
-        const val ADDON_PAGE = 40
-    }
 }

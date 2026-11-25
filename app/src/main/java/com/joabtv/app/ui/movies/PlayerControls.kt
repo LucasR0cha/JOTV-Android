@@ -57,6 +57,8 @@ internal data class PlayerChipItem(
     val active: Boolean = false,
     val value: String = "",
     val main: Boolean = false,
+    /** Episódio anterior (-1) ou próximo (+1). No celular esses dois vão para o centro da tela, ao lado dos 10 segundos. */
+    val episodeStep: Int = 0,
     val onRun: () -> Unit,
 )
 
@@ -91,13 +93,18 @@ internal fun CustomPlayerControls(
     playbackInfo: String = "",
     buffered: Long = 0,
     onControlsHeight: (Dp) -> Unit = {},
+    /** Carregando ou trocando de episódio. A tela de carregamento cobre o meio, então o conjunto do centro espera. */
+    loading: Boolean = false,
+    /** Trocando de episódio. Os botões de episódio ficam apagados e ignoram o toque até a troca terminar. */
+    episodeBusy: Boolean = false,
 ) {
     if (isTv) {
         TvPlayerControls(title, subtitle, clock, resolution, formatTags, playbackInfo, position, duration, buffered, onSeekTo, tvChips, tvChipIdx, onControlsHeight)
         return
     }
     TouchPlayerControls(title, subtitle, clock, resolution, formatTags, playbackInfo,
-        isPlaying, position, duration, buffered, videoUrl, onToggle, onSeekBack, onSeekFwd, onSeekTo, tvChips, tvChipIdx, onControlsHeight)
+        isPlaying, position, duration, buffered, videoUrl, onToggle, onSeekBack, onSeekFwd, onSeekTo, tvChips, tvChipIdx, onControlsHeight,
+        loading = loading, episodeBusy = episodeBusy)
 }
 
 /** Tempo, barra fina com bolinha e duração na mesma linha (.pl-bar-row). Toque ou arraste busca. */

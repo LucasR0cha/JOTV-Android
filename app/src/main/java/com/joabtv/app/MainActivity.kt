@@ -71,10 +71,12 @@ class MainActivity : ComponentActivity() {
                 val posterRanks = posterInfo.ranks.collectAsStateWithLifecycle()
                 val posterQuality = posterInfo.quality.collectAsStateWithLifecycle()
                 val frameMeter by platformPrefs.frameMeterFlow.collectAsStateWithLifecycle()
+                val posterTemplate by platformPrefs.posterTemplateFlow.collectAsStateWithLifecycle()
                 androidx.compose.runtime.CompositionLocalProvider(
                     com.joabtv.app.ui.common.LocalPosterInfo provides posterInfo,
                     com.joabtv.app.ui.common.LocalPosterRanks provides posterRanks,
                     com.joabtv.app.ui.common.LocalPosterQuality provides posterQuality,
+                    com.joabtv.app.ui.common.LocalPosterTemplate provides posterTemplate,
                 ) {
                     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                         MoviesNavigation(

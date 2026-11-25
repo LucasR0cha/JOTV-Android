@@ -53,6 +53,10 @@ class PlayerProgressViewModel @Inject constructor(
     var subBg: Boolean
         get() = prefs.subBg
         set(v) { prefs.subBg = v }
+    /** Melhorar imagem deste perfil, no formato de [ImageEnhance.encode]. Vazio é desligado. */
+    var imageEnhance: String
+        get() = prefs.imageEnhance
+        set(v) { prefs.imageEnhance = v }
     var autoSwitchSources: Boolean
         get() = prefs.autoSwitchSources
         set(v) { prefs.autoSwitchSources = v }

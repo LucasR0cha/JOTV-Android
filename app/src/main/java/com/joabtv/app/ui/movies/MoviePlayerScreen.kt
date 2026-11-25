@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.ClosedCaption
@@ -371,9 +372,15 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
                 if (state == Player.STATE_ENDED) playbackEnded = true
             }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // Falha da melhoria de imagem não é falha da fonte. Desliga a melhoria e segue do mesmo ponto.
+                if (handleImageEffectError(error)) return
                 movieErrored = true // fonte direta falhou → tenta a próxima
             }
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                // HDR liga e desliga a melhoria sozinho, sem mexer na escolha do perfil.
+                val videoGroup = tracks.groups.firstOrNull { it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO && it.isSelected }
+                val videoFormat = videoGroup?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { i -> g.getTrackFormat(i) } }
+                hdrVideo = isHdr(videoFormat ?: exoPlayer.videoFormat); syncImageEffect()
                 audioGroups = tracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO && it.length > 0 }
                 textGroups = tracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT && it.length > 0 }
                 // Faixas novas (episódio ou fonte trocados). Com a legenda ligada no perfil, liga a
@@ -382,10 +389,25 @@ private fun PlayerSourceEffects(s: PlayerSession) = with(s) {
             }
             // Resolução real do que está tocando (ex "1080p") — mostrada junto da fonte.
             override fun onVideoSizeChanged(size: androidx.media3.common.VideoSize) {
-                videoQualityLabel = videoResolutionLabel(size.width, size.height)
+                // Com o Upscaler ligado o tamanho informado é o da saída ampliada. O rótulo mostra o do arquivo.
+                val original = if (upscaleLive) exoPlayer.videoFormat else null
+                videoQualityLabel = if (original != null && original.height > 0) videoResolutionLabel(original.width, original.height)
+                else videoResolutionLabel(size.width, size.height)
+            }
+            // O Upscaler decide até onde ampliar pelo tamanho da tela. Sem Upscaler esta função não faz nada.
+            override fun onSurfaceSizeChanged(width: Int, height: Int) {
+                if (imageEnhance.upscaler != ImageUpscaler.OFF) syncImageEffect()
             }
         }
-        exoPlayer.addListener(l); onDispose { exoPlayer.removeListener(l) }
+        // Queda de quadro depois de ligar a melhoria de imagem desliga a melhoria (aparelho que não aguenta).
+        val drops = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onDroppedVideoFrames(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
+                watchImageDrops(droppedFrames)
+            }
+        }
+        syncImageEffect() // o perfil pode ter a melhoria ligada desde a última vez
+        exoPlayer.addListener(l); exoPlayer.addAnalyticsListener(drops)
+        onDispose { exoPlayer.removeListener(l); exoPlayer.removeAnalyticsListener(drops) }
     }
 
     DisposableEffect(castPlayer, streamUrl) {
@@ -714,7 +736,7 @@ private fun PlayerPlaybackEffects(s: PlayerSession) = with(s) {
         val lang = langOf(cur.label)
         fun consider(): Boolean {
             if (upgradeDone || userLockedSource || !autoSwitchSources || casting || streamUrl != u) return true
-            val curH = exoPlayer.videoSize.height
+            val curH = sourceHeight()
             if (curH <= 0) return false
             var best = -1
             var bestH = Math.round(curH * 1.25f)
@@ -811,6 +833,22 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
             .background(Color.Black)
             .focusRequester(focusRequester).focusable()
             .onKeyEvent { ev ->
+                // Play, Pause, Play e pausa e Parar do controle valem em qualquer estado, com painel, barra de chips ou barra de sincronia
+                // abertos. A tecla para aqui (descida e subida), senão a sessão de mídia do sistema recebe e para o ExoPlayer sem sair da tela.
+                val mediaKey = ev.nativeKeyEvent.keyCode
+                if (mediaKey == KeyEvent.KEYCODE_MEDIA_PLAY || mediaKey == KeyEvent.KEYCODE_MEDIA_PAUSE ||
+                    mediaKey == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || mediaKey == KeyEvent.KEYCODE_MEDIA_STOP) {
+                    if (ev.type == KeyEventType.KeyDown && ev.nativeKeyEvent.repeatCount == 0) {
+                        when (mediaKey) {
+                            KeyEvent.KEYCODE_MEDIA_PLAY -> applyPlaying(true)
+                            KeyEvent.KEYCODE_MEDIA_PAUSE -> applyPlaying(false)
+                            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> togglePlay()
+                            else -> onBack() // Parar sai do player como Voltar, uma vez só por aperto
+                        }
+                        if (syncBarOpen) controlsVisible = false
+                    }
+                    return@onKeyEvent true
+                }
                 if (sourceFailed) return@onKeyEvent false
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                 val kc = ev.nativeKeyEvent.keyCode
@@ -837,7 +875,7 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                         KeyEvent.KEYCODE_MEDIA_REWIND, KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> shift(-10.0)
                         KeyEvent.KEYCODE_PROG_YELLOW -> seekBy(-5_000)
                         KeyEvent.KEYCODE_PROG_RED -> audioDelay = 0.0
-                        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_SPACE -> togglePlay()
+                        KeyEvent.KEYCODE_SPACE -> togglePlay()
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
                             syncBarOpen = false; saveExt()
                         }
@@ -918,7 +956,6 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                     KeyEvent.KEYCODE_DPAD_DOWN -> { controlsVisible = true; if (tvChips.isNotEmpty()) { chipFocused = true; chipIdx = 0 }; true }
                     KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD -> { playNextEpisode(); true }
                     KeyEvent.KEYCODE_MEDIA_PREVIOUS, KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD -> { playPrevEpisode(); true }
-                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { togglePlay(); true }
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { onBack(); true }
                     else -> { controlsVisible = true; false }
                 }
@@ -949,6 +986,11 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                 val subtitleDensity = LocalDensity.current
                 val subtitleTextPx = with(subtitleDensity) { (if (isTv) 24.sp else 18.sp).toPx() } * subSize
                 val subtitleBottomPx = with(subtitleDensity) { (if (controlsVisible) controlsHeight + 12.dp else if (syncBarOpen) 190.dp else 32.dp).roundToPx() }
+                // Com os controles à vista o play fica no centro. Se entre ele e a barra de baixo não sobra altura para uma linha de legenda
+                // (celular deitado), a legenda espera os controles sumirem, em vez de passar por baixo dos botões.
+                // O painel de Melhorar imagem também esconde a legenda, que passaria por baixo dele.
+                val subsHidden = imagePanelOpen || (controlsVisible && !isTv && !inPip &&
+                    (LocalConfiguration.current.screenHeightDp.dp / 2 - CenterClearance - controlsHeight) < with(subtitleDensity) { (subtitleTextPx * 1.6f).toDp() })
                 fun configureSubtitle(view: PlayerView) {
                     view.subtitleView?.apply {
                         setApplyEmbeddedStyles(false)
@@ -986,13 +1028,14 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                         it.resizeMode = screenModes[screenModeIdx].second
                         it.scaleX = if (screenModeIdx == 2) 1.33f else 1f
                         it.scaleY = if (screenModeIdx == 2) 1.33f else 1f
+                        it.subtitleView?.visibility = if (subsHidden) android.view.View.INVISIBLE else android.view.View.VISIBLE
                         it.subtitleView?.doOnLayout { _ -> configureSubtitle(it) }
                     },
                     modifier = Modifier.fillMaxSize().clipToBounds(),
                 )
 
                 // Legenda externa desenhada aqui, com o atraso escolhido.
-                if (selectedSubUrl != null && externalCues.isNotEmpty() && !sourcePanelOpen && !sourceFailed) {
+                if (selectedSubUrl != null && externalCues.isNotEmpty() && !sourcePanelOpen && !sourceFailed && !subsHidden) {
                     ExternalSubtitle(externalCues, exoPlayer, (subDelay * 1000).toLong(), subSize, subBg, isTv, controlsVisible || syncBarOpen,
                         bottomInset = if (controlsVisible) controlsHeight + 12.dp else if (syncBarOpen) 190.dp else 32.dp)
                 }
@@ -1106,7 +1149,8 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                         ).filter { it.isNotBlank() }.joinToString("  ·  "),
                         buffered = currentPlayer().bufferedPosition,
                         onControlsHeight = { controlsHeight = it },
-
+                        loading = buffering || switching,
+                        episodeBusy = switching,
                     )
                 }
 
@@ -1198,6 +1242,12 @@ private fun PlayerScreenContent(s: PlayerSession) = with(s) {
                 television = isTv,
             )
         }
+
+        // Melhorar imagem no celular, com barras. Na TV é a lista do controle (imageActions), pelo painel das fontes e legendas.
+        if (imagePanelOpen && !isTv && !inPip) PlayerImagePanel(
+            config = imageEnhance, hdr = hdrVideo, upscaleStatus = upscaleStatus(), onChange = ::previewImage, onCommit = ::commitImage,
+            onClose = { commitImage(); imagePanelOpen = false },
+        )
     }
 }
 
@@ -1402,6 +1452,22 @@ internal class PlayerSession(
     var locked by run { mutableStateOf(false) }
     var lockHintVisible by run { mutableStateOf(false) }
 
+    // Melhorar imagem. O perfil guarda a escolha, e enquanto estiver tudo desligado nada entra no player.
+    var imageEnhance by run { mutableStateOf(ImageEnhance.decode(progressVm.imageEnhance)) }
+    var imagePanelOpen by run { mutableStateOf(false) }
+    // O vídeo em uso é HDR. O efeito fica desligado nele para não estragar as cores.
+    var hdrVideo by run { mutableStateOf(false) }
+    // O efeito só é criado quando a pessoa liga algo. Desligado, nada disso existe e o player toca pelo caminho de sempre.
+    private var imageEffect: ImageEnhanceEffect? = null
+    /** O Upscaler está montado no player agora. */
+    val upscaleLive: Boolean get() = imageEffect?.upscale == true
+    private var effectTargetW = 0
+    private var effectTargetH = 0
+    private var imageEffectLive = false
+    private var imageEffectSince = 0L
+    // O renderer de vídeo já montou o caminho com efeitos. Depois disso a lista troca ao vivo, e desligar só esvazia a lista.
+    private var effectPathBuilt = false
+
     val exoPlayer = run {
         // Foco de áudio do sistema: pausa sozinho numa ligação ou quando outro app toca som, e
         // para ao tirar o fone (sem isso o filme seguia tocando mudo pro alto-falante).
@@ -1604,6 +1670,107 @@ internal class PlayerSession(
         p.seekTo(target); position = target; controlsVisible = true
     }
     fun togglePlay() { currentPlayer().let { it.playWhenReady = !it.playWhenReady }; controlsVisible = true }
+    fun applyPlaying(play: Boolean) { currentPlayer().playWhenReady = play; controlsVisible = true }
+
+    // ── Melhorar imagem ──
+    /** Põe o efeito no player ou tira, pelo que o perfil escolheu e pelo vídeo em uso. Mexer só nos números não passa pelo setVideoEffects. */
+    fun syncImageEffect() {
+        val want = imageEnhance.isOn && !hdrVideo && !casting
+        val wantUp = want && imageEnhance.upscaler != ImageUpscaler.OFF
+        val current = imageEffect
+        current?.params = if (want) imageEnhance.shaderParams() else ImageShaderParams.NONE
+        // O tamanho de saída do efeito só é decidido quando o caminho é montado. Ligar ou desligar o Upscaler, ou a tela mudar muito
+        // de tamanho, pede um efeito novo.
+        val surface = if (wantUp) exoPlayer.surfaceSize else androidx.media3.common.util.Size.UNKNOWN
+        val stale = current != null && (current.upscale != wantUp || (wantUp && surfaceMoved(surface.width, surface.height)))
+        if (want == imageEffectLive && !stale) return
+        // O renderer de vídeo só monta o caminho dos efeitos quando é ligado, e o player ainda sem mídia vai ligá-lo já com a lista.
+        val beforeFirstOpen = exoPlayer.mediaItemCount == 0
+        val next = if (want) ImageEnhanceEffect(wantUp, surface.width.coerceAtLeast(0), surface.height.coerceAtLeast(0))
+            .also { it.params = imageEnhance.shaderParams() } else null
+        val done = runCatching { exoPlayer.setVideoEffects(if (next != null) listOf(next) else emptyList()) }.isSuccess
+        imageEffect = if (done) next else null
+        imageEffectLive = want && done
+        if (imageEffectLive) {
+            effectTargetW = next?.targetWidth ?: 0; effectTargetH = next?.targetHeight ?: 0
+            imageEffectSince = android.os.SystemClock.elapsedRealtime()
+            // Ligado no meio do vídeo, o renderer já foi ligado sem o caminho. Reabrir a mesma mídia no mesmo ponto faz ele montar.
+            if (!effectPathBuilt && !beforeFirstOpen) reopenForEffects()
+            effectPathBuilt = true
+        }
+        if (want && !done) turnOffImage("Este aparelho não aceitou melhorar a imagem. Voltei ao normal.")
+    }
+    /** A superfície de vídeo mudou o bastante (mais de 15%) em relação à que o efeito atual usou para decidir a ampliação. */
+    private fun surfaceMoved(w: Int, h: Int): Boolean =
+        w > 0 && h > 0 && (effectTargetW <= 0 || kotlin.math.abs(w - effectTargetW) > effectTargetW * 0.15f || kotlin.math.abs(h - effectTargetH) > effectTargetH * 0.15f)
+    /** O que o Upscaler está fazendo com o vídeo de agora, em poucas palavras para o painel. Vazio quando ele está desligado. */
+    fun upscaleStatus(): String {
+        if (imageEnhance.upscaler == ImageUpscaler.OFF) return ""
+        val src = exoPlayer.videoFormat
+        if (src == null || src.height <= 0) return "Amplia ao tocar"
+        val surface = exoPlayer.surfaceSize
+        val out = upscaleOutput(src.width, src.height, surface.width, surface.height) ?: return "Só afia a imagem"
+        return "${src.height}p para ${(out.second + 5) / 10 * 10}p"
+    }
+    /** Altura do vídeo que vem do arquivo. Com o Upscaler ligado o player informa a altura já ampliada, e as contas de fonte olham a original. */
+    fun sourceHeight(): Int {
+        val original = if (upscaleLive) exoPlayer.videoFormat?.height ?: 0 else 0
+        return if (original > 0) original else exoPlayer.videoSize.height
+    }
+    /** Para e prepara de novo a mesma mídia, no mesmo ponto e com o mesmo play ou pausa. O renderer de vídeo se reinicia e lê os efeitos. */
+    private fun reopenForEffects() {
+        val at = exoPlayer.currentPosition
+        val play = exoPlayer.playWhenReady
+        exoPlayer.stop()
+        exoPlayer.prepare()
+        exoPlayer.seekTo(at)
+        exoPlayer.playWhenReady = play
+    }
+    /** O que a pessoa está vendo no painel. Vale na hora, e [commitImage] grava no perfil quando ela solta o dedo. */
+    fun previewImage(next: ImageEnhance) {
+        imageEnhance = next.normalized()
+        syncImageEffect()
+        // Parado, o quadro na tela não muda sozinho. Pedir o mesmo ponto de novo desenha o quadro já com o ajuste.
+        if (imageEffectLive && !exoPlayer.isPlaying) exoPlayer.seekTo(exoPlayer.currentPosition)
+    }
+    fun commitImage() { progressVm.imageEnhance = imageEnhance.encode() }
+    fun turnOffImage(message: String) {
+        imageEnhance = ImageEnhance.OFF
+        progressVm.imageEnhance = ""
+        syncImageEffect()
+        toastMsg = message
+    }
+    /** No celular abre o painel com barras. Na TV abre a lista do controle, onde o OK anda um degrau de cada ajuste. */
+    fun openImagePanel() {
+        if (isTv) { openDpadPanel("image"); return }
+        imagePanelOpen = true; controlsVisible = false; chipFocused = false
+    }
+    /** Falha do processamento de vídeo com a melhoria ligada. Desliga a melhoria e segue do mesmo ponto, sem trocar de fonte. */
+    fun handleImageEffectError(error: androidx.media3.common.PlaybackException): Boolean {
+        if (!imageEffectLive || error.errorCode != androidx.media3.common.PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED) return false
+        val at = exoPlayer.currentPosition
+        turnOffImage("Não deu para melhorar a imagem neste aparelho. Voltei ao normal.")
+        exoPlayer.prepare()
+        exoPlayer.seekTo(at)
+        return true
+    }
+    /** Muita queda de quadro logo depois de ligar é aparelho que não aguenta. Desliga e avisa. */
+    fun watchImageDrops(dropped: Int) {
+        if (!imageEffectLive || dropped < 24 || !ImageEnhanceGuard.dropGuard) return
+        val since = android.os.SystemClock.elapsedRealtime() - imageEffectSince
+        if (since !in 3_000L..30_000L) return
+        // O Upscaler é a parte mais pesada. Se ele estiver ligado sai primeiro, e os ajustes só caem se o vídeo continuar falhando.
+        if (imageEnhance.upscaler != ImageUpscaler.OFF) {
+            previewImage(imageEnhance.withUpscaler(ImageUpscaler.OFF)); commitImage()
+            toastMsg = "O Upscaler deixou o vídeo pesado neste aparelho. Desliguei só ele."
+        } else turnOffImage("A melhoria deixou o vídeo pesado neste aparelho. Desliguei.")
+    }
+    fun isHdr(format: androidx.media3.common.Format?): Boolean {
+        if (format == null) return false
+        val transfer = format.colorInfo?.colorTransfer
+        return transfer == androidx.media3.common.C.COLOR_TRANSFER_ST2084 || transfer == androidx.media3.common.C.COLOR_TRANSFER_HLG ||
+            format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION
+    }
 
     // Picture-in-Picture: mini tela pra continuar assistindo em outros apps (API 26+).
     fun enterPip() {
@@ -1962,6 +2129,40 @@ internal class PlayerSession(
         val descriptions = listOf("Mantém a proporção do vídeo", "Ocupa a tela cortando as bordas", "Aproxima a imagem em 33%", "Ocupa a tela alterando a proporção")
         TvPlayerAction(mode.first, false, i == screenModeIdx, sub = descriptions[i]) { screenModeIdx = i }
     }
+    /** Melhorar imagem na TV. Escolhas prontas e, abaixo, os quatro ajustes que andam um degrau a cada OK. */
+    val imageActions: List<TvPlayerAction> get() = buildList {
+        val now = imageEnhance
+        if (hdrVideo) add(TvPlayerAction("Vídeo HDR", false, false, sub = "A melhoria fica desligada nele para não estragar as cores.",
+            disabled = true, keepOpen = true) {})
+        (listOf(ImagePreset.OFF) + ImageEnhance.PRESETS.map { it.preset }).forEachIndexed { i, preset ->
+            add(TvPlayerAction(preset.label, false, now.preset == preset, sub = preset.note,
+                header = if (i == 0) "Escolhas prontas" else "", disabled = hdrVideo, keepOpen = true) {
+                // Lê o estado na hora do OK. A escolha pronta mantém o Upscaler, e Desligado apaga tudo.
+                previewImage(imageEnhance.withPreset(preset)); commitImage()
+            })
+        }
+        add(TvPlayerAction("Upscaler", false, now.upscaler != ImageUpscaler.OFF,
+            sub = if (now.upscaler == ImageUpscaler.OFF) "Desligado, a tela amplia como sempre"
+            else "SGSR, " + upscaleStatus().replaceFirstChar { it.lowercase() },
+            header = "Ampliação", disabled = hdrVideo, keepOpen = true) {
+            val on = imageEnhance.upscaler == ImageUpscaler.OFF
+            previewImage(imageEnhance.withUpscaler(if (on) ImageUpscaler.SGSR else ImageUpscaler.OFF)); commitImage()
+        })
+        fun adjust(label: String, read: (ImageEnhance) -> Int, suffix: String, steps: List<Int>, write: (ImageEnhance, Int) -> ImageEnhance, header: String = "") {
+            val value = read(now)
+            add(TvPlayerAction(label, false, false, sub = (if (value > 0 && steps.first() < 0) "+$value" else "$value") + suffix,
+                header = header, keepOpen = true, disabled = hdrVideo) {
+                // Lê o valor na hora do OK, e não o de quando a lista foi montada.
+                previewImage(write(imageEnhance, ImageSteps.next(read(imageEnhance), steps))); commitImage()
+            })
+        }
+        adjust("Nitidez", { it.sharp }, "%", ImageSteps.SHARP, { c, v -> c.withSharp(v) }, header = "Ajustes")
+        adjust("Contraste", { it.contrast }, "", ImageSteps.CONTRAST, { c, v -> c.withContrast(v) })
+        adjust("Cores", { it.saturation }, "", ImageSteps.SATURATION, { c, v -> c.withSaturation(v) })
+        adjust("Brilho", { it.brightness }, "", ImageSteps.BRIGHTNESS, { c, v -> c.withBrightness(v) })
+        add(TvPlayerAction("Usa a placa de vídeo", false, false, sub = "Se o vídeo começar a falhar, a melhoria desliga sozinha.",
+            disabled = true, keepOpen = true) {})
+    }
 
     fun selectPanelSeason(target: Int) {
         if (target < 1 || (numSeasons > 0 && target > numSeasons)) return
@@ -2006,6 +2207,7 @@ internal class PlayerSession(
         "audio" -> audioActions
         "speed" -> speedActions
         "screen" -> screenActions
+        "image" -> imageActions
         "episodes" -> episodeActions
         else -> sourceActions
     }
@@ -2014,6 +2216,7 @@ internal class PlayerSession(
         "audio" -> "Áudio"
         "speed" -> "Velocidade"
         "screen" -> "Tela"
+        "image" -> "Melhorar imagem"
         "episodes" -> "Episódios"
         else -> "Fontes"
     }
@@ -2039,12 +2242,14 @@ internal class PlayerSession(
         if (currentSources.size > 1) add(PlayerChipItem(WebPlayerIcons.Sources, "Fontes") { openDpadPanel("sources") })
         if (type == "SERIES") {
             add(PlayerChipItem(WebPlayerIcons.Episodes, "Episódios") { openDpadPanel("episodes") })
-            if (curEpisode > 1) add(PlayerChipItem(WebPlayerIcons.Previous, "Anterior") { playPrevEpisode() })
-            if (hasNextEpisode || hasNextSeason) add(PlayerChipItem(WebPlayerIcons.Next, "Próximo") {
+            if (curEpisode > 1) add(PlayerChipItem(WebPlayerIcons.Previous, "Anterior", episodeStep = -1) { playPrevEpisode() })
+            if (hasNextEpisode || hasNextSeason) add(PlayerChipItem(WebPlayerIcons.Next, "Próximo", episodeStep = 1) {
                 if (hasNextEpisode) playNextEpisode() else goToNextSeason()
             })
         }
         add(PlayerChipItem(WebPlayerIcons.Screen, "Tela ${screenModes[screenModeIdx].first.lowercase()}", active = screenModeIdx > 0) { openDpadPanel("screen") })
+        add(PlayerChipItem(Icons.Default.AutoAwesome, "Melhorar imagem", active = imageEnhance.isOn,
+            value = if (imageEnhance.isOn) imageEnhance.preset.label else "") { openImagePanel() })
         val speed = speeds[speedIdx]
         add(PlayerChipItem(WebPlayerIcons.Speed, "Velocidade ${playbackSpeedText(speed)}", active = speed != 1f,
             value = if (speed != 1f) playbackSpeedText(speed) else "") { openDpadPanel("speed") })

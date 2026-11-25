@@ -435,6 +435,10 @@ fun MediaPosterCard(
     imageBottom: Dp = 0.dp,
     /** Recebe a imagem carregada sem bitmap de hardware, para tirar a cor do pôster. */
     onImage: ((android.graphics.drawable.Drawable) -> Unit)? = null,
+    /** Avisa quando a imagem falha, para o chamador trocar por outra arte. */
+    onImageError: (() -> Unit)? = null,
+    /** Imagem animada (GIF) que só entra, e só é carregada, enquanto o cartão tem o foco. Libera a memória ao perder o foco. */
+    focusImageUrl: String? = null,
     /** Desenhado por cima da arte (etiqueta, faixa e selos do pôster). */
     decor: (@Composable BoxScope.() -> Unit)? = null,
 ) {
@@ -470,6 +474,11 @@ fun MediaPosterCard(
             model = imageUrl, contentDescription = title, contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize().padding(bottom = imageBottom),
             onSuccess = onImage?.let { f -> { s: coil.compose.AsyncImagePainter.State.Success -> f(s.result.drawable) } },
+            onError = onImageError?.let { f -> { _: coil.compose.AsyncImagePainter.State.Error -> f() } },
+        )
+        if (focusImageUrl != null && focused) AsyncImage(
+            model = focusImageUrl, contentDescription = null, contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().padding(bottom = imageBottom),
         )
         if (!cleanPoster) {
             Box(
@@ -683,13 +692,18 @@ fun SidePanel(
     subColor: Color = TextTertiary,
     titleTrailing: (@Composable () -> Unit)? = null,
     width: Dp = 440.dp,
+    /** Escurece pouco o que fica atrás. Painel que ajusta o próprio vídeo (cor, brilho) precisa deixar a imagem à vista. */
+    lightScrim: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val touch = !LocalIsTv.current
     val shortWindow = touch && LocalConfiguration.current.screenHeightDp < 480
     Box(
         modifier.fillMaxSize()
-            .background(Brush.horizontalGradient(listOf(Color.Black.copy(alpha = .15f), Color.Black.copy(alpha = .7f))))
+            .background(Brush.horizontalGradient(
+                if (lightScrim) listOf(Color.Transparent, Color.Black.copy(alpha = .25f))
+                else listOf(Color.Black.copy(alpha = .15f), Color.Black.copy(alpha = .7f)),
+            ))
             .windowInsetsPadding(WindowInsets.safeDrawing)
             // Sem foco próprio. Quem abriu o painel (o player, na TV) continua dono do D-pad.
             .focusProperties { canFocus = false }

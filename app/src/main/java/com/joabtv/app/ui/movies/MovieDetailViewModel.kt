@@ -165,6 +165,15 @@ class MovieDetailViewModel @Inject constructor(
     // Stub do MovieItem que abriu a tela (título/poster/ano) — usado p/ salvar na lista
     // e registrar reprodução, já que load() recebe apenas embedId/tmdbId/type.
     private var stubItem: MovieItem? = null
+
+    /**
+     * Arte paisagem de addon chega sem pôster 2:3 (ver AddonMetaResolver). Quando o detalhe do TMDB carrega, o
+     * stub ganha o pôster dele, e é esse que vai para a Minha Lista e para o histórico.
+     */
+    private fun adoptPoster(url: String?) {
+        val stub = stubItem ?: return
+        if (stub.posterUrl.isBlank() && !url.isNullOrBlank()) stubItem = stub.copy(posterUrl = url)
+    }
     // Garante que os coletores reativos (isSaved / watchedEpisodes) só sejam abertos 1x.
     private var observersStarted = false
 
@@ -287,6 +296,7 @@ class MovieDetailViewModel @Inject constructor(
                 }
 
                 val detail = detailDto?.toMovieItem(resolvedEmbedId)
+                adoptPoster(detail?.posterUrl)
                 val castList = detailDto?.credits?.cast.orEmpty()
                     .filter { it.name.isNotBlank() }.take(20).map { it.toCastMember() }
                 val relatedList = detailDto?.recommendations?.results.orEmpty()
@@ -357,6 +367,7 @@ class MovieDetailViewModel @Inject constructor(
                 }
                 val detailDto = detailDtoD.await()
                 val seriesDetail = detailDto?.toDomain(embedId)
+                adoptPoster(seriesDetail?.posterUrl)
                 val seriesImdb = seriesImdbD.await()
                 val episodes = episodesD.await()
                 val castList = detailDto?.credits?.cast.orEmpty()

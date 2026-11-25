@@ -133,6 +133,10 @@ class SettingsViewModel @Inject constructor(
     val menuAddons: StateFlow<Boolean> = platformPrefs.menuAddonsFlow
     fun setMenuAddons(on: Boolean) { platformPrefs.menuAddons = on }
 
+    /** Modelo de URL do pôster do perfil (PostersPlus e parecidos). Leva chaves de API, então fica só no aparelho. */
+    val posterTemplate: StateFlow<String> = platformPrefs.posterTemplateFlow
+    fun setPosterTemplate(value: String) { platformPrefs.posterTemplate = value }
+
     val frameMeter: StateFlow<Boolean> = platformPrefs.frameMeterFlow
     fun setFrameMeter(on: Boolean) { platformPrefs.frameMeter = on }
 

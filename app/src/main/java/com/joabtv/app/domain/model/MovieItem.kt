@@ -20,6 +20,12 @@ data class MovieItem(
     val originalLanguage: String = "",
     val voteCount: Int = 0,
     val originCountry: List<String> = emptyList(),
+    // Forma do cartão que o addon pediu (poster, landscape ou square), ver PosterTemplate.shapeOf.
+    val posterShape: String = "poster",
+    // Id do título no addon (tt, tmdb ou kitsu). É o {id} do modelo de pôster.
+    val sourceId: String = "",
+    // Id do IMDb, quando o addon mandou.
+    val imdbId: String = "",
 )
 
 enum class MediaType { MOVIE, SERIES }

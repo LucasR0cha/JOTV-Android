@@ -281,7 +281,10 @@ fun LivePlayerScreen(channelId: String, onBack: () -> Unit, viewModel: LivePlaye
                     k == AndroidKey.KEYCODE_LAST_CHANNEL -> { recall(); true }
                     k == AndroidKey.KEYCODE_GUIDE -> { showPanel(true); true }
                     k == AndroidKey.KEYCODE_INFO -> { choice = "info"; true }
-                    k == AndroidKey.KEYCODE_MEDIA_PLAY_PAUSE -> { pause(); true }
+                    k == AndroidKey.KEYCODE_MEDIA_PLAY_PAUSE -> { if (event.nativeKeyEvent.repeatCount == 0) pause(); true }
+                    k == AndroidKey.KEYCODE_MEDIA_PLAY -> { player.play(); paused = false; overlay = true; true }
+                    k == AndroidKey.KEYCODE_MEDIA_PAUSE -> { player.pause(); paused = true; overlay = true; true }
+                    k == AndroidKey.KEYCODE_MEDIA_STOP -> { if (event.nativeKeyEvent.repeatCount == 0) onBack(); true }
                     panel -> false
                     k == AndroidKey.KEYCODE_DPAD_DOWN -> { showPanel(false); true }
                     k == AndroidKey.KEYCODE_DPAD_UP -> { overlay = true; playbackScope.launch { withFrameNanos { }; runCatching { channelsFocus.requestFocus() } }; true }

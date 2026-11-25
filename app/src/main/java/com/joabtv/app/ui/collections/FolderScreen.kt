@@ -29,6 +29,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.joabtv.app.domain.model.MovieItem
+import com.joabtv.app.ui.common.forShape
 import com.joabtv.app.ui.common.topInsetsPadding
 import com.joabtv.app.ui.theme.*
 
@@ -92,6 +93,8 @@ private fun TabbedContent(st: FolderViewModel.UiState, vm: FolderViewModel, onIt
         }
     }
     val grid = rememberLazyGridState()
+    // A grade inteira segue a forma do primeiro título (retrato, paisagem ou quadrado).
+    val shape = tab.items.firstOrNull()?.posterShape ?: "poster"
     // A grade troca de aba sem levar a rolagem da aba anterior.
     LaunchedEffect(tab.key) { grid.scrollToItem(0) }
     val nearEnd by remember(tab.key) {
@@ -100,7 +103,8 @@ private fun TabbedContent(st: FolderViewModel.UiState, vm: FolderViewModel, onIt
             li.totalItemsCount > 0 && (li.visibleItemsInfo.lastOrNull()?.index ?: 0) >= li.totalItemsCount - 6
         }
     }
-    LaunchedEffect(nearEnd, tab.items.size, tab.key) { if (nearEnd) vm.loadMore(tab.key) }
+    // next entra na chave: página sem título novo não muda o tamanho da lista e a rolagem travava ali.
+    LaunchedEffect(nearEnd, tab.items.size, tab.key, tab.next) { if (nearEnd) vm.loadMore(tab.key) }
     when {
         tab.loading && tab.items.isEmpty() -> Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = Accent)
@@ -111,15 +115,15 @@ private fun TabbedContent(st: FolderViewModel.UiState, vm: FolderViewModel, onIt
         )
         else -> LazyVerticalGrid(
             // Na TV o pôster tem a medida da Início (com 3% de folga). Os 112 dp do celular davam uns 8,4 rem, dez por linha.
-            columns = if (com.joabtv.app.ui.common.LocalIsTv.current) GridCells.Adaptive(com.joabtv.app.ui.tv.tvPosterWidth * 0.97f)
-            else GridCells.Adaptive(minSize = 112.dp),
+            columns = if (com.joabtv.app.ui.common.LocalIsTv.current) GridCells.Adaptive((com.joabtv.app.ui.tv.tvPosterWidth * 0.97f).forShape(shape))
+            else GridCells.Adaptive(minSize = 112.dp.forShape(shape)),
             state = grid,
             contentPadding = PaddingValues(start = pad, end = pad, top = 8.dp, bottom = 32.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            items(tab.items, key = { "${it.type}:${it.tmdbId}" }) { item -> PosterItem(item, onItemClick) }
+            items(tab.items, key = { "${it.type}:${it.tmdbId}" }) { item -> PosterItem(item, onItemClick, posterShape = shape) }
             if (tab.loadingMore) item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                 Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent, modifier = Modifier.size(28.dp)) }
             }
@@ -143,10 +147,12 @@ private fun RowsContent(st: FolderViewModel.UiState, vm: FolderViewModel, onItem
                     else -> {
                         val row = rememberLazyListState()
                         val nearEnd by remember { derivedStateOf { (row.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= row.layoutInfo.totalItemsCount - 4 } }
-                        LaunchedEffect(nearEnd, tab.items.size) { if (nearEnd) vm.loadMore(tab.key) }
-                        val cardWidth = if (com.joabtv.app.ui.common.LocalIsTv.current) com.joabtv.app.ui.tv.tvPosterWidth else 128.dp
+                        LaunchedEffect(nearEnd, tab.items.size, tab.next) { if (nearEnd) vm.loadMore(tab.key) }
+                        // A fileira inteira segue a forma do primeiro título (retrato, paisagem ou quadrado).
+                        val rowShape = tab.items.firstOrNull()?.posterShape ?: "poster"
+                        val cardWidth = (if (com.joabtv.app.ui.common.LocalIsTv.current) com.joabtv.app.ui.tv.tvPosterWidth else 128.dp).forShape(rowShape)
                         LazyRow(state = row, contentPadding = PaddingValues(horizontal = pad), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            items(tab.items, key = { "${it.type}:${it.tmdbId}" }) { item -> PosterItem(item, onItemClick, Modifier.width(cardWidth)) }
+                            items(tab.items, key = { "${it.type}:${it.tmdbId}" }) { item -> PosterItem(item, onItemClick, Modifier.width(cardWidth), rowShape) }
                         }
                     }
                 }
@@ -156,6 +162,6 @@ private fun RowsContent(st: FolderViewModel.UiState, vm: FolderViewModel, onItem
 }
 
 @Composable
-private fun PosterItem(item: MovieItem, onItemClick: (MovieItem) -> Unit, modifier: Modifier = Modifier) {
-    com.joabtv.app.ui.common.PosterCard(item = item, onClick = { onItemClick(item) }, modifier = modifier)
+private fun PosterItem(item: MovieItem, onItemClick: (MovieItem) -> Unit, modifier: Modifier = Modifier, posterShape: String? = null) {
+    com.joabtv.app.ui.common.PosterCard(item = item, onClick = { onItemClick(item) }, modifier = modifier, posterShape = posterShape)
 }

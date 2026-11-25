@@ -44,18 +44,23 @@ private fun tileSize(shape: String) = when (shape) {
 }
 
 /**
- * Cartão da pasta. Com GIF ligado ele anima (o carregador de imagem do app lê GIF). Sem imagem,
- * mostra o emoji, e sem emoji a inicial do nome.
+ * Cartão da pasta. Com GIF ligado ele anima (o carregador de imagem do app lê GIF). Na TV o GIF só entra
+ * enquanto o cartão tem o foco, porque vários GIFs animados ao mesmo tempo pesam na memória. No celular, que não
+ * tem foco, ele anima sempre. Sem imagem, mostra o emoji, e sem emoji a inicial do nome.
  */
 @Composable
 fun FolderTile(folder: CollectionFolder, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val (w, ratio) = tileSize(folder.shape)
-    val image = folder.focusGifUrl?.takeIf { folder.focusGifEnabled && it.isNotBlank() } ?: folder.coverImageUrl?.takeIf { it.isNotBlank() }
+    val tv = com.joabtv.app.ui.common.LocalIsTv.current
+    val gif = folder.focusGifUrl?.takeIf { folder.focusGifEnabled && it.isNotBlank() }
+    val cover = folder.coverImageUrl?.takeIf { it.isNotBlank() }
+    val image = if (tv) cover ?: gif else gif ?: cover
     Column(modifier.width(w)) {
         if (image != null) {
             com.joabtv.app.ui.common.MediaPosterCard(
                 title = folder.title, imageUrl = image, onClick = onClick,
                 modifier = Modifier.fillMaxWidth(), aspectRatio = ratio, cleanPoster = true,
+                focusImageUrl = if (tv && cover != null) gif else null,
             )
         } else {
             var focused by remember { mutableStateOf(false) }

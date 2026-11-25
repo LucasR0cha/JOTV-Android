@@ -1,6 +1,7 @@
 package com.joabtv.app.data.remote
 
 import com.joabtv.app.data.local.PlatformPrefs
+import com.joabtv.app.data.poster.PosterTemplate
 import com.joabtv.app.domain.model.MediaType
 import com.joabtv.app.domain.model.MovieItem
 import kotlinx.coroutines.async
@@ -36,10 +37,15 @@ class AddonMetaResolver @Inject constructor(
                         hit?.id
                     }.getOrNull()?.also { imdbToTmdb[tt] = it }
                 } ?: return@async null
+                val shape = PosterTemplate.shapeOf(m.posterShape)
                 MovieItem(
                     tmdbId = id, embedId = id.toString(), title = m.name, overview = m.description,
-                    posterUrl = m.poster, backdropUrl = m.background, year = m.year, rating = m.rating,
+                    // Arte paisagem do addon não serve de pôster 2:3 (iria para a Minha Lista e o histórico). Fica como fundo.
+                    posterUrl = if (shape == "landscape") "" else m.poster,
+                    backdropUrl = if (shape == "landscape") m.background.ifBlank { m.poster } else m.background,
+                    year = m.year, rating = m.rating,
                     type = if (series) MediaType.SERIES else MediaType.MOVIE,
+                    posterShape = shape, sourceId = m.id, imdbId = imdb ?: m.imdbId,
                 )
             }
         }.awaitAll().filterNotNull()

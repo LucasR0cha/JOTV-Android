@@ -17,10 +17,13 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -36,7 +39,16 @@ import androidx.compose.ui.unit.sp
 import com.joabtv.app.ui.common.DolbyIcon
 import com.joabtv.app.ui.theme.*
 
-/** Composição inferior do webOS com alvos de toque e opções acessíveis em telas pequenas. */
+/** Tamanho do botão de play do centro e meia altura do conjunto, com a folga que a parte de baixo precisa deixar. */
+private val CenterPlaySize = 72.dp
+private val CenterSideSize = 56.dp
+internal val CenterClearance = CenterPlaySize / 2 + 8.dp
+
+/**
+ * Composição do player no celular. No centro da tela ficam voltar 10 segundos, play e pausa e avançar 10 segundos, e nas séries o
+ * episódio anterior e o próximo ao lado deles. Embaixo ficam o título, a barra de tempo e as opções, e a parte de baixo nunca sobe
+ * até o conjunto do meio (o título vai para o canto de cima quando não sobra altura).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun TouchPlayerControls(
@@ -45,13 +57,18 @@ internal fun TouchPlayerControls(
     onToggle: () -> Unit, onBack: () -> Unit, onForward: () -> Unit, onSeek: (Long) -> Unit,
     actions: List<PlayerChipItem>, focusedIndex: Int,
     onControlsHeight: (Dp) -> Unit = {},
+    loading: Boolean = false,
+    episodeBusy: Boolean = false,
 ) {
     var more by remember { mutableStateOf(false) }
     var controlsHeight by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
     val font = density.fontScale.coerceAtLeast(1f)
-    val options = actions.withIndex().filter { !it.value.main }
+    // Os dois botões de episódio saem das opções e vão para o centro.
+    val options = actions.withIndex().filter { !it.value.main && it.value.episodeStep == 0 }
+    val previous = actions.firstOrNull { it.episodeStep < 0 }
+    val next = actions.firstOrNull { it.episodeStep > 0 }
     val optionState = rememberLazyListState()
     LaunchedEffect(focusedIndex, options.size) {
         val index = options.indexOfFirst { it.index == focusedIndex }
@@ -72,9 +89,12 @@ internal fun TouchPlayerControls(
         val estimatedTimeWidth = with(density) { 12.sp.toDp() } * (times.length * .6f)
         val timeSeparate = contentWidth - side * 2 < 180.dp + (if (showMore) 56.dp else 0.dp) + estimatedTimeWidth
         val timeHeight = if (timeSeparate) with(density) { 18.sp.toDp() } + 4.dp else 0.dp
-        val fixedHeight = 56.dp + 48.dp + 20.dp + timeHeight + (if (optionRow) 56.dp else 0.dp)
+        // A fileira de baixo leva só as opções e o tempo, então tem 48dp. O play e os 10 segundos moravam nela antes.
+        val fixedHeight = 48.dp + 48.dp + 20.dp + timeHeight + (if (optionRow) 56.dp else 0.dp)
         val topReserve = 64.dp + WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
-        val metadataHeight = (maxHeight - fixedHeight - topReserve).coerceIn(0.dp, if (landscape) 140.dp else 220.dp)
+        // A parte de baixo só cresce até logo abaixo do conjunto do meio (mais 12dp do espaço entre as linhas dela).
+        val centerRoom = (maxHeight / 2 - CenterClearance - fixedHeight - 12.dp).coerceAtLeast(0.dp)
+        val metadataHeight = minOf((maxHeight - fixedHeight - topReserve).coerceIn(0.dp, if (landscape) 140.dp else 220.dp), centerRoom)
         val titleLine = with(density) { 26.sp.toDp() }
         val tagHeight = with(density) { 15.sp.toDp() } + 6.dp
         val detailLine = with(density) { 17.sp.toDp() }
@@ -88,6 +108,20 @@ internal fun TouchPlayerControls(
             0f to Color.Transparent, (controlsTop - .14f).coerceAtLeast(0f) to Color.Transparent,
             controlsTop to Color.Black.copy(alpha = .58f), 1f to Color.Black.copy(alpha = .86f),
         )))
+        // Sem altura para o título embaixo, ele sobe para o canto de cima e fica ao lado dos botões do topo.
+        if (title.isNotBlank() && metadataHeight < titleLine) Text(title, color = Color.White, fontSize = 18.sp, lineHeight = 22.sp,
+            fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.align(Alignment.TopStart)
+                .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .padding(start = side, top = 21.dp)
+                .widthIn(max = (contentWidth - topActionsWidth(false) - side * 2).coerceAtLeast(120.dp)))
+        // Centro da tela. Fica escondido enquanto carrega, porque a tela de carregamento cobre o meio.
+        if (!loading) TouchCenterControls(
+            isPlaying = isPlaying, previous = previous, next = next, busy = episodeBusy,
+            gap = if (contentWidth < 420.dp) 10.dp else 22.dp,
+            onToggle = onToggle, onBack = onBack, onForward = onForward,
+            modifier = Modifier.align(Alignment.Center).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
+        )
         if (maxHeight.value / font >= 340f) Column(
             Modifier.align(Alignment.TopEnd)
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
@@ -127,15 +161,6 @@ internal fun TouchPlayerControls(
                 fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.align(Alignment.End))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.size(56.dp).clip(CircleShape).clickable(role = Role.Button, onClick = onToggle),
-                    contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(48.dp).background(Color.White, CircleShape), contentAlignment = Alignment.Center) {
-                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            if (isPlaying) "Pausar" else "Assistir", tint = TextOnLight, modifier = Modifier.size(28.dp))
-                    }
-                }
-                CtlButton(Icons.Default.Replay10, "Voltar 10 segundos", 48.dp, onClick = onBack)
-                CtlButton(Icons.Default.Forward10, "Avançar 10 segundos", 48.dp, onClick = onForward)
                 if (singleRow) LazyRow(Modifier.weight(1f), state = optionState,
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     items(options, key = { it.index }) { (index, action) -> TouchPlayerActionIcon(action, index == focusedIndex) }
@@ -160,6 +185,36 @@ internal fun TouchPlayerControls(
                 TouchPlayerAction(action.copy(onRun = { more = false; action.onRun() }), false, Modifier.fillMaxWidth())
             }
         }
+    }
+}
+
+/**
+ * Conjunto do centro da tela. Voltar 10 segundos, play e pausa e avançar 10 segundos, e nas séries o episódio anterior e o próximo
+ * nas pontas. Todos têm 56dp ou mais de toque. Os botões de episódio apagam e ignoram o toque enquanto o episódio troca, para um
+ * toque duplo não pular dois.
+ */
+@Composable
+private fun TouchCenterControls(
+    isPlaying: Boolean, previous: PlayerChipItem?, next: PlayerChipItem?, busy: Boolean, gap: Dp,
+    onToggle: () -> Unit, onBack: () -> Unit, onForward: () -> Unit, modifier: Modifier = Modifier,
+) {
+    // Numa série os dois cantos existem sempre. Quando falta um (primeiro ou último episódio) o espaço dele fica vazio, e o play
+    // continua no meio exato da tela em vez de andar de um episódio para o outro.
+    val series = previous != null || next != null
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(gap), verticalAlignment = Alignment.CenterVertically) {
+        if (previous != null) Box(Modifier.alpha(if (busy) .4f else 1f)) {
+            CtlButton(Icons.Default.SkipPrevious, "Episódio anterior", CenterSideSize, onClick = { if (!busy) previous.onRun() })
+        } else if (series) Spacer(Modifier.size(CenterSideSize))
+        CtlButton(Icons.Default.Replay10, "Voltar 10 segundos", CenterSideSize, onClick = onBack)
+        Box(Modifier.size(CenterPlaySize).clip(CircleShape).background(Color.White).clickable(role = Role.Button, onClick = onToggle),
+            contentAlignment = Alignment.Center) {
+            Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                if (isPlaying) "Pausar" else "Assistir", tint = TextOnLight, modifier = Modifier.size(40.dp))
+        }
+        CtlButton(Icons.Default.Forward10, "Avançar 10 segundos", CenterSideSize, onClick = onForward)
+        if (next != null) Box(Modifier.alpha(if (busy) .4f else 1f)) {
+            CtlButton(Icons.Default.SkipNext, "Próximo episódio", CenterSideSize, onClick = { if (!busy) next.onRun() })
+        } else if (series) Spacer(Modifier.size(CenterSideSize))
     }
 }
 

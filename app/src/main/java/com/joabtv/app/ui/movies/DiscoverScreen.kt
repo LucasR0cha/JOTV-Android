@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.joabtv.app.data.remote.AddonCatalogOption
 import com.joabtv.app.domain.model.MovieItem
 import com.joabtv.app.ui.common.FilterChipPill
+import com.joabtv.app.ui.common.forShape
 import com.joabtv.app.ui.common.GlassCircleButton
 import com.joabtv.app.ui.common.JoabEmptyState
 import com.joabtv.app.ui.common.MediaPosterCard
@@ -62,6 +63,7 @@ fun DiscoverScreen(
     viewModel: DiscoverViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val shape = state.items.firstOrNull()?.posterShape ?: "poster"
     val gridState = rememberLazyGridState()
     var catalogsOpen by remember { mutableStateOf(false) }
     // Filtros começam abertos. Depois de escolher, o usuário fecha e sobra tela pro resultado.
@@ -76,7 +78,8 @@ fun DiscoverScreen(
             total > 0 && last >= total - (columns * 2)
         }
     }
-    LaunchedEffect(nearEnd) { if (nearEnd) viewModel.loadMore() }
+    // skip e page entram na chave: página sem título novo deixa nearEnd ligado e a lista no mesmo tamanho.
+    LaunchedEffect(nearEnd, state.items.size, state.skip, state.page) { if (nearEnd) viewModel.loadMore() }
     // Filtro novo volta pro topo, senão o usuário fica no meio de uma lista que mudou.
     LaunchedEffect(state.loading) { if (state.loading) runCatching { gridState.scrollToItem(0) } }
 
@@ -108,7 +111,8 @@ fun DiscoverScreen(
 
         LazyVerticalGrid(
             // Celular em pé 3 colunas, tela larga cabe mais (pôster de 112dp ou mais).
-            columns = GridCells.Adaptive(com.joabtv.app.ui.common.posterWidth()),
+            // Catálogo de addon paisagem ou quadrado muda o tamanho das colunas. A grade segue a forma do primeiro título.
+            columns = GridCells.Adaptive(com.joabtv.app.ui.common.posterWidth().forShape(shape)),
             state = gridState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = com.joabtv.app.ui.common.pagePadding(), end = com.joabtv.app.ui.common.pagePadding(), bottom = 28.dp),
@@ -147,7 +151,7 @@ fun DiscoverScreen(
 
                 else -> {
                     items(state.items, key = { it.tmdbId }) { item ->
-                        DiscoverPoster(item, onClick = { onItemClick(item) })
+                        DiscoverPoster(item, onClick = { onItemClick(item) }, posterShape = shape)
                     }
                     if (state.loadingMore) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
@@ -193,8 +197,8 @@ private fun ActiveFiltersBar(state: DiscoverViewModel.UiState, vm: DiscoverViewM
 
 /** Pôster com o título ABAIXO da arte. Ano e nota ficam na faixa do próprio pôster. */
 @Composable
-private fun DiscoverPoster(item: MovieItem, onClick: () -> Unit) {
-    com.joabtv.app.ui.common.PosterCard(item = item, onClick = onClick)
+private fun DiscoverPoster(item: MovieItem, onClick: () -> Unit, posterShape: String? = null) {
+    com.joabtv.app.ui.common.PosterCard(item = item, onClick = onClick, posterShape = posterShape)
 }
 
 @Composable

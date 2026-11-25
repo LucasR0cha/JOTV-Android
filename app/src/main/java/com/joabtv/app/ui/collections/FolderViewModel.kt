@@ -7,6 +7,7 @@ import com.joabtv.app.data.collections.CollectionSource
 import com.joabtv.app.data.collections.CollectionSourceResolver
 import com.joabtv.app.data.collections.CollectionsRepository
 import com.joabtv.app.data.local.PlatformPrefs
+import com.joabtv.app.data.remote.CatalogPaging
 import com.joabtv.app.domain.model.MovieItem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +38,8 @@ class FolderViewModel @Inject constructor(
         val loading: Boolean = true,
         val loadingMore: Boolean = false,
         val error: String? = null,
+        /** Estado da leitura de um catálogo de addon (ids já recebidos e páginas vazias seguidas). */
+        val paging: CatalogPaging.Cursor = CatalogPaging.Cursor(),
     ) {
         val isAll: Boolean get() = source == null
         val canLoadMore: Boolean get() = next != null && !loading && !loadingMore
@@ -95,11 +98,13 @@ class FolderViewModel @Inject constructor(
         val source = tab.source ?: return
         if (more) update(key) { it.copy(loadingMore = true) }
         viewModelScope.launch {
-            val page = resolver.load(source, if (more) tab.next else null)
+            val page = resolver.load(source, if (more) tab.next else null, tab.paging)
             update(key) { t ->
                 t.copy(
                     items = (t.items + page.items).distinctBy { "${it.type}:${it.tmdbId}" },
-                    next = page.next,
+                    // Falha no meio da lista não encerra. A próxima rolagem até o fim tenta de novo.
+                    next = if (page.error != null && more) t.next else page.next,
+                    paging = page.paging ?: t.paging,
                     loading = false,
                     loadingMore = false,
                     error = page.error.takeIf { t.items.isEmpty() && page.items.isEmpty() },
@@ -127,7 +132,8 @@ class FolderViewModel @Inject constructor(
         st.copy(tabs = st.tabs.map { t ->
             if (!t.isAll) t else t.copy(
                 items = merged,
-                next = if (sources.any { it.next != null }) 1 else null,
+                // Soma dos cursores das fontes. Muda a cada página lida, e o gatilho de fim de lista precisa disso para não travar numa página sem título novo.
+                next = sources.sumOf { it.next ?: 0 }.takeIf { sources.any { s -> s.next != null } },
                 loading = sources.any { it.loading },
                 loadingMore = sources.any { it.loadingMore },
                 error = sources.firstOrNull { it.error != null }?.error.takeIf { merged.isEmpty() && sources.none { it.loading } },

@@ -39,6 +39,9 @@ data class AddonMeta(
     val year: String,
     val description: String,
     val rating: Double,
+    /** posterShape do addon (poster, landscape ou square). Vazio é retrato. */
+    val posterShape: String = "",
+    val imdbId: String = "",
 )
 
 /** Stream HTTP resolvido de um addon Stremio (toca direto no ExoPlayer). */
@@ -375,6 +378,8 @@ class StremioAddonService @Inject constructor(
                     year = str("releaseInfo").ifBlank { str("year") }.take(4),
                     description = str("description"),
                     rating = str("imdbRating").toDoubleOrNull() ?: 0.0,
+                    posterShape = str("posterShape"),
+                    imdbId = str("imdb_id").takeIf { it.startsWith("tt") }.orEmpty(),
                 )
             }
         }.getOrNull()

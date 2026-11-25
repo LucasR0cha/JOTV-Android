@@ -85,8 +85,6 @@ class MoviesHomeViewModel @Inject constructor(
         const val SORT_RELEASE_TV = "first_air_date.desc"
         // mínimo de votos para "Melhor nota" não trazer obscuridades com 1 voto 10/10
         private const val TOP_RATED_MIN_VOTES = 200
-        /** Itens lidos por página do catálogo de addon (igual ao webOS). */
-        private const val ADDON_PAGE = 40
     }
 
     data class UiState(
@@ -164,6 +162,9 @@ class MoviesHomeViewModel @Inject constructor(
         val loading: Boolean = true,
         /** Nome na Início (o que a pessoa escolheu ou o do catálogo). */
         val title: String = ref.name,
+        /** Ids que o addon já mandou e páginas seguidas sem título aproveitável (ver CatalogPaging). */
+        val seen: Set<String> = emptySet(),
+        val empty: Int = 0,
     )
 
     // ── Últimos Trailers ──────────────────────────────────────────────────────
@@ -424,16 +425,22 @@ class MoviesHomeViewModel @Inject constructor(
         if (!row.more || !addonRowsInFlight.add(key)) return
         viewModelScope.launch {
             val metas = stremio.catalogMetas(row.ref.base, row.ref.type, row.ref.id, row.skip)
-            val page = metas.orEmpty().take(ADDON_PAGE)
+            val page = com.joabtv.app.data.remote.CatalogPaging.take(metas.orEmpty())
             val items = resolveAddonMetas(page, row.ref.type == "series")
+            // Segue enquanto o addon mandar título novo, de qualquer tamanho de página. Falha de rede não anda.
+            val next = com.joabtv.app.data.remote.CatalogPaging.advance(
+                com.joabtv.app.data.remote.CatalogPaging.Cursor(row.skip, row.seen, row.empty, row.more), metas, page, items.size,
+            )
             addonRowsInFlight.remove(key)
             _uiState.update { st ->
                 st.copy(addonRows = st.addonRows.map { r ->
                     if (r.ref.key != key) r
                     else r.copy(
                         items = (r.items + items).distinctBy { it.tmdbId },
-                        skip = r.skip + page.size,
-                        more = metas != null && metas.size >= ADDON_PAGE,
+                        skip = next.skip,
+                        more = next.more,
+                        seen = next.seen,
+                        empty = next.empty,
                         loading = false,
                     )
                 })
